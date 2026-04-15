@@ -143,6 +143,23 @@ function calculateEma(values, period) {
   return out;
 }
 
+function calculateSma(values, period) {
+  const out = Array(values.length).fill(null);
+  let rollingSum = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    const v = Number(values[i]);
+    if (Number.isNaN(v)) continue;
+    rollingSum += v;
+    if (i >= period) {
+      rollingSum -= Number(values[i - period]);
+    }
+    if (i >= period - 1) {
+      out[i] = rollingSum / period;
+    }
+  }
+  return out;
+}
+
 function calculateMacd(values) {
   const ema12 = calculateEma(values, 12);
   const ema26 = calculateEma(values, 26);
@@ -744,6 +761,172 @@ function runStrategyThree({ candles, settings }) {
   };
 }
 
+function runStrategyFour({ candles, settings }) {
+  const symbol = String(settings.symbol || 'BANKNIFTY').toUpperCase();
+  const qty = Number(settings.qty);
+  const maPeriod = Math.max(5, Number(settings.maPeriod));
+  const deviationPct = Math.max(0.1, Number(settings.deviationPct));
+  const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
+  const takeProfitPct = Math.max(0.1, Number(settings.takeProfitPct));
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay));
+  const useCrashFilter = settings.useCrashFilter !== false;
+  const crashFilterPct = Math.max(0.2, Number(settings.crashFilterPct));
+  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles));
+
+  const byDay = new Map();
+  for (const c of candles) {
+    const clock = getIstClock(c[0]);
+    if (clock.minutes < 555 || clock.minutes > 930) continue;
+    if (!byDay.has(clock.dateKey)) byDay.set(clock.dateKey, []);
+    byDay.get(clock.dateKey).push(c);
+  }
+
+  const trades = [];
+  for (const [, dayCandles] of byDay.entries()) {
+    if (dayCandles.length < maPeriod + 2) continue;
+    const closes = dayCandles.map((c) => Number(c[4]));
+    const highs = dayCandles.map((c) => Number(c[2]));
+    const lows = dayCandles.map((c) => Number(c[3]));
+    const ma = calculateSma(closes, maPeriod);
+
+    let tradesToday = 0;
+    let position = null;
+
+    for (let i = 1; i < dayCandles.length && tradesToday < maxTradesPerDay; i += 1) {
+      const clock = getIstClock(dayCandles[i][0]);
+      if (clock.minutes < 560 || clock.minutes > 915) continue;
+      if (ma[i] === null) continue;
+
+      if (position) {
+        let exitPrice = null;
+        let reason = null;
+        if (position.side === 'LONG') {
+          if (lows[i] <= position.stopLoss) {
+            exitPrice = position.stopLoss;
+            reason = 'STOP_LOSS';
+          } else if (highs[i] >= position.target) {
+            exitPrice = position.target;
+            reason = 'TARGET';
+          } else if (closes[i] >= ma[i]) {
+            exitPrice = closes[i];
+            reason = 'RETURN_TO_MEAN';
+          }
+        } else {
+          if (highs[i] >= position.stopLoss) {
+            exitPrice = position.stopLoss;
+            reason = 'STOP_LOSS';
+          } else if (lows[i] <= position.target) {
+            exitPrice = position.target;
+            reason = 'TARGET';
+          } else if (closes[i] <= ma[i]) {
+            exitPrice = closes[i];
+            reason = 'RETURN_TO_MEAN';
+          }
+        }
+
+        if (exitPrice === null && i - position.entryIndex >= maxHoldCandles) {
+          exitPrice = closes[i];
+          reason = 'TIME_EXIT';
+        }
+
+        if (exitPrice === null && clock.minutes >= 925) {
+          exitPrice = closes[i];
+          reason = 'DAY_CLOSE';
+        }
+
+        if (exitPrice !== null) {
+          const pnl =
+            position.side === 'LONG'
+              ? (exitPrice - position.entryPrice) * qty
+              : (position.entryPrice - exitPrice) * qty;
+          trades.push({
+            pair: symbol,
+            closed: position.side,
+            order: position.side === 'LONG' ? 'SELL' : 'BUY',
+            entryTime: position.entryTime,
+            exitTime: dayCandles[i][0],
+            entryPrice: Number(position.entryPrice.toFixed(2)),
+            exitPrice: Number(exitPrice.toFixed(2)),
+            stopLoss: Number(position.stopLoss.toFixed(2)),
+            target: Number(position.target.toFixed(2)),
+            qty,
+            pnl: Number(pnl.toFixed(2)),
+            reason,
+          });
+          position = null;
+        }
+      }
+
+      if (position || tradesToday >= maxTradesPerDay) continue;
+
+      const deviation = ((closes[i] - ma[i]) / ma[i]) * 100;
+      const prevDeviation = ((closes[i - 1] - ma[i - 1]) / ma[i - 1]) * 100;
+      const recentMovePct = i > 0 ? ((closes[i] - closes[i - 1]) / closes[i - 1]) * 100 : 0;
+
+      // Mean-reversion confirmation:
+      // 1) Previous candle was stretched away from the mean
+      // 2) Current candle starts reverting back toward the mean
+      const longSignal =
+        prevDeviation <= -deviationPct &&
+        deviation > prevDeviation &&
+        deviation <= -(deviationPct * 0.35) &&
+        (!useCrashFilter || recentMovePct > -crashFilterPct);
+      const shortSignal =
+        prevDeviation >= deviationPct &&
+        deviation < prevDeviation &&
+        deviation >= deviationPct * 0.35 &&
+        (!useCrashFilter || recentMovePct < crashFilterPct);
+
+      if (!longSignal && !shortSignal) continue;
+
+      const side = longSignal ? 'LONG' : 'SHORT';
+      const entryPrice = closes[i];
+      const stopLoss =
+        side === 'LONG'
+          ? entryPrice * (1 - stopLossPct / 100)
+          : entryPrice * (1 + stopLossPct / 100);
+      const fixedTarget =
+        side === 'LONG'
+          ? entryPrice * (1 + takeProfitPct / 100)
+          : entryPrice * (1 - takeProfitPct / 100);
+      // Mean-reversion strategies should usually target the mean first.
+      const target =
+        side === 'LONG'
+          ? Math.min(fixedTarget, ma[i])
+          : Math.max(fixedTarget, ma[i]);
+
+      position = {
+        side,
+        entryPrice,
+        stopLoss,
+        target,
+        entryIndex: i,
+        entryTime: dayCandles[i][0],
+      };
+      tradesToday += 1;
+    }
+  }
+
+  const totalTrades = trades.length;
+  const wins = trades.filter((t) => t.pnl > 0).length;
+  const netPnl = trades.reduce((acc, t) => acc + t.pnl, 0);
+  const grossProfit = trades.filter((t) => t.pnl > 0).reduce((a, t) => a + t.pnl, 0);
+  const grossLoss = trades.filter((t) => t.pnl < 0).reduce((a, t) => a + t.pnl, 0);
+
+  return {
+    summary: {
+      totalTrades,
+      wins,
+      losses: totalTrades - wins,
+      winRate: totalTrades ? Number(((wins / totalTrades) * 100).toFixed(2)) : 0,
+      grossProfit: Number(grossProfit.toFixed(2)),
+      grossLoss: Number(grossLoss.toFixed(2)),
+      netPnl: Number(netPnl.toFixed(2)),
+    },
+    trades,
+  };
+}
+
 
 
 async function fetchWithRateLimitRetry(args) {
@@ -1208,6 +1391,149 @@ app.get('/api/strategy3/runs/:runId/trades', async (req, res) => {
     const trades = await StrategyTrade.find({
       runId,
       strategyKey: 'strategy3_ma_crossover',
+    })
+      .sort({ entryTime: 1 })
+      .skip(skip)
+      .limit(pageSize)
+      .lean();
+
+    res.json({
+      ok: true,
+      runId,
+      trades,
+      pagination: { page: currentPage, pageSize, totalRows, totalPages },
+    });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/strategy4/run', async (req, res) => {
+  try {
+    const {
+      symbol = 'BANKNIFTY',
+      interval = '5',
+      year = 2025,
+      qty = 1,
+      maPeriod = 14,
+      deviationPct = 0.6,
+      stopLossPct = 0.8,
+      takeProfitPct = 1.2,
+      maxTradesPerDay = 15,
+      useCrashFilter = false,
+      crashFilterPct = 1.2,
+      maxHoldCandles = 12,
+    } = req.body || {};
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: String(symbol).toUpperCase(),
+      interval: String(interval),
+      year: Number(year),
+    });
+
+    const result = runStrategyFour({
+      candles: payload.rows,
+      settings: {
+        symbol: String(symbol).toUpperCase(),
+        qty: Number(qty),
+        maPeriod: Number(maPeriod),
+        deviationPct: Number(deviationPct),
+        stopLossPct: Number(stopLossPct),
+        takeProfitPct: Number(takeProfitPct),
+        maxTradesPerDay: Number(maxTradesPerDay),
+        useCrashFilter: Boolean(useCrashFilter),
+        crashFilterPct: Number(crashFilterPct),
+        maxHoldCandles: Number(maxHoldCandles),
+      },
+    });
+
+    const runDoc = await StrategyRun.create({
+      strategyKey: 'strategy4_mean_reversion',
+      symbol: String(symbol).toUpperCase(),
+      interval: String(interval),
+      year: Number(year),
+      settings: {
+        qty: Number(qty),
+        maPeriod: Number(maPeriod),
+        deviationPct: Number(deviationPct),
+        stopLossPct: Number(stopLossPct),
+        takeProfitPct: Number(takeProfitPct),
+        maxTradesPerDay: Number(maxTradesPerDay),
+        useCrashFilter: Boolean(useCrashFilter),
+        crashFilterPct: Number(crashFilterPct),
+        maxHoldCandles: Number(maxHoldCandles),
+      },
+      summary: result.summary,
+      status: 'completed',
+    });
+
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          runId: runDoc._id,
+          strategyKey: 'strategy4_mean_reversion',
+          pair: t.pair,
+          closed: t.closed,
+          order: t.order,
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+          entryPrice: t.entryPrice,
+          exitPrice: t.exitPrice,
+          stopLoss: t.stopLoss,
+          target: t.target,
+          qty: t.qty,
+          pnl: t.pnl,
+          reason: t.reason,
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 4 - Mean Reversion',
+      year: Number(year),
+      symbol: String(symbol).toUpperCase(),
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get('/api/strategy4/runs/:runId/trades', async (req, res) => {
+  try {
+    const { runId } = req.params;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
+
+    const totalRows = await StrategyTrade.countDocuments({
+      runId,
+      strategyKey: 'strategy4_mean_reversion',
+    });
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    const currentPage = Math.min(page, totalPages);
+    const skip = (currentPage - 1) * pageSize;
+
+    const trades = await StrategyTrade.find({
+      runId,
+      strategyKey: 'strategy4_mean_reversion',
     })
       .sort({ entryTime: 1 })
       .skip(skip)
