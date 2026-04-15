@@ -621,7 +621,6 @@ function runStrategyFour({ candles, settings }) {
   const symbol = String(settings.symbol || 'BANKNIFTY').toUpperCase();
   const qty = Number(settings.qty);
   const maPeriod = Math.max(5, Number(settings.maPeriod));
-  const deviationPct = Math.max(0.1, Number(settings.deviationPct));
   const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
   const takeProfitPct = Math.max(0.1, Number(settings.takeProfitPct));
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay));
@@ -723,14 +722,14 @@ function runStrategyFour({ candles, settings }) {
       // 1) Previous candle was stretched away from the mean
       // 2) Current candle starts reverting back toward the mean
       const longSignal =
-        prevDeviation <= -deviationPct &&
         deviation > prevDeviation &&
-        deviation <= -(deviationPct * 0.35) &&
+        prevDeviation < 0 &&
+        deviation < 0 &&
         (!useCrashFilter || recentMovePct > -crashFilterPct);
       const shortSignal =
-        prevDeviation >= deviationPct &&
         deviation < prevDeviation &&
-        deviation >= deviationPct * 0.35 &&
+        prevDeviation > 0 &&
+        deviation > 0 &&
         (!useCrashFilter || recentMovePct < crashFilterPct);
 
       if (!longSignal && !shortSignal) continue;
@@ -1132,7 +1131,6 @@ app.post('/api/strategy4/run', async (req, res) => {
       year = 2025,
       qty = 1,
       maPeriod = 14,
-      deviationPct = 0.6,
       stopLossPct = 10,
       takeProfitPct = 1.2,
       maxTradesPerDay = 15,
@@ -1153,7 +1151,6 @@ app.post('/api/strategy4/run', async (req, res) => {
         symbol: String(symbol).toUpperCase(),
         qty: Number(qty),
         maPeriod: Number(maPeriod),
-        deviationPct: Number(deviationPct),
         stopLossPct: Number(stopLossPct),
         takeProfitPct: Number(takeProfitPct),
         maxTradesPerDay: Number(maxTradesPerDay),
@@ -1171,7 +1168,6 @@ app.post('/api/strategy4/run', async (req, res) => {
       settings: {
         qty: Number(qty),
         maPeriod: Number(maPeriod),
-        deviationPct: Number(deviationPct),
         stopLossPct: Number(stopLossPct),
         takeProfitPct: Number(takeProfitPct),
         maxTradesPerDay: Number(maxTradesPerDay),
