@@ -1005,7 +1005,7 @@ app.post('/api/strategy1/run', async (req, res) => {
   try {
     const {
       symbol = 'BANKNIFTY',
-      interval = '5',
+      interval = '15',
       year = 2025,
       qty = 1,
       adxThreshold = 20,
