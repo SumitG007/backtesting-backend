@@ -171,6 +171,19 @@ function getTradeSizing({ symbol, premium, lotCount, lotSize, investmentAmount, 
   };
 }
 
+function getSimulatedOptionPremium({ side, entrySpot, currentSpot, entryPremium }) {
+  const safeEntrySpot = Number(entrySpot);
+  const safeCurrentSpot = Number(currentSpot);
+  const safeEntryPremium = Math.max(0.05, Number(entryPremium) || 0.05);
+  if (!Number.isFinite(safeEntrySpot) || safeEntrySpot <= 0) return safeEntryPremium;
+  if (!Number.isFinite(safeCurrentSpot) || safeCurrentSpot <= 0) return safeEntryPremium;
+
+  const spotMovePct = ((safeCurrentSpot - safeEntrySpot) / safeEntrySpot) * 100;
+  const directionalMovePct = side === 'LONG' ? spotMovePct : -spotMovePct;
+  const nextPremium = safeEntryPremium * (1 + directionalMovePct / 100);
+  return Math.max(0.05, nextPremium);
+}
+
 
 
 function calculateEma(values, period) {
@@ -766,47 +779,54 @@ function runStrategyFour({ candles, settings }) {
 
       if (position) {
         let exitPrice = null;
+        let exitPremium = null;
         let reason = null;
-        const lowPnl =
-          position.side === 'LONG'
-            ? (lows[i] - position.entryPrice) * position.positionSize
-            : (position.entryPrice - highs[i]) * position.positionSize;
-        const highPnl =
-          position.side === 'LONG'
-            ? (highs[i] - position.entryPrice) * position.positionSize
-            : (position.entryPrice - lows[i]) * position.positionSize;
+        const lowPremium = getSimulatedOptionPremium({
+          side: position.side,
+          entrySpot: position.entryPrice,
+          currentSpot: position.side === 'LONG' ? lows[i] : highs[i],
+          entryPremium: position.premium,
+        });
+        const highPremium = getSimulatedOptionPremium({
+          side: position.side,
+          entrySpot: position.entryPrice,
+          currentSpot: position.side === 'LONG' ? highs[i] : lows[i],
+          entryPremium: position.premium,
+        });
+        const closePremium = getSimulatedOptionPremium({
+          side: position.side,
+          entrySpot: position.entryPrice,
+          currentSpot: closes[i],
+          entryPremium: position.premium,
+        });
+        const lowPnl = (lowPremium - position.premium) * position.positionSize;
+        const highPnl = (highPremium - position.premium) * position.positionSize;
 
         if (lowPnl <= -position.stopLossAmount) {
-          const lossMove = position.stopLossAmount / position.positionSize;
-          exitPrice =
-            position.side === 'LONG'
-              ? position.entryPrice - lossMove
-              : position.entryPrice + lossMove;
+          exitPremium = position.premium - position.stopLossAmount / position.positionSize;
+          exitPrice = closes[i];
           reason = 'STOP_LOSS';
         } else if (highPnl >= position.targetAmount) {
-          const targetMove = position.targetAmount / position.positionSize;
-          exitPrice =
-            position.side === 'LONG'
-              ? position.entryPrice + targetMove
-              : position.entryPrice - targetMove;
+          exitPremium = position.premium + position.targetAmount / position.positionSize;
+          exitPrice = closes[i];
           reason = 'TARGET';
         }
 
         if (exitPrice === null && i - position.entryIndex >= maxHoldCandles) {
           exitPrice = closes[i];
+          exitPremium = closePremium;
           reason = 'TIME_EXIT';
         }
 
         if (exitPrice === null && clock.minutes >= 925) {
           exitPrice = closes[i];
+          exitPremium = closePremium;
           reason = 'DAY_CLOSE';
         }
 
         if (exitPrice !== null) {
-          const pnl =
-            position.side === 'LONG'
-              ? (exitPrice - position.entryPrice) * position.positionSize
-              : (position.entryPrice - exitPrice) * position.positionSize;
+          const safeExitPremium = Math.max(0.05, Number(exitPremium ?? closePremium));
+          const pnl = (safeExitPremium - position.premium) * position.positionSize;
           trades.push({
             pair: symbol,
             closed: position.side,
@@ -815,6 +835,7 @@ function runStrategyFour({ candles, settings }) {
             exitTime: dayCandles[i][0],
             entryPrice: Number(position.entryPrice.toFixed(2)),
             exitPrice: Number(exitPrice.toFixed(2)),
+            exitPremium: Number(safeExitPremium.toFixed(2)),
             stopLoss: Number(position.stopLoss.toFixed(2)),
             target: Number(position.target.toFixed(2)),
             qty: Number(position.positionSize.toFixed(4)),
@@ -856,22 +877,18 @@ function runStrategyFour({ candles, settings }) {
 
       const side = longSignal ? 'LONG' : 'SHORT';
       const entryPrice = closes[i];
-      const positionSize = getPositionSize(entryPrice, sizing.investmentAmount, sizing.fallbackQty);
-      const tradeCapital =
-        sizing.investmentAmount > 0
-          ? sizing.investmentAmount
-          : entryPrice * Math.max(1, sizing.fallbackQty || 1);
+      const entryPremium = Math.max(0.05, Number(sizing.premium) || 0.05);
+      const positionSize = Math.max(1, Number(sizing.lotSize) || 1) * Math.max(1, Number(sizing.lotCount) || 1);
+      const tradeCapital = entryPremium * positionSize;
       const stopLossAmount = tradeCapital * (stopLossPct / 100);
       const targetAmount = tradeCapital * (takeProfitPct / 100);
-      const lossMove = stopLossAmount / positionSize;
-      const targetMove = targetAmount / positionSize;
-      const stopLoss = side === 'LONG' ? entryPrice - lossMove : entryPrice + lossMove;
-      const target = side === 'LONG' ? entryPrice + targetMove : entryPrice - targetMove;
+      const stopLoss = entryPremium - stopLossAmount / positionSize;
+      const target = entryPremium + targetAmount / positionSize;
 
       position = {
         side,
         entryPrice,
-        premium: sizing.premium,
+        premium: entryPremium,
         lotCount: sizing.lotCount,
         lotSize: sizing.lotSize,
         stopLoss,
