@@ -41,6 +41,9 @@ const strategyTradeSchema = new mongoose.Schema(
     stopLoss: Number,
     target: Number,
     qty: Number,
+    premium: Number,
+    lotCount: Number,
+    lotSize: Number,
     investmentAmount: Number,
     stopLossAmount: Number,
     targetAmount: Number,
@@ -62,6 +65,11 @@ const PRESET_SYMBOLS = {
   RELIANCE: { securityId: '2885', exchangeSegment: 'NSE_EQ', instrument: 'EQUITY' },
   HDFCBANK: { securityId: '1333', exchangeSegment: 'NSE_EQ', instrument: 'EQUITY' },
   ICICIBANK: { securityId: '4963', exchangeSegment: 'NSE_EQ', instrument: 'EQUITY' },
+};
+
+const DEFAULT_LOT_SIZES = {
+  NIFTY: 50,
+  BANKNIFTY: 65,
 };
 
 function toIntradayDateTime(value, endOfDay = false) {
@@ -139,6 +147,28 @@ function getPositionSize(entryPrice, investmentAmount, fallbackQty = 1) {
   if (!Number.isFinite(safeEntryPrice) || safeEntryPrice <= 0) return safeFallbackQty;
   if (!Number.isFinite(safeInvestmentAmount) || safeInvestmentAmount <= 0) return safeFallbackQty;
   return safeInvestmentAmount / safeEntryPrice;
+}
+
+function getLotSize(symbol) {
+  const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
+  return DEFAULT_LOT_SIZES[resolvedSymbol] || 1;
+}
+
+function getTradeSizing({ symbol, premium, lotCount, lotSize, investmentAmount, qty }) {
+  const resolvedLotSize = Math.max(1, Number(lotSize) || getLotSize(symbol));
+  const resolvedLotCount = Math.max(1, Number(lotCount) || 1);
+  const resolvedPremium = Math.max(0, Number(premium) || 0);
+  const autoInvestmentAmount = resolvedPremium * resolvedLotSize * resolvedLotCount;
+  const resolvedInvestmentAmount =
+    autoInvestmentAmount > 0 ? autoInvestmentAmount : Math.max(0, Number(investmentAmount) || 0);
+
+  return {
+    premium: resolvedPremium,
+    lotCount: resolvedLotCount,
+    lotSize: resolvedLotSize,
+    investmentAmount: resolvedInvestmentAmount,
+    fallbackQty: Math.max(1, Number(qty) || 1),
+  };
 }
 
 
@@ -358,8 +388,7 @@ function runStrategyOne({ candles, settings }) {
   let position = null;
   const trades = [];
   const emergencyTicks = Number(settings.emergencySLTicks);
-  const fallbackQty = Number(settings.qty);
-  const investmentAmount = Number(settings.investmentAmount);
+  const sizing = getTradeSizing(settings);
 
   function closePosition(i, reason) {
     if (!position) return;
@@ -377,6 +406,9 @@ function runStrategyOne({ candles, settings }) {
       entryPrice: position.entryPrice,
       exitPrice: price,
       qty: Number(position.positionSize.toFixed(4)),
+      premium: Number(position.premium.toFixed(2)),
+      lotCount: position.lotCount,
+      lotSize: position.lotSize,
       investmentAmount: Number(position.investmentAmount.toFixed(2)),
       pnl: Number(pnl.toFixed(2)),
       pnlPct: Number(((pnl / position.investmentAmount) * 100).toFixed(2)),
@@ -426,11 +458,14 @@ function runStrategyOne({ candles, settings }) {
           side: 'LONG',
           entryPrice: close,
           entryTime: candles[i][0],
-          positionSize: getPositionSize(close, investmentAmount, fallbackQty),
+          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
+          premium: sizing.premium,
+          lotCount: sizing.lotCount,
+          lotSize: sizing.lotSize,
           investmentAmount:
-            Number.isFinite(investmentAmount) && investmentAmount > 0
-              ? investmentAmount
-              : close * Math.max(1, fallbackQty || 1),
+            sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1),
         };
       } else if (position.side === 'SHORT') {
         closePosition(i, 'REVERSAL_LONG');
@@ -438,11 +473,14 @@ function runStrategyOne({ candles, settings }) {
           side: 'LONG',
           entryPrice: close,
           entryTime: candles[i][0],
-          positionSize: getPositionSize(close, investmentAmount, fallbackQty),
+          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
+          premium: sizing.premium,
+          lotCount: sizing.lotCount,
+          lotSize: sizing.lotSize,
           investmentAmount:
-            Number.isFinite(investmentAmount) && investmentAmount > 0
-              ? investmentAmount
-              : close * Math.max(1, fallbackQty || 1),
+            sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1),
         };
       }
     } else if (shortSignal) {
@@ -451,11 +489,14 @@ function runStrategyOne({ candles, settings }) {
           side: 'SHORT',
           entryPrice: close,
           entryTime: candles[i][0],
-          positionSize: getPositionSize(close, investmentAmount, fallbackQty),
+          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
+          premium: sizing.premium,
+          lotCount: sizing.lotCount,
+          lotSize: sizing.lotSize,
           investmentAmount:
-            Number.isFinite(investmentAmount) && investmentAmount > 0
-              ? investmentAmount
-              : close * Math.max(1, fallbackQty || 1),
+            sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1),
         };
       } else if (position.side === 'LONG') {
         closePosition(i, 'REVERSAL_SHORT');
@@ -463,11 +504,14 @@ function runStrategyOne({ candles, settings }) {
           side: 'SHORT',
           entryPrice: close,
           entryTime: candles[i][0],
-          positionSize: getPositionSize(close, investmentAmount, fallbackQty),
+          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
+          premium: sizing.premium,
+          lotCount: sizing.lotCount,
+          lotSize: sizing.lotSize,
           investmentAmount:
-            Number.isFinite(investmentAmount) && investmentAmount > 0
-              ? investmentAmount
-              : close * Math.max(1, fallbackQty || 1),
+            sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1),
         };
       }
     }
@@ -671,8 +715,7 @@ function runStrategyTwo({ candles, settings }) {
 
 function runStrategyFour({ candles, settings }) {
   const symbol = String(settings.symbol || 'BANKNIFTY').toUpperCase();
-  const fallbackQty = Number(settings.qty);
-  const investmentAmount = Number(settings.investmentAmount);
+  const sizing = getTradeSizing({ ...settings, symbol });
   const maPeriod = Math.max(5, Number(settings.maPeriod));
   const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
   const takeProfitPct = Math.max(0.1, Number(settings.takeProfitPct));
@@ -731,12 +774,6 @@ function runStrategyFour({ candles, settings }) {
               ? position.entryPrice + targetMove
               : position.entryPrice - targetMove;
           reason = 'TARGET';
-        } else if (
-          (position.side === 'LONG' && closes[i] >= ma[i]) ||
-          (position.side === 'SHORT' && closes[i] <= ma[i])
-        ) {
-          exitPrice = closes[i];
-          reason = 'RETURN_TO_MEAN';
         }
 
         if (exitPrice === null && i - position.entryIndex >= maxHoldCandles) {
@@ -765,6 +802,9 @@ function runStrategyFour({ candles, settings }) {
             stopLoss: Number(position.stopLoss.toFixed(2)),
             target: Number(position.target.toFixed(2)),
             qty: Number(position.positionSize.toFixed(4)),
+            premium: Number(position.premium.toFixed(2)),
+            lotCount: position.lotCount,
+            lotSize: position.lotSize,
             investmentAmount: Number(position.investmentAmount.toFixed(2)),
             stopLossAmount: Number(position.stopLossAmount.toFixed(2)),
             targetAmount: Number(position.targetAmount.toFixed(2)),
@@ -800,11 +840,11 @@ function runStrategyFour({ candles, settings }) {
 
       const side = longSignal ? 'LONG' : 'SHORT';
       const entryPrice = closes[i];
-      const positionSize = getPositionSize(entryPrice, investmentAmount, fallbackQty);
+      const positionSize = getPositionSize(entryPrice, sizing.investmentAmount, sizing.fallbackQty);
       const tradeCapital =
-        Number.isFinite(investmentAmount) && investmentAmount > 0
-          ? investmentAmount
-          : entryPrice * Math.max(1, fallbackQty || 1);
+        sizing.investmentAmount > 0
+          ? sizing.investmentAmount
+          : entryPrice * Math.max(1, sizing.fallbackQty || 1);
       const stopLossAmount = tradeCapital * (stopLossPct / 100);
       const targetAmount = tradeCapital * (takeProfitPct / 100);
       const lossMove = stopLossAmount / positionSize;
@@ -815,6 +855,9 @@ function runStrategyFour({ candles, settings }) {
       position = {
         side,
         entryPrice,
+        premium: sizing.premium,
+        lotCount: sizing.lotCount,
+        lotSize: sizing.lotSize,
         stopLoss,
         target,
         positionSize,
@@ -929,6 +972,9 @@ app.post('/api/strategy1/run', async (req, res) => {
       interval = '15',
       year = 2025,
       qty = 1,
+      premium = 183,
+      lotCount = 1,
+      lotSize = getLotSize(symbol),
       investmentAmount = 100000,
       adxThreshold = 20,
       emaPeriod = 9,
@@ -946,6 +992,9 @@ app.post('/api/strategy1/run', async (req, res) => {
       settings: {
         symbol: String(symbol).toUpperCase(),
         qty: Number(qty),
+        premium: Number(premium),
+        lotCount: Number(lotCount),
+        lotSize: Number(lotSize),
         investmentAmount: Number(investmentAmount),
         adxThreshold: Number(adxThreshold),
         emaPeriod: Number(emaPeriod),
@@ -960,6 +1009,9 @@ app.post('/api/strategy1/run', async (req, res) => {
       year: Number(year),
       settings: {
         qty: Number(qty),
+        premium: Number(premium),
+        lotCount: Number(lotCount),
+        lotSize: Number(lotSize),
         investmentAmount: Number(investmentAmount),
         adxThreshold: Number(adxThreshold),
         emaPeriod: Number(emaPeriod),
@@ -984,6 +1036,9 @@ app.post('/api/strategy1/run', async (req, res) => {
           stopLoss: t.stopLoss,
           target: t.target,
           qty: t.qty,
+          premium: t.premium,
+          lotCount: t.lotCount,
+          lotSize: t.lotSize,
           investmentAmount: t.investmentAmount,
           stopLossAmount: t.stopLossAmount,
           targetAmount: t.targetAmount,
@@ -1203,6 +1258,9 @@ app.post('/api/strategy4/run', async (req, res) => {
       interval = '5',
       year = 2025,
       qty = 1,
+      premium = 183,
+      lotCount = 1,
+      lotSize = getLotSize(symbol),
       investmentAmount = 100000,
       maPeriod = 14,
       stopLossPct = 10,
@@ -1224,6 +1282,9 @@ app.post('/api/strategy4/run', async (req, res) => {
       settings: {
         symbol: String(symbol).toUpperCase(),
         qty: Number(qty),
+        premium: Number(premium),
+        lotCount: Number(lotCount),
+        lotSize: Number(lotSize),
         investmentAmount: Number(investmentAmount),
         maPeriod: Number(maPeriod),
         stopLossPct: Number(stopLossPct),
@@ -1242,6 +1303,9 @@ app.post('/api/strategy4/run', async (req, res) => {
       year: Number(year),
       settings: {
         qty: Number(qty),
+        premium: Number(premium),
+        lotCount: Number(lotCount),
+        lotSize: Number(lotSize),
         investmentAmount: Number(investmentAmount),
         maPeriod: Number(maPeriod),
         stopLossPct: Number(stopLossPct),
@@ -1270,6 +1334,9 @@ app.post('/api/strategy4/run', async (req, res) => {
           stopLoss: t.stopLoss,
           target: t.target,
           qty: t.qty,
+          premium: t.premium,
+          lotCount: t.lotCount,
+          lotSize: t.lotSize,
           investmentAmount: t.investmentAmount,
           stopLossAmount: t.stopLossAmount,
           targetAmount: t.targetAmount,
