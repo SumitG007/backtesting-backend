@@ -387,7 +387,7 @@ function runStrategyOne({ candles, settings }) {
 
   let position = null;
   const trades = [];
-  const emergencyTicks = Number(settings.emergencySLTicks);
+  const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
   const sizing = getTradeSizing(settings);
 
   function closePosition(i, reason) {
@@ -410,6 +410,7 @@ function runStrategyOne({ candles, settings }) {
       lotCount: position.lotCount,
       lotSize: position.lotSize,
       investmentAmount: Number(position.investmentAmount.toFixed(2)),
+      stopLossAmount: Number(position.stopLossAmount.toFixed(2)),
       pnl: Number(pnl.toFixed(2)),
       pnlPct: Number(((pnl / position.investmentAmount) * 100).toFixed(2)),
       reason,
@@ -441,14 +442,13 @@ function runStrategyOne({ candles, settings }) {
       close < ema[i] &&
       adx[i] >= Number(settings.adxThreshold);
 
-    if (position && emergencyTicks > 0) {
-      if (position.side === 'LONG' && close <= position.entryPrice - emergencyTicks) {
-        closePosition(i, 'EMERGENCY_SL');
-      } else if (
-        position.side === 'SHORT' &&
-        close >= position.entryPrice + emergencyTicks
-      ) {
-        closePosition(i, 'EMERGENCY_SL');
+    if (position) {
+      const lossPnl =
+        position.side === 'LONG'
+          ? (close - position.entryPrice) * position.positionSize
+          : (position.entryPrice - close) * position.positionSize;
+      if (lossPnl <= -position.stopLossAmount) {
+        closePosition(i, 'STOP_LOSS');
       }
     }
 
@@ -466,6 +466,10 @@ function runStrategyOne({ candles, settings }) {
             sizing.investmentAmount > 0
               ? sizing.investmentAmount
               : close * Math.max(1, sizing.fallbackQty || 1),
+          stopLossAmount:
+            (sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
         };
       } else if (position.side === 'SHORT') {
         closePosition(i, 'REVERSAL_LONG');
@@ -481,6 +485,10 @@ function runStrategyOne({ candles, settings }) {
             sizing.investmentAmount > 0
               ? sizing.investmentAmount
               : close * Math.max(1, sizing.fallbackQty || 1),
+          stopLossAmount:
+            (sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
         };
       }
     } else if (shortSignal) {
@@ -497,6 +505,10 @@ function runStrategyOne({ candles, settings }) {
             sizing.investmentAmount > 0
               ? sizing.investmentAmount
               : close * Math.max(1, sizing.fallbackQty || 1),
+          stopLossAmount:
+            (sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
         };
       } else if (position.side === 'LONG') {
         closePosition(i, 'REVERSAL_SHORT');
@@ -512,6 +524,10 @@ function runStrategyOne({ candles, settings }) {
             sizing.investmentAmount > 0
               ? sizing.investmentAmount
               : close * Math.max(1, sizing.fallbackQty || 1),
+          stopLossAmount:
+            (sizing.investmentAmount > 0
+              ? sizing.investmentAmount
+              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
         };
       }
     }
@@ -978,7 +994,7 @@ app.post('/api/strategy1/run', async (req, res) => {
       investmentAmount = 100000,
       adxThreshold = 20,
       emaPeriod = 9,
-      emergencySLTicks = 150,
+      stopLossPct = 10,
     } = req.body || {};
 
     const payload = await fetchWithRateLimitRetry({
@@ -998,7 +1014,7 @@ app.post('/api/strategy1/run', async (req, res) => {
         investmentAmount: Number(investmentAmount),
         adxThreshold: Number(adxThreshold),
         emaPeriod: Number(emaPeriod),
-        emergencySLTicks: Number(emergencySLTicks),
+        stopLossPct: Number(stopLossPct),
       },
     });
 
@@ -1015,7 +1031,7 @@ app.post('/api/strategy1/run', async (req, res) => {
         investmentAmount: Number(investmentAmount),
         adxThreshold: Number(adxThreshold),
         emaPeriod: Number(emaPeriod),
-        emergencySLTicks: Number(emergencySLTicks),
+        stopLossPct: Number(stopLossPct),
       },
       summary: result.summary,
       status: 'completed',
