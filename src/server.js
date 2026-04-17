@@ -32,6 +32,13 @@ const strategyTradeSchema = new mongoose.Schema(
     runId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
     strategyKey: { type: String, required: true, index: true },
     pair: String,
+    type: String,
+    strike: Number,
+    buyPrice: Number,
+    sellPrice: Number,
+    lots: Number,
+    invested: Number,
+    finalValue: Number,
     closed: String,
     order: String,
     entryTime: Date,
@@ -140,51 +147,35 @@ function getIstClock(isoValue) {
   };
 }
 
-function getPositionSize(entryPrice, investmentAmount, fallbackQty = 1) {
-  const safeEntryPrice = Number(entryPrice);
-  const safeInvestmentAmount = Number(investmentAmount);
-  const safeFallbackQty = Math.max(1, Number(fallbackQty) || 1);
-  if (!Number.isFinite(safeEntryPrice) || safeEntryPrice <= 0) return safeFallbackQty;
-  if (!Number.isFinite(safeInvestmentAmount) || safeInvestmentAmount <= 0) return safeFallbackQty;
-  return safeInvestmentAmount / safeEntryPrice;
-}
-
 function getLotSize(symbol) {
   const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
   return DEFAULT_LOT_SIZES[resolvedSymbol] || 1;
 }
 
-function getTradeSizing({ symbol, premium, lotCount, lotSize, investmentAmount, qty }) {
-  const resolvedLotSize = Math.max(1, Number(lotSize) || getLotSize(symbol));
-  const resolvedLotCount = Math.max(1, Number(lotCount) || 1);
-  const resolvedPremium = Math.max(0, Number(premium) || 0);
-  const autoInvestmentAmount = resolvedPremium * resolvedLotSize * resolvedLotCount;
-  const resolvedInvestmentAmount =
-    autoInvestmentAmount > 0 ? autoInvestmentAmount : Math.max(0, Number(investmentAmount) || 0);
-
-  return {
-    premium: resolvedPremium,
-    lotCount: resolvedLotCount,
-    lotSize: resolvedLotSize,
-    investmentAmount: resolvedInvestmentAmount,
-    fallbackQty: Math.max(1, Number(qty) || 1),
-  };
+function getStrikeStep(symbol) {
+  const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
+  return resolvedSymbol === 'NIFTY' ? 50 : 100;
 }
 
-function getSimulatedOptionPremium({ side, entrySpot, currentSpot, entryPremium }) {
+function getOptionPremiumFromSpotMove({
+  side,
+  entrySpot,
+  currentSpot,
+  entryPremium,
+  premiumLeverage,
+}) {
   const safeEntrySpot = Number(entrySpot);
   const safeCurrentSpot = Number(currentSpot);
-  const safeEntryPremium = Math.max(0.05, Number(entryPremium) || 0.05);
-  if (!Number.isFinite(safeEntrySpot) || safeEntrySpot <= 0) return safeEntryPremium;
-  if (!Number.isFinite(safeCurrentSpot) || safeCurrentSpot <= 0) return safeEntryPremium;
+  const safePremium = Math.max(0.05, Number(entryPremium) || 0.05);
+  const safeLeverage = Math.max(1, Number(premiumLeverage) || 8);
+  if (!Number.isFinite(safeEntrySpot) || safeEntrySpot <= 0) return safePremium;
+  if (!Number.isFinite(safeCurrentSpot) || safeCurrentSpot <= 0) return safePremium;
 
   const spotMovePct = ((safeCurrentSpot - safeEntrySpot) / safeEntrySpot) * 100;
   const directionalMovePct = side === 'LONG' ? spotMovePct : -spotMovePct;
-  const nextPremium = safeEntryPremium * (1 + directionalMovePct / 100);
-  return Math.max(0.05, nextPremium);
+  const premiumMovePct = directionalMovePct * safeLeverage;
+  return Math.max(0.05, safePremium * (1 + premiumMovePct / 100));
 }
-
-
 
 function calculateEma(values, period) {
   const k = 2 / (period + 1);
@@ -197,96 +188,6 @@ function calculateEma(values, period) {
     out[i] = ema;
   }
   return out;
-}
-
-function calculateSma(values, period) {
-  const out = Array(values.length).fill(null);
-  let rollingSum = 0;
-  for (let i = 0; i < values.length; i += 1) {
-    const v = Number(values[i]);
-    if (Number.isNaN(v)) continue;
-    rollingSum += v;
-    if (i >= period) {
-      rollingSum -= Number(values[i - period]);
-    }
-    if (i >= period - 1) {
-      out[i] = rollingSum / period;
-    }
-  }
-  return out;
-}
-
-function calculateMacd(values) {
-  const ema12 = calculateEma(values, 12);
-  const ema26 = calculateEma(values, 26);
-  const macd = values.map((_, i) =>
-    ema12[i] === null || ema26[i] === null ? null : ema12[i] - ema26[i]
-  );
-  const signal = calculateEma(macd.map((v) => (v === null ? 0 : v)), 9);
-  return { macd, signal };
-}
-
-function calculateAdx(highs, lows, closes, period = 14) {
-  const len = closes.length;
-  const plusDI = Array(len).fill(null);
-  const minusDI = Array(len).fill(null);
-  const adx = Array(len).fill(null);
-  if (len < period + 2) return { plusDI, minusDI, adx };
-
-  const tr = Array(len).fill(0);
-  const pdm = Array(len).fill(0);
-  const mdm = Array(len).fill(0);
-
-  for (let i = 1; i < len; i += 1) {
-    const upMove = highs[i] - highs[i - 1];
-    const downMove = lows[i - 1] - lows[i];
-    pdm[i] = upMove > downMove && upMove > 0 ? upMove : 0;
-    mdm[i] = downMove > upMove && downMove > 0 ? downMove : 0;
-    const tr1 = highs[i] - lows[i];
-    const tr2 = Math.abs(highs[i] - closes[i - 1]);
-    const tr3 = Math.abs(lows[i] - closes[i - 1]);
-    tr[i] = Math.max(tr1, tr2, tr3);
-  }
-
-  let trSum = 0;
-  let pdmSum = 0;
-  let mdmSum = 0;
-  for (let i = 1; i <= period; i += 1) {
-    trSum += tr[i];
-    pdmSum += pdm[i];
-    mdmSum += mdm[i];
-  }
-
-  const dx = Array(len).fill(null);
-  for (let i = period + 1; i < len; i += 1) {
-    trSum = trSum - trSum / period + tr[i];
-    pdmSum = pdmSum - pdmSum / period + pdm[i];
-    mdmSum = mdmSum - mdmSum / period + mdm[i];
-    if (trSum === 0) continue;
-    plusDI[i] = (100 * pdmSum) / trSum;
-    minusDI[i] = (100 * mdmSum) / trSum;
-    const denom = plusDI[i] + minusDI[i];
-    dx[i] = denom === 0 ? 0 : (100 * Math.abs(plusDI[i] - minusDI[i])) / denom;
-  }
-
-  let adxSeedCount = 0;
-  let adxSeed = 0;
-  for (let i = period + 1; i < len; i += 1) {
-    if (dx[i] !== null) {
-      adxSeed += dx[i];
-      adxSeedCount += 1;
-    }
-    if (adxSeedCount === period) {
-      adx[i] = adxSeed / period;
-      for (let j = i + 1; j < len; j += 1) {
-        if (dx[j] === null || adx[j - 1] === null) continue;
-        adx[j] = (adx[j - 1] * (period - 1) + dx[j]) / period;
-      }
-      break;
-    }
-  }
-
-  return { plusDI, minusDI, adx };
 }
 
 async function fetchDhanIntradayChunk({
@@ -388,184 +289,6 @@ async function fetchYearCandles({ symbol, interval, year }) {
 
   allRows.sort((a, b) => new Date(a[0]) - new Date(b[0]));
   return { rows: allRows, fromDate, toDate };
-}
-
-function runStrategyOne({ candles, settings }) {
-  const closes = candles.map((c) => Number(c[4]));
-  const highs = candles.map((c) => Number(c[2]));
-  const lows = candles.map((c) => Number(c[3]));
-  const ema = calculateEma(closes, settings.emaPeriod);
-  const { macd, signal } = calculateMacd(closes);
-  const { plusDI, minusDI, adx } = calculateAdx(highs, lows, closes, 14);
-
-  let position = null;
-  const trades = [];
-  const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
-  const sizing = getTradeSizing(settings);
-
-  function closePosition(i, reason) {
-    if (!position) return;
-    const price = closes[i];
-    const pnl =
-      position.side === 'LONG'
-        ? (price - position.entryPrice) * position.positionSize
-        : (position.entryPrice - price) * position.positionSize;
-    trades.push({
-      pair: settings.symbol,
-      closed: position.side,
-      order: position.side === 'LONG' ? 'SELL' : 'BUY',
-      entryTime: position.entryTime,
-      exitTime: candles[i][0],
-      entryPrice: position.entryPrice,
-      exitPrice: price,
-      qty: Number(position.positionSize.toFixed(4)),
-      premium: Number(position.premium.toFixed(2)),
-      lotCount: position.lotCount,
-      lotSize: position.lotSize,
-      investmentAmount: Number(position.investmentAmount.toFixed(2)),
-      stopLossAmount: Number(position.stopLossAmount.toFixed(2)),
-      pnl: Number(pnl.toFixed(2)),
-      pnlPct: Number(((pnl / position.investmentAmount) * 100).toFixed(2)),
-      reason,
-    });
-    position = null;
-  }
-
-  for (let i = 30; i < candles.length; i += 1) {
-    if (
-      ema[i] === null ||
-      macd[i] === null ||
-      signal[i] === null ||
-      adx[i] === null ||
-      plusDI[i] === null ||
-      minusDI[i] === null
-    ) {
-      continue;
-    }
-
-    const close = closes[i];
-    const longSignal =
-      plusDI[i] > minusDI[i] &&
-      macd[i] > signal[i] &&
-      close > ema[i] &&
-      adx[i] >= Number(settings.adxThreshold);
-    const shortSignal =
-      minusDI[i] > plusDI[i] &&
-      macd[i] < signal[i] &&
-      close < ema[i] &&
-      adx[i] >= Number(settings.adxThreshold);
-
-    if (position) {
-      const lossPnl =
-        position.side === 'LONG'
-          ? (close - position.entryPrice) * position.positionSize
-          : (position.entryPrice - close) * position.positionSize;
-      if (lossPnl <= -position.stopLossAmount) {
-        closePosition(i, 'STOP_LOSS');
-      }
-    }
-
-    if (longSignal) {
-      if (!position) {
-        position = {
-          side: 'LONG',
-          entryPrice: close,
-          entryTime: candles[i][0],
-          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
-          premium: sizing.premium,
-          lotCount: sizing.lotCount,
-          lotSize: sizing.lotSize,
-          investmentAmount:
-            sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1),
-          stopLossAmount:
-            (sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
-        };
-      } else if (position.side === 'SHORT') {
-        closePosition(i, 'REVERSAL_LONG');
-        position = {
-          side: 'LONG',
-          entryPrice: close,
-          entryTime: candles[i][0],
-          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
-          premium: sizing.premium,
-          lotCount: sizing.lotCount,
-          lotSize: sizing.lotSize,
-          investmentAmount:
-            sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1),
-          stopLossAmount:
-            (sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
-        };
-      }
-    } else if (shortSignal) {
-      if (!position) {
-        position = {
-          side: 'SHORT',
-          entryPrice: close,
-          entryTime: candles[i][0],
-          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
-          premium: sizing.premium,
-          lotCount: sizing.lotCount,
-          lotSize: sizing.lotSize,
-          investmentAmount:
-            sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1),
-          stopLossAmount:
-            (sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
-        };
-      } else if (position.side === 'LONG') {
-        closePosition(i, 'REVERSAL_SHORT');
-        position = {
-          side: 'SHORT',
-          entryPrice: close,
-          entryTime: candles[i][0],
-          positionSize: getPositionSize(close, sizing.investmentAmount, sizing.fallbackQty),
-          premium: sizing.premium,
-          lotCount: sizing.lotCount,
-          lotSize: sizing.lotSize,
-          investmentAmount:
-            sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1),
-          stopLossAmount:
-            (sizing.investmentAmount > 0
-              ? sizing.investmentAmount
-              : close * Math.max(1, sizing.fallbackQty || 1)) * (stopLossPct / 100),
-        };
-      }
-    }
-  }
-
-  if (position) closePosition(candles.length - 1, 'FINAL_CLOSE');
-
-  const totalTrades = trades.length;
-  const wins = trades.filter((t) => t.pnl > 0).length;
-  const netPnl = trades.reduce((acc, t) => acc + t.pnl, 0);
-  const grossProfit = trades.filter((t) => t.pnl > 0).reduce((a, t) => a + t.pnl, 0);
-  const grossLoss = trades.filter((t) => t.pnl < 0).reduce((a, t) => a + t.pnl, 0);
-
-  return {
-    summary: {
-      totalTrades,
-      wins,
-      losses: totalTrades - wins,
-      winRate: totalTrades ? Number(((wins / totalTrades) * 100).toFixed(2)) : 0,
-      grossProfit: Number(grossProfit.toFixed(2)),
-      grossLoss: Number(grossLoss.toFixed(2)),
-      netPnl: Number(netPnl.toFixed(2)),
-    },
-    trades,
-  };
 }
 
 function runStrategyTwo({ candles, settings }) {
@@ -742,16 +465,19 @@ function runStrategyTwo({ candles, settings }) {
   };
 }
 
-function runStrategyFour({ candles, settings }) {
-  const symbol = String(settings.symbol || 'BANKNIFTY').toUpperCase();
-  const sizing = getTradeSizing({ ...settings, symbol });
-  const maPeriod = Math.max(5, Number(settings.maPeriod));
-  const stopLossPct = Math.max(0.1, Number(settings.stopLossPct));
-  const takeProfitPct = Math.max(0.1, Number(settings.takeProfitPct));
-  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay));
-  const useCrashFilter = settings.useCrashFilter !== false;
-  const crashFilterPct = Math.max(0.2, Number(settings.crashFilterPct));
-  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles));
+function runStrategyOneSimple({ candles, settings }) {
+  const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
+  const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
+  const lotCount = Math.max(1, Number(settings.lotCount) || 1);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.85);
+  const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
+  const emaPeriod = Math.max(5, Number(settings.emaPeriod) || 20);
+  const breakoutLookback = Math.max(2, Number(settings.breakoutLookback) || 3);
+  const stopLossPct = Math.max(0.5, Number(settings.stopLossPct) || 10);
+  const targetPct = Math.max(0.5, Number(settings.targetPct) || 12);
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 3);
+  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles) || 12);
+  const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
 
   const byDay = new Map();
   for (const c of candles) {
@@ -763,144 +489,141 @@ function runStrategyFour({ candles, settings }) {
 
   const trades = [];
   for (const [, dayCandles] of byDay.entries()) {
-    if (dayCandles.length < maPeriod + 2) continue;
+    if (dayCandles.length <= Math.max(emaPeriod, breakoutLookback + 1)) continue;
+
     const closes = dayCandles.map((c) => Number(c[4]));
     const highs = dayCandles.map((c) => Number(c[2]));
     const lows = dayCandles.map((c) => Number(c[3]));
-    const ma = calculateSma(closes, maPeriod);
+    const ema = calculateEma(closes, emaPeriod);
 
     let tradesToday = 0;
-    let position = null;
-
-    for (let i = 1; i < dayCandles.length && tradesToday < maxTradesPerDay; i += 1) {
+    for (
+      let i = Math.max(emaPeriod, breakoutLookback);
+      i < dayCandles.length && tradesToday < maxTradesPerDay;
+      i += 1
+    ) {
       const clock = getIstClock(dayCandles[i][0]);
-      if (clock.minutes < 560 || clock.minutes > 915) continue;
-      if (ma[i] === null) continue;
+      if (clock.minutes < 570 || clock.minutes > 900) continue;
+      if (ema[i] === null) continue;
 
-      if (position) {
-        let exitPrice = null;
-        let exitPremium = null;
-        let reason = null;
-        const lowPremium = getSimulatedOptionPremium({
-          side: position.side,
-          entrySpot: position.entryPrice,
-          currentSpot: position.side === 'LONG' ? lows[i] : highs[i],
-          entryPremium: position.premium,
-        });
-        const highPremium = getSimulatedOptionPremium({
-          side: position.side,
-          entrySpot: position.entryPrice,
-          currentSpot: position.side === 'LONG' ? highs[i] : lows[i],
-          entryPremium: position.premium,
-        });
-        const closePremium = getSimulatedOptionPremium({
-          side: position.side,
-          entrySpot: position.entryPrice,
-          currentSpot: closes[i],
-          entryPremium: position.premium,
-        });
-        const lowPnl = (lowPremium - position.premium) * position.positionSize;
-        const highPnl = (highPremium - position.premium) * position.positionSize;
+      const prevHigh = Math.max(...highs.slice(i - breakoutLookback, i));
+      const prevLow = Math.min(...lows.slice(i - breakoutLookback, i));
 
-        if (lowPnl <= -position.stopLossAmount) {
-          exitPremium = position.premium - position.stopLossAmount / position.positionSize;
-          exitPrice = closes[i];
-          reason = 'STOP_LOSS';
-        } else if (highPnl >= position.targetAmount) {
-          exitPremium = position.premium + position.targetAmount / position.positionSize;
-          exitPrice = closes[i];
-          reason = 'TARGET';
-        }
-
-        if (exitPrice === null && i - position.entryIndex >= maxHoldCandles) {
-          exitPrice = closes[i];
-          exitPremium = closePremium;
-          reason = 'TIME_EXIT';
-        }
-
-        if (exitPrice === null && clock.minutes >= 925) {
-          exitPrice = closes[i];
-          exitPremium = closePremium;
-          reason = 'DAY_CLOSE';
-        }
-
-        if (exitPrice !== null) {
-          const safeExitPremium = Math.max(0.05, Number(exitPremium ?? closePremium));
-          const pnl = (safeExitPremium - position.premium) * position.positionSize;
-          trades.push({
-            pair: symbol,
-            closed: position.side,
-            order: position.side === 'LONG' ? 'SELL' : 'BUY',
-            entryTime: position.entryTime,
-            exitTime: dayCandles[i][0],
-            entryPrice: Number(position.entryPrice.toFixed(2)),
-            exitPrice: Number(exitPrice.toFixed(2)),
-            exitPremium: Number(safeExitPremium.toFixed(2)),
-            stopLoss: Number(position.stopLoss.toFixed(2)),
-            target: Number(position.target.toFixed(2)),
-            qty: Number(position.positionSize.toFixed(4)),
-            premium: Number(position.premium.toFixed(2)),
-            lotCount: position.lotCount,
-            lotSize: position.lotSize,
-            investmentAmount: Number(position.investmentAmount.toFixed(2)),
-            stopLossAmount: Number(position.stopLossAmount.toFixed(2)),
-            targetAmount: Number(position.targetAmount.toFixed(2)),
-            pnl: Number(pnl.toFixed(2)),
-            pnlPct: Number(((pnl / position.investmentAmount) * 100).toFixed(2)),
-            reason,
-          });
-          position = null;
-        }
-      }
-
-      if (position || tradesToday >= maxTradesPerDay) continue;
-
-      const deviation = ((closes[i] - ma[i]) / ma[i]) * 100;
-      const prevDeviation = ((closes[i - 1] - ma[i - 1]) / ma[i - 1]) * 100;
-      const recentMovePct = i > 0 ? ((closes[i] - closes[i - 1]) / closes[i - 1]) * 100 : 0;
-
-      // Mean-reversion confirmation:
-      // 1) Previous candle was stretched away from the mean
-      // 2) Current candle starts reverting back toward the mean
-      const longSignal =
-        deviation > prevDeviation &&
-        prevDeviation < 0 &&
-        deviation < 0 &&
-        (!useCrashFilter || recentMovePct > -crashFilterPct);
-      const shortSignal =
-        deviation < prevDeviation &&
-        prevDeviation > 0 &&
-        deviation > 0 &&
-        (!useCrashFilter || recentMovePct < crashFilterPct);
-
+      const longSignal = closes[i] > ema[i] && closes[i] > prevHigh;
+      const shortSignal = closes[i] < ema[i] && closes[i] < prevLow;
       if (!longSignal && !shortSignal) continue;
 
       const side = longSignal ? 'LONG' : 'SHORT';
-      const entryPrice = closes[i];
-      const entryPremium = Math.max(0.05, Number(sizing.premium) || 0.05);
-      const positionSize = Math.max(1, Number(sizing.lotSize) || 1) * Math.max(1, Number(sizing.lotCount) || 1);
-      const tradeCapital = entryPremium * positionSize;
-      const stopLossAmount = tradeCapital * (stopLossPct / 100);
-      const targetAmount = tradeCapital * (takeProfitPct / 100);
-      const stopLoss = entryPremium - stopLossAmount / positionSize;
-      const target = entryPremium + targetAmount / positionSize;
+      const optionType = side === 'LONG' ? 'CE' : 'PE';
+      const entrySpot = closes[i];
+      const strike = Math.round(entrySpot / strikeStep) * strikeStep;
+      const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
+      const stopPremium = Math.max(0.05, entryPremium * (1 - stopLossPct / 100));
+      const targetPremium = entryPremium * (1 + targetPct / 100);
 
-      position = {
+      let exitIndex = dayCandles.length - 1;
+      let exitReason = 'DAY_CLOSE';
+      let exitPremium = getOptionPremiumFromSpotMove({
         side,
-        entryPrice,
-        premium: entryPremium,
-        lotCount: sizing.lotCount,
-        lotSize: sizing.lotSize,
-        stopLoss,
-        target,
-        positionSize,
-        investmentAmount: tradeCapital,
-        stopLossAmount,
-        targetAmount,
-        entryIndex: i,
+        entrySpot,
+        currentSpot: closes[exitIndex],
+        entryPremium,
+        premiumLeverage,
+      });
+      let exitSpot = closes[exitIndex];
+
+      for (let j = i + 1; j < dayCandles.length; j += 1) {
+        const favorableSpot = side === 'LONG' ? highs[j] : lows[j];
+        const adverseSpot = side === 'LONG' ? lows[j] : highs[j];
+        const favorablePremium = getOptionPremiumFromSpotMove({
+          side,
+          entrySpot,
+          currentSpot: favorableSpot,
+          entryPremium,
+          premiumLeverage,
+        });
+        const adversePremium = getOptionPremiumFromSpotMove({
+          side,
+          entrySpot,
+          currentSpot: adverseSpot,
+          entryPremium,
+          premiumLeverage,
+        });
+        const closePremium = getOptionPremiumFromSpotMove({
+          side,
+          entrySpot,
+          currentSpot: closes[j],
+          entryPremium,
+          premiumLeverage,
+        });
+
+        if (adversePremium <= stopPremium) {
+          exitIndex = j;
+          exitReason = 'STOP_LOSS';
+          exitPremium = stopPremium;
+          exitSpot = closes[j];
+          break;
+        }
+        if (favorablePremium >= targetPremium) {
+          exitIndex = j;
+          exitReason = 'TARGET';
+          exitPremium = targetPremium;
+          exitSpot = closes[j];
+          break;
+        }
+        if (j - i >= maxHoldCandles) {
+          exitIndex = j;
+          exitReason = 'TIME_EXIT';
+          exitPremium = closePremium;
+          exitSpot = closes[j];
+          break;
+        }
+
+        const jClock = getIstClock(dayCandles[j][0]);
+        // Hold until the real session close candle (15:30 IST).
+        if (jClock.minutes >= 930) {
+          exitIndex = j;
+          exitReason = 'DAY_CLOSE';
+          exitPremium = closePremium;
+          exitSpot = closes[j];
+          break;
+        }
+      }
+
+      const invested = entryPremium * lotSize * lotCount;
+      const finalValue = exitPremium * lotSize * lotCount;
+      const pnl = finalValue - invested;
+
+      trades.push({
+        pair: symbol,
+        type: optionType,
+        strike,
+        buyPrice: Number(entryPremium.toFixed(2)),
+        sellPrice: Number(exitPremium.toFixed(2)),
+        lotSize,
+        lots: lotCount,
+        invested: Number(invested.toFixed(2)),
+        finalValue: Number(finalValue.toFixed(2)),
+        closed: optionType,
+        order: 'BUY',
         entryTime: dayCandles[i][0],
-      };
+        exitTime: dayCandles[exitIndex][0],
+        entryPrice: Number(entrySpot.toFixed(2)),
+        exitPrice: Number(exitSpot.toFixed(2)),
+        stopLoss: Number(stopPremium.toFixed(2)),
+        target: Number(targetPremium.toFixed(2)),
+        qty: lotSize * lotCount,
+        premium: Number(entryPremium.toFixed(2)),
+        lotCount,
+        investmentAmount: Number(invested.toFixed(2)),
+        stopLossAmount: Number((Math.max(0, entryPremium - stopPremium) * lotSize * lotCount).toFixed(2)),
+        targetAmount: Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2)),
+        pnl: Number(pnl.toFixed(2)),
+        pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
+        reason: exitReason,
+      });
       tradesToday += 1;
+      i = exitIndex;
     }
   }
 
@@ -923,7 +646,6 @@ function runStrategyFour({ candles, settings }) {
     trades,
   };
 }
-
 
 
 async function fetchWithRateLimitRetry(args) {
@@ -1001,17 +723,20 @@ app.get('/api/data/candles', async (req, res) => {
 app.post('/api/strategy1/run', async (req, res) => {
   try {
     const {
-      symbol = 'BANKNIFTY',
+      symbol = 'NIFTY',
       interval = '15',
       year = 2025,
-      qty = 1,
-      premium = 183,
+      basePremiumPct = 0.85,
       lotCount = 1,
       lotSize = getLotSize(symbol),
-      investmentAmount = 100000,
-      adxThreshold = 20,
-      emaPeriod = 9,
+      premiumLeverage = 8,
+      emaPeriod = 20,
+      breakoutLookback = 3,
       stopLossPct = 10,
+      targetPct = 12,
+      maxTradesPerDay = 3,
+      maxHoldCandles = 12,
+      strikeStep = getStrikeStep(symbol),
     } = req.body || {};
 
     const payload = await fetchWithRateLimitRetry({
@@ -1020,35 +745,41 @@ app.post('/api/strategy1/run', async (req, res) => {
       year: Number(year),
     });
 
-    const result = runStrategyOne({
+    const result = runStrategyOneSimple({
       candles: payload.rows,
       settings: {
         symbol: String(symbol).toUpperCase(),
-        qty: Number(qty),
-        premium: Number(premium),
+        basePremiumPct: Number(basePremiumPct),
         lotCount: Number(lotCount),
         lotSize: Number(lotSize),
-        investmentAmount: Number(investmentAmount),
-        adxThreshold: Number(adxThreshold),
+        premiumLeverage: Number(premiumLeverage),
         emaPeriod: Number(emaPeriod),
+        breakoutLookback: Number(breakoutLookback),
         stopLossPct: Number(stopLossPct),
+        targetPct: Number(targetPct),
+        maxTradesPerDay: Number(maxTradesPerDay),
+        maxHoldCandles: Number(maxHoldCandles),
+        strikeStep: Number(strikeStep),
       },
     });
 
     const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy1_adx_macd_ema',
+      strategyKey: 'strategy1_simple_options',
       symbol: String(symbol).toUpperCase(),
       interval: String(interval),
       year: Number(year),
       settings: {
-        qty: Number(qty),
-        premium: Number(premium),
+        basePremiumPct: Number(basePremiumPct),
         lotCount: Number(lotCount),
         lotSize: Number(lotSize),
-        investmentAmount: Number(investmentAmount),
-        adxThreshold: Number(adxThreshold),
+        premiumLeverage: Number(premiumLeverage),
         emaPeriod: Number(emaPeriod),
+        breakoutLookback: Number(breakoutLookback),
         stopLossPct: Number(stopLossPct),
+        targetPct: Number(targetPct),
+        maxTradesPerDay: Number(maxTradesPerDay),
+        maxHoldCandles: Number(maxHoldCandles),
+        strikeStep: Number(strikeStep),
       },
       summary: result.summary,
       status: 'completed',
@@ -1058,8 +789,15 @@ app.post('/api/strategy1/run', async (req, res) => {
       await StrategyTrade.insertMany(
         result.trades.map((t) => ({
           runId: runDoc._id,
-          strategyKey: 'strategy1_adx_macd_ema',
+          strategyKey: 'strategy1_simple_options',
           pair: t.pair,
+          type: t.type,
+          strike: t.strike,
+          buyPrice: t.buyPrice,
+          sellPrice: t.sellPrice,
+          lots: t.lots,
+          invested: t.invested,
+          finalValue: t.finalValue,
           closed: t.closed,
           order: t.order,
           entryTime: new Date(t.entryTime),
@@ -1083,17 +821,15 @@ app.post('/api/strategy1/run', async (req, res) => {
     }
 
     const pageSize = 25;
-    const firstPageTrades = result.trades.slice(0, pageSize);
-
     return res.json({
       ok: true,
       runId: runDoc._id,
-      strategy: 'Strategy 1 - ADX MACD EMA Reversal',
+      strategy: 'Strategy 1 - Simple Options',
       year: Number(year),
       symbol: String(symbol).toUpperCase(),
       interval: String(interval),
       summary: result.summary,
-      trades: firstPageTrades,
+      trades: result.trades.slice(0, pageSize),
       pagination: {
         page: 1,
         pageSize,
@@ -1119,12 +855,18 @@ app.get('/api/strategy1/runs/:runId/trades', async (req, res) => {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
 
-    const totalRows = await StrategyTrade.countDocuments({ runId });
+    const totalRows = await StrategyTrade.countDocuments({
+      runId,
+      strategyKey: 'strategy1_simple_options',
+    });
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const currentPage = Math.min(page, totalPages);
     const skip = (currentPage - 1) * pageSize;
 
-    const trades = await StrategyTrade.find({ runId })
+    const trades = await StrategyTrade.find({
+      runId,
+      strategyKey: 'strategy1_simple_options',
+    })
       .sort({ entryTime: 1 })
       .skip(skip)
       .limit(pageSize)
@@ -1267,165 +1009,6 @@ app.get('/api/strategy2/runs/:runId/trades', async (req, res) => {
     const trades = await StrategyTrade.find({
       runId,
       strategyKey: 'strategy2_momentum',
-    })
-      .sort({ entryTime: 1 })
-      .skip(skip)
-      .limit(pageSize)
-      .lean();
-
-    res.json({
-      ok: true,
-      runId,
-      trades,
-      pagination: { page: currentPage, pageSize, totalRows, totalPages },
-    });
-  } catch (error) {
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.post('/api/strategy4/run', async (req, res) => {
-  try {
-    const {
-      symbol = 'BANKNIFTY',
-      interval = '5',
-      year = 2025,
-      qty = 1,
-      premium = 183,
-      lotCount = 1,
-      lotSize = getLotSize(symbol),
-      investmentAmount = 100000,
-      maPeriod = 14,
-      stopLossPct = 10,
-      takeProfitPct = 1.2,
-      maxTradesPerDay = 15,
-      useCrashFilter = false,
-      crashFilterPct = 1.2,
-      maxHoldCandles = 12,
-    } = req.body || {};
-
-    const payload = await fetchWithRateLimitRetry({
-      symbol: String(symbol).toUpperCase(),
-      interval: String(interval),
-      year: Number(year),
-    });
-
-    const result = runStrategyFour({
-      candles: payload.rows,
-      settings: {
-        symbol: String(symbol).toUpperCase(),
-        qty: Number(qty),
-        premium: Number(premium),
-        lotCount: Number(lotCount),
-        lotSize: Number(lotSize),
-        investmentAmount: Number(investmentAmount),
-        maPeriod: Number(maPeriod),
-        stopLossPct: Number(stopLossPct),
-        takeProfitPct: Number(takeProfitPct),
-        maxTradesPerDay: Number(maxTradesPerDay),
-        useCrashFilter: Boolean(useCrashFilter),
-        crashFilterPct: Number(crashFilterPct),
-        maxHoldCandles: Number(maxHoldCandles),
-      },
-    });
-
-    const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy4_mean_reversion',
-      symbol: String(symbol).toUpperCase(),
-      interval: String(interval),
-      year: Number(year),
-      settings: {
-        qty: Number(qty),
-        premium: Number(premium),
-        lotCount: Number(lotCount),
-        lotSize: Number(lotSize),
-        investmentAmount: Number(investmentAmount),
-        maPeriod: Number(maPeriod),
-        stopLossPct: Number(stopLossPct),
-        takeProfitPct: Number(takeProfitPct),
-        maxTradesPerDay: Number(maxTradesPerDay),
-        useCrashFilter: Boolean(useCrashFilter),
-        crashFilterPct: Number(crashFilterPct),
-        maxHoldCandles: Number(maxHoldCandles),
-      },
-      summary: result.summary,
-      status: 'completed',
-    });
-
-    if (result.trades.length > 0) {
-      await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          runId: runDoc._id,
-          strategyKey: 'strategy4_mean_reversion',
-          pair: t.pair,
-          closed: t.closed,
-          order: t.order,
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-          entryPrice: t.entryPrice,
-          exitPrice: t.exitPrice,
-          stopLoss: t.stopLoss,
-          target: t.target,
-          qty: t.qty,
-          premium: t.premium,
-          lotCount: t.lotCount,
-          lotSize: t.lotSize,
-          investmentAmount: t.investmentAmount,
-          stopLossAmount: t.stopLossAmount,
-          targetAmount: t.targetAmount,
-          pnl: t.pnl,
-          pnlPct: t.pnlPct,
-          reason: t.reason,
-        }))
-      );
-    }
-
-    const pageSize = 25;
-    return res.json({
-      ok: true,
-      runId: runDoc._id,
-      strategy: 'Strategy 4 - Mean Reversion',
-      year: Number(year),
-      symbol: String(symbol).toUpperCase(),
-      interval: String(interval),
-      summary: result.summary,
-      trades: result.trades.slice(0, pageSize),
-      pagination: {
-        page: 1,
-        pageSize,
-        totalRows: result.trades.length,
-        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
-      },
-    });
-  } catch (error) {
-    if (error.response) {
-      return res.status(error.response.status).json({
-        ok: false,
-        error: 'Dhan API error',
-        details: error.response.data,
-      });
-    }
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-app.get('/api/strategy4/runs/:runId/trades', async (req, res) => {
-  try {
-    const { runId } = req.params;
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
-
-    const totalRows = await StrategyTrade.countDocuments({
-      runId,
-      strategyKey: 'strategy4_mean_reversion',
-    });
-    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-    const currentPage = Math.min(page, totalPages);
-    const skip = (currentPage - 1) * pageSize;
-
-    const trades = await StrategyTrade.find({
-      runId,
-      strategyKey: 'strategy4_mean_reversion',
     })
       .sort({ entryTime: 1 })
       .skip(skip)
