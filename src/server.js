@@ -301,11 +301,11 @@ function runStrategyTwo({ candles, settings }) {
   const stopLossPct = Math.max(0.5, Number(settings.stopLossPct) || 10);
   const targetPct = Math.max(0.5, Number(settings.targetPct) || 20);
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
-  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles) || 18);
-  const minBreakoutBodyPct = Math.max(0.45, Number(settings.minBreakoutBodyPct) || 0.6);
-  const breakoutRangeMult = Math.max(1, Number(settings.breakoutRangeMult) || 1.2);
-  const minOpeningRangePct = Math.max(0.05, Number(settings.minOpeningRangePct) || 0.15);
-  const retestBufferPct = Math.max(0, Number(settings.retestBufferPct) || 0.03);
+  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles) || 24);
+  const minBreakoutBodyPct = Math.max(0.35, Number(settings.minBreakoutBodyPct) || 0.5);
+  const breakoutRangeMult = Math.max(0.8, Number(settings.breakoutRangeMult) || 1.0);
+  const minOpeningRangePct = Math.max(0.03, Number(settings.minOpeningRangePct) || 0.07);
+  const retestBufferPct = Math.max(0, Number(settings.retestBufferPct) || 0.08);
 
   const byDay = new Map();
   for (const c of candles) {
@@ -912,11 +912,11 @@ app.post('/api/strategy1/run', async (req, res) => {
       stopLossPct = 10,
       targetPct = 20,
       maxTradesPerDay = 1,
-      maxHoldCandles = 18,
-      minBreakoutBodyPct = 0.6,
-      breakoutRangeMult = 1.2,
-      minOpeningRangePct = 0.15,
-      retestBufferPct = 0.03,
+      maxHoldCandles = 24,
+      minBreakoutBodyPct = 0.5,
+      breakoutRangeMult = 1.0,
+      minOpeningRangePct = 0.07,
+      retestBufferPct = 0.08,
       strikeStep = getStrikeStep(symbol),
     } = req.body || {};
 
