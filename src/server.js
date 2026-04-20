@@ -147,6 +147,17 @@ function getIstClock(isoValue) {
   };
 }
 
+function parseClockMinutes(value, fallbackMinutes) {
+  const raw = String(value || '').trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!match) return fallbackMinutes;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return fallbackMinutes;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallbackMinutes;
+  return hh * 60 + mm;
+}
+
 function getLotSize(symbol) {
   const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
   return DEFAULT_LOT_SIZES[resolvedSymbol] || 1;
@@ -163,18 +174,31 @@ function getOptionPremiumFromSpotMove({
   currentSpot,
   entryPremium,
   premiumLeverage,
+  strike,
+  strikeStep,
 }) {
   const safeEntrySpot = Number(entrySpot);
   const safeCurrentSpot = Number(currentSpot);
   const safePremium = Math.max(0.05, Number(entryPremium) || 0.05);
   const safeLeverage = Math.max(1, Number(premiumLeverage) || 8);
+  const safeStrike = Number.isFinite(Number(strike)) ? Number(strike) : safeEntrySpot;
+  const safeStrikeStep = Math.max(1, Number(strikeStep) || 50);
   if (!Number.isFinite(safeEntrySpot) || safeEntrySpot <= 0) return safePremium;
   if (!Number.isFinite(safeCurrentSpot) || safeCurrentSpot <= 0) return safePremium;
 
-  const spotMovePct = ((safeCurrentSpot - safeEntrySpot) / safeEntrySpot) * 100;
-  const directionalMovePct = side === 'LONG' ? spotMovePct : -spotMovePct;
-  const premiumMovePct = directionalMovePct * safeLeverage;
-  return Math.max(0.05, safePremium * (1 + premiumMovePct / 100));
+  // Approximate option move from spot move using dynamic delta.
+  const spotMove = safeCurrentSpot - safeEntrySpot;
+  const directionalSpotMove = side === 'LONG' ? spotMove : -spotMove;
+  const movePctAbs = (Math.abs(spotMove) / safeEntrySpot) * 100;
+
+  const moneynessSteps = Math.abs(safeEntrySpot - safeStrike) / safeStrikeStep;
+  const baseDelta = Math.max(0.22, 0.38 - Math.min(0.16, moneynessSteps * 0.06));
+  const leverageScale = Math.min(1.75, Math.max(0.75, safeLeverage / 8));
+  const gammaBoost = 1 + Math.min(0.2, movePctAbs * 0.25);
+  const effectiveDelta = baseDelta * leverageScale * gammaBoost;
+
+  const premiumChange = directionalSpotMove * effectiveDelta;
+  return Math.max(0.05, safePremium + premiumChange);
 }
 
 function calculateEma(values, period) {
@@ -299,9 +323,12 @@ function runStrategyTwo({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const stopLossPct = Math.max(0.5, Number(settings.stopLossPct) || 10);
-  const targetPct = Math.max(0.5, Number(settings.targetPct) || 20);
+  const targetPct = Math.max(0.5, Number(settings.targetPct) || 50);
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
-  const maxHoldCandles = Math.max(1, Number(settings.maxHoldCandles) || 24);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570); // 09:30
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 900); // 15:00
+  const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
+  const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
   const minBreakoutBodyPct = Math.max(0.35, Number(settings.minBreakoutBodyPct) || 0.5);
   const breakoutRangeMult = Math.max(0.8, Number(settings.breakoutRangeMult) || 1.0);
   const minOpeningRangePct = Math.max(0.03, Number(settings.minOpeningRangePct) || 0.07);
@@ -364,7 +391,7 @@ function runStrategyTwo({ candles, settings }) {
       if (tradesToday >= maxTradesPerDay) break;
 
       const clock = getIstClock(dayCandles[i][0]);
-      if (clock.minutes < 570 || clock.minutes > 900) continue;
+      if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
 
       const open = opens[i];
       const high = highs[i];
@@ -413,6 +440,8 @@ function runStrategyTwo({ candles, settings }) {
                 currentSpot: exitSpot,
                 entryPremium,
                 premiumLeverage,
+                strike,
+                strikeStep,
               });
               let reason = 'DAY_CLOSE';
 
@@ -423,6 +452,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: highs[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
                 const adversePremium = getOptionPremiumFromSpotMove({
                   side,
@@ -430,6 +461,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: lows[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
                 const closePremium = getOptionPremiumFromSpotMove({
                   side,
@@ -437,6 +470,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: closes[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
 
                 if (adversePremium <= stopPremium) {
@@ -451,13 +486,6 @@ function runStrategyTwo({ candles, settings }) {
                   exitSpot = closes[j];
                   exitPremium = targetPremium;
                   reason = 'TARGET';
-                  break;
-                }
-                if (j - i >= maxHoldCandles) {
-                  exitIndex = j;
-                  exitSpot = closes[j];
-                  exitPremium = closePremium;
-                  reason = 'TIME_EXIT';
                   break;
                 }
                 const jClock = getIstClock(dayCandles[j][0]);
@@ -529,6 +557,8 @@ function runStrategyTwo({ candles, settings }) {
                 currentSpot: exitSpot,
                 entryPremium,
                 premiumLeverage,
+                strike,
+                strikeStep,
               });
               let reason = 'DAY_CLOSE';
 
@@ -539,6 +569,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: lows[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
                 const adversePremium = getOptionPremiumFromSpotMove({
                   side,
@@ -546,6 +578,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: highs[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
                 const closePremium = getOptionPremiumFromSpotMove({
                   side,
@@ -553,6 +587,8 @@ function runStrategyTwo({ candles, settings }) {
                   currentSpot: closes[j],
                   entryPremium,
                   premiumLeverage,
+                  strike,
+                  strikeStep,
                 });
 
                 if (adversePremium <= stopPremium) {
@@ -567,13 +603,6 @@ function runStrategyTwo({ candles, settings }) {
                   exitSpot = closes[j];
                   exitPremium = targetPremium;
                   reason = 'TARGET';
-                  break;
-                }
-                if (j - i >= maxHoldCandles) {
-                  exitIndex = j;
-                  exitSpot = closes[j];
-                  exitPremium = closePremium;
-                  reason = 'TIME_EXIT';
                   break;
                 }
                 const jClock = getIstClock(dayCandles[j][0]);
@@ -910,9 +939,10 @@ app.post('/api/strategy1/run', async (req, res) => {
       lotSize = getLotSize(symbol),
       premiumLeverage = 8,
       stopLossPct = 10,
-      targetPct = 20,
+      targetPct = 50,
       maxTradesPerDay = 1,
-      maxHoldCandles = 24,
+      entryFromTime = '09:30',
+      entryToTime = '15:00',
       minBreakoutBodyPct = 0.5,
       breakoutRangeMult = 1.0,
       minOpeningRangePct = 0.07,
@@ -937,7 +967,8 @@ app.post('/api/strategy1/run', async (req, res) => {
         stopLossPct: Number(stopLossPct),
         targetPct: Number(targetPct),
         maxTradesPerDay: Number(maxTradesPerDay),
-        maxHoldCandles: Number(maxHoldCandles),
+        entryFromTime: String(entryFromTime),
+        entryToTime: String(entryToTime),
         minBreakoutBodyPct: Number(minBreakoutBodyPct),
         breakoutRangeMult: Number(breakoutRangeMult),
         minOpeningRangePct: Number(minOpeningRangePct),
@@ -959,7 +990,8 @@ app.post('/api/strategy1/run', async (req, res) => {
         stopLossPct: Number(stopLossPct),
         targetPct: Number(targetPct),
         maxTradesPerDay: Number(maxTradesPerDay),
-        maxHoldCandles: Number(maxHoldCandles),
+        entryFromTime: String(entryFromTime),
+        entryToTime: String(entryToTime),
         minBreakoutBodyPct: Number(minBreakoutBodyPct),
         breakoutRangeMult: Number(breakoutRangeMult),
         minOpeningRangePct: Number(minOpeningRangePct),
