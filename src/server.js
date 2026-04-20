@@ -323,7 +323,7 @@ function runStrategyTwo({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const stopLossPct = Math.max(0.5, Number(settings.stopLossPct) || 10);
-  const targetPct = Math.max(0.5, Number(settings.targetPct) || 50);
+  const targetPct = Math.max(0.5, Number(settings.targetPct) || 100);
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570); // 09:30
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 900); // 15:00
@@ -939,7 +939,7 @@ app.post('/api/strategy1/run', async (req, res) => {
       lotSize = getLotSize(symbol),
       premiumLeverage = 8,
       stopLossPct = 10,
-      targetPct = 50,
+      targetPct = 100,
       maxTradesPerDay = 1,
       entryFromTime = '09:30',
       entryToTime = '15:00',
