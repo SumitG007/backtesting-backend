@@ -10,7 +10,7 @@ const {
   sleep,
 } = require('../utils/dateTime');
 const { resolveSymbolConfig } = require('../utils/market');
-const { readLatestAccessToken, isLikelyDhanAuthError, renewDhanAccessToken } = require('./tokenService');
+const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
 
 const yearCache = new Map();
 const inflightRequests = new Map();
@@ -47,7 +47,7 @@ async function fetchDhanIntradayChunk({ fromDate, toDate, interval, securityId, 
     return response.data || {};
   } catch (error) {
     if (!isLikelyDhanAuthError(error)) throw error;
-    const renewedToken = await renewDhanAccessToken('auth-retry');
+    const renewedToken = await ensureValidDhanAccessToken('auth-retry');
     const retryResponse = await makeRequest(renewedToken);
     return retryResponse.data || {};
   }

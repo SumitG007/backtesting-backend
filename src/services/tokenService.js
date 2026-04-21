@@ -3,10 +3,22 @@ const axios = require('axios');
 const { BACKEND_ENV_PATH, TOKEN_RENEW_INTERVAL_MS } = require('../config/constants');
 
 let currentDhanAccessToken = process.env.DHAN_ACCESS_TOKEN || '';
+let currentDhanTokenExpiresAt = Number(process.env.DHAN_TOKEN_EXPIRES_AT || 0);
 let renewTokenInFlight = null;
+const TOKEN_RENEW_BUFFER_MS = 10 * 60 * 1000;
 
 function readLatestAccessToken() {
   return currentDhanAccessToken || process.env.DHAN_ACCESS_TOKEN || '';
+}
+
+function getTokenExpiryMs() {
+  return Number(currentDhanTokenExpiresAt || process.env.DHAN_TOKEN_EXPIRES_AT || 0);
+}
+
+function shouldRenewSoon() {
+  const expiresAt = getTokenExpiryMs();
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) return true;
+  return Date.now() >= expiresAt - TOKEN_RENEW_BUFFER_MS;
 }
 
 function extractRenewedToken(payload) {
@@ -21,18 +33,38 @@ function extractRenewedToken(payload) {
   );
 }
 
-async function persistAccessTokenToEnv(newToken) {
+function extractExpiryMs(payload) {
+  const raw = payload?.expiryTime || payload?.data?.expiryTime;
+  if (!raw) return Date.now() + 24 * 60 * 60 * 1000;
+  const parsed = new Date(raw).getTime();
+  return Number.isFinite(parsed) ? parsed : Date.now() + 24 * 60 * 60 * 1000;
+}
+
+async function persistTokenStateToEnv({ token, expiresAt }) {
   try {
-    const envContent = await fs.readFile(BACKEND_ENV_PATH, 'utf8');
-    if (/^DHAN_ACCESS_TOKEN=/m.test(envContent)) {
-      const next = envContent.replace(/^DHAN_ACCESS_TOKEN=.*$/m, `DHAN_ACCESS_TOKEN=${newToken}`);
-      await fs.writeFile(BACKEND_ENV_PATH, next, 'utf8');
-    } else {
-      const suffix = envContent.endsWith('\n') || envContent.length === 0 ? '' : '\n';
-      await fs.writeFile(BACKEND_ENV_PATH, `${envContent}${suffix}DHAN_ACCESS_TOKEN=${newToken}\n`, 'utf8');
+    let envContent = '';
+    try {
+      envContent = await fs.readFile(BACKEND_ENV_PATH, 'utf8');
+    } catch (_error) {
+      envContent = '';
     }
+    const updates = {
+      DHAN_ACCESS_TOKEN: token,
+      DHAN_TOKEN_EXPIRES_AT: String(expiresAt),
+    };
+    let next = envContent;
+    for (const [key, value] of Object.entries(updates)) {
+      const re = new RegExp(`^${key}=.*$`, 'm');
+      if (re.test(next)) {
+        next = next.replace(re, `${key}=${value}`);
+      } else {
+        const suffix = next.endsWith('\n') || next.length === 0 ? '' : '\n';
+        next = `${next}${suffix}${key}=${value}\n`;
+      }
+    }
+    await fs.writeFile(BACKEND_ENV_PATH, next, 'utf8');
   } catch (error) {
-    console.warn('Could not persist renewed DHAN_ACCESS_TOKEN to .env:', error.message);
+    console.warn('Could not persist Dhan token state to .env:', error.message);
   }
 }
 
@@ -47,6 +79,16 @@ function isLikelyDhanAuthError(error) {
     asText.includes('invalid credentials') ||
     asText.includes('session')
   );
+}
+
+async function setAndPersistTokenState({ token, expiresAt, reason }) {
+  currentDhanAccessToken = token;
+  currentDhanTokenExpiresAt = expiresAt;
+  process.env.DHAN_ACCESS_TOKEN = token;
+  process.env.DHAN_TOKEN_EXPIRES_AT = String(expiresAt);
+  await persistTokenStateToEnv({ token, expiresAt });
+  console.log(`Dhan access token updated (${reason}). Expires at ${new Date(expiresAt).toISOString()}.`);
+  return token;
 }
 
 async function renewDhanAccessToken(reason = 'manual') {
@@ -76,12 +118,8 @@ async function renewDhanAccessToken(reason = 'manual') {
     if (!renewedToken) {
       throw new Error('RenewToken succeeded but no access token found in response');
     }
-
-    currentDhanAccessToken = renewedToken;
-    process.env.DHAN_ACCESS_TOKEN = renewedToken;
-    await persistAccessTokenToEnv(renewedToken);
-    console.log(`Dhan access token renewed (${reason}).`);
-    return renewedToken;
+    const expiresAt = extractExpiryMs(response.data);
+    return setAndPersistTokenState({ token: renewedToken, expiresAt, reason });
   })();
 
   try {
@@ -91,14 +129,28 @@ async function renewDhanAccessToken(reason = 'manual') {
   }
 }
 
+async function ensureValidDhanAccessToken(reason = 'ensure-valid') {
+  const hasToken = Boolean(readLatestAccessToken());
+  if (!hasToken) {
+    throw new Error(`Cannot ensure Dhan token (${reason}): missing DHAN_ACCESS_TOKEN`);
+  }
+  if (shouldRenewSoon()) {
+    return renewDhanAccessToken(`${reason}:expiring`);
+  }
+  return readLatestAccessToken();
+}
+
 function startTokenAutoRenewJob() {
-  if (!process.env.DHAN_CLIENT_ID || !readLatestAccessToken()) {
-    console.warn('Skipping auto-renew job: missing Dhan client id or access token.');
+  if (!process.env.DHAN_CLIENT_ID) {
+    console.warn('Skipping auto-renew job: missing DHAN_CLIENT_ID.');
     return;
   }
+  ensureValidDhanAccessToken('startup').catch((error) => {
+    console.warn('Initial Dhan token ensure failed:', error.message);
+  });
   const timer = setInterval(() => {
-    renewDhanAccessToken('scheduled').catch((error) => {
-      console.warn('Scheduled Dhan token renew failed:', error.message);
+    ensureValidDhanAccessToken('scheduled').catch((error) => {
+      console.warn('Scheduled Dhan token ensure failed:', error.message);
     });
   }, TOKEN_RENEW_INTERVAL_MS);
   timer.unref();
@@ -108,5 +160,6 @@ module.exports = {
   readLatestAccessToken,
   isLikelyDhanAuthError,
   renewDhanAccessToken,
+  ensureValidDhanAccessToken,
   startTokenAutoRenewJob,
 };
