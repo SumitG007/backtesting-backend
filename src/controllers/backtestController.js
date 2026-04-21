@@ -50,6 +50,7 @@ async function getCandles(req, res) {
 async function runStrategyOne(req, res) {
   try {
     const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
       basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
@@ -57,10 +58,10 @@ async function runStrategyOne(req, res) {
       lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
       premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
       stopLossPct: Number(req.body?.stopLossPct ?? 10),
-      targetPct: Number(req.body?.targetPct ?? 100),
+      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
       maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 1),
       entryFromTime: String(req.body?.entryFromTime ?? '09:30'),
-      entryToTime: String(req.body?.entryToTime ?? '15:00'),
+      entryToTime: String(req.body?.entryToTime ?? '14:00'),
       minBreakoutBodyPct: Number(req.body?.minBreakoutBodyPct ?? 0.5),
       breakoutRangeMult: Number(req.body?.breakoutRangeMult ?? 1.0),
       minOpeningRangePct: Number(req.body?.minOpeningRangePct ?? 0.07),

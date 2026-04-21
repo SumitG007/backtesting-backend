@@ -27,7 +27,9 @@ function runStrategyBreakoutRetest({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const stopLossPct = Math.max(0.5, Number(settings.stopLossPct) || 10);
-  const targetPct = Math.max(0.5, Number(settings.targetPct) || 100);
+  const rawTargetPct = Number(settings.targetPct);
+  const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
+  const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
@@ -79,8 +81,6 @@ function runStrategyBreakoutRetest({ candles, settings }) {
     const openingRangePct = (openingRange / Math.max(1, opens[openingIndexes[0]])) * 100;
     if (openingRangePct < minOpeningRangePct) continue;
 
-    const zoneLow = openingLow + openingRange * 0.3;
-    const zoneHigh = openingHigh - openingRange * 0.3;
     const levelBuffer = openingRange * (retestBufferPct / 100);
 
     let tradesToday = 0;
@@ -105,13 +105,12 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         i >= 5 ? highs.slice(i - 5, i).map((h, j) => h - lows[i - 5 + j]).reduce((a, v) => a + v, 0) / 5 : range;
       const strongBullish = close > open && bodyPct >= minBreakoutBodyPct && range >= avgPrevRange * breakoutRangeMult;
       const strongBearish = close < open && bodyPct >= minBreakoutBodyPct && range >= avgPrevRange * breakoutRangeMult;
-      const inNoTradeZone = close >= zoneLow && close <= zoneHigh;
 
-      if (close > pdo && !inNoTradeZone && longBreakIndex === -1 && close > openingHigh && strongBullish) {
+      if (close > pdo && longBreakIndex === -1 && close > openingHigh && strongBullish) {
         longBreakIndex = i;
         continue;
       }
-      if (close < pdo && !inNoTradeZone && shortBreakIndex === -1 && close < openingLow && strongBearish) {
+      if (close < pdo && shortBreakIndex === -1 && close < openingLow && strongBearish) {
         shortBreakIndex = i;
         continue;
       }
@@ -121,7 +120,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         longRetestConsumed = true;
         const lowerWick = Math.max(0, Math.min(open, close) - low);
         const rejection = close > open && lowerWick >= body;
-        if ((rejection || strongBullish) && !inNoTradeZone) {
+        if (rejection || strongBullish) {
           setup = { side: 'LONG', optionType: 'CE' };
         }
       }
@@ -136,7 +135,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         shortRetestConsumed = true;
         const upperWick = Math.max(0, high - Math.max(open, close));
         const rejection = close < open && upperWick >= body;
-        if ((rejection || strongBearish) && !inNoTradeZone) {
+        if (rejection || strongBearish) {
           setup = { side: 'SHORT', optionType: 'PE' };
         }
       }
@@ -146,7 +145,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
       const strike = Math.round(entrySpot / strikeStep) * strikeStep;
       const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
       const stopPremium = Math.max(0.05, entryPremium * (1 - stopLossPct / 100));
-      const targetPremium = entryPremium * (1 + targetPct / 100);
+      const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
       let exitIndex = dayCandles.length - 1;
       let exitSpot = closes[exitIndex];
       let exitPremium = getOptionPremiumFromSpotMove({
@@ -195,7 +194,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
           reason = 'STOP_LOSS';
           break;
         }
-        if (favorablePremium >= targetPremium) {
+        if (hasTarget && favorablePremium >= targetPremium) {
           exitIndex = j;
           exitSpot = closes[j];
           exitPremium = targetPremium;
@@ -232,13 +231,15 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         entryPrice: Number(entrySpot.toFixed(2)),
         exitPrice: Number(exitSpot.toFixed(2)),
         stopLoss: Number(stopPremium.toFixed(2)),
-        target: Number(targetPremium.toFixed(2)),
+        target: hasTarget ? Number(targetPremium.toFixed(2)) : null,
         qty: lotSize * lotCount,
         premium: Number(entryPremium.toFixed(2)),
         lotCount,
         investmentAmount: Number(invested.toFixed(2)),
         stopLossAmount: Number((Math.max(0, entryPremium - stopPremium) * lotSize * lotCount).toFixed(2)),
-        targetAmount: Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2)),
+        targetAmount: hasTarget
+          ? Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2))
+          : null,
         pnl: Number(pnl.toFixed(2)),
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
