@@ -101,26 +101,6 @@ function calculateDmi(highs, lows, closes, length = 14, smoothing = 10) {
   return { diplus, diminus, adx };
 }
 
-function calculateAtr(highs, lows, closes, period = 14) {
-  const n = highs.length;
-  const tr = new Array(n).fill(0);
-  for (let i = 1; i < n; i += 1) {
-    const highLow = highs[i] - lows[i];
-    const highClose = Math.abs(highs[i] - closes[i - 1]);
-    const lowClose = Math.abs(lows[i] - closes[i - 1]);
-    tr[i] = Math.max(highLow, highClose, lowClose);
-  }
-  const atr = new Array(n).fill(null);
-  if (n <= period) return atr;
-  let seed = 0;
-  for (let i = 1; i <= period; i += 1) seed += tr[i] || 0;
-  atr[period] = seed / period;
-  for (let i = period + 1; i < n; i += 1) {
-    atr[i] = ((atr[i - 1] || 0) * (period - 1) + (tr[i] || 0)) / period;
-  }
-  return atr;
-}
-
 function runStrategyBreakoutRetest({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
@@ -142,12 +122,6 @@ function runStrategyBreakoutRetest({ candles, settings }) {
   const minBreakoutBodyPct = Math.max(0.35, Number(settings.minBreakoutBodyPct) || 0.5);
   const breakoutRangeMult = Math.max(0.8, Number(settings.breakoutRangeMult) || 1.0);
   const breakoutVolumeMult = Math.max(0.8, Number(settings.breakoutVolumeMult) || 1.2);
-  const minTrendAdx = Math.max(0, Number(settings.minTrendAdx) || 0);
-  const atrPeriod = Math.max(5, Number(settings.atrPeriod) || 14);
-  const minAtrPct = Math.max(0, Number(settings.minAtrPct) || 0);
-  const maxAtrPct = Math.max(minAtrPct, Number(settings.maxAtrPct) || 100);
-  const maxDailyLossAmount = Math.max(0, Number(settings.maxDailyLossAmount) || 0);
-  const maxConsecutiveLosses = Math.max(0, Math.floor(Number(settings.maxConsecutiveLosses) || 0));
   const closeLocationBandPct = 0.4;
 
   const byDay = new Map();
@@ -170,8 +144,6 @@ function runStrategyBreakoutRetest({ candles, settings }) {
     const lows = dayCandles.map((c) => Number(c[3]));
     const closes = dayCandles.map((c) => Number(c[4]));
     const volumes = dayCandles.map((c) => Number(c[5] ?? 0));
-    const { adx } = calculateDmi(highs, lows, closes, 14, 10);
-    const atr = calculateAtr(highs, lows, closes, atrPeriod);
     const openingIndexes = [];
     for (let i = 0; i < dayCandles.length; i += 1) {
       const clock = getIstClock(dayCandles[i][0]);
@@ -185,16 +157,10 @@ function runStrategyBreakoutRetest({ candles, settings }) {
     if (!Number.isFinite(openingRange) || openingRange <= 0) continue;
 
     let tradesToday = 0;
-    let dayPnl = 0;
-    let consecutiveLosses = 0;
-
     for (let i = openingIndexes[openingIndexes.length - 1] + 1; i < dayCandles.length; i += 1) {
       if (tradesToday >= maxTradesPerDay) break;
-      if (maxDailyLossAmount > 0 && dayPnl <= -maxDailyLossAmount) break;
-      if (maxConsecutiveLosses > 0 && consecutiveLosses >= maxConsecutiveLosses) break;
       const clock = getIstClock(dayCandles[i][0]);
       if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
-      if (minTrendAdx > 0 && (!Number.isFinite(adx[i]) || adx[i] < minTrendAdx)) continue;
 
       const open = opens[i];
       const high = highs[i];
@@ -203,8 +169,6 @@ function runStrategyBreakoutRetest({ candles, settings }) {
       const range = Math.max(0.0001, high - low);
       const body = Math.abs(close - open);
       const bodyPct = body / range;
-      const atrPct = Number.isFinite(atr[i]) && close > 0 ? (atr[i] / close) * 100 : null;
-      if (Number.isFinite(atrPct) && (atrPct < minAtrPct || atrPct > maxAtrPct)) continue;
       const closesNearHigh = (high - close) <= range * closeLocationBandPct;
       const closesNearLow = (close - low) <= range * closeLocationBandPct;
       const avgPrevRange =
@@ -337,8 +301,6 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
       });
-      dayPnl += pnl;
-      consecutiveLosses = pnl < 0 ? consecutiveLosses + 1 : 0;
       tradesToday += 1;
     }
   }
@@ -362,12 +324,6 @@ function runStrategyDowTheory({ candles, settings }) {
   const trendLookback = Math.max(6, Number(settings.trendLookbackCandles) || 10);
   const pullbackLookback = Math.max(2, Number(settings.pullbackLookbackCandles) || 4);
   const minBreakoutPct = Math.max(0.0005, Number(settings.minBreakoutPct) || 0.001);
-  const minTrendAdx = Math.max(0, Number(settings.minTrendAdx) || 0);
-  const atrPeriod = Math.max(5, Number(settings.atrPeriod) || 14);
-  const minAtrPct = Math.max(0, Number(settings.minAtrPct) || 0);
-  const maxAtrPct = Math.max(minAtrPct, Number(settings.maxAtrPct) || 100);
-  const maxDailyLossAmount = Math.max(0, Number(settings.maxDailyLossAmount) || 0);
-  const maxConsecutiveLosses = Math.max(0, Math.floor(Number(settings.maxConsecutiveLosses) || 0));
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 585);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
@@ -392,20 +348,13 @@ function runStrategyDowTheory({ candles, settings }) {
     const highs = dayCandles.map((c) => Number(c[2]));
     const lows = dayCandles.map((c) => Number(c[3]));
     const closes = dayCandles.map((c) => Number(c[4]));
-    const { adx } = calculateDmi(highs, lows, closes, 14, 10);
-    const atr = calculateAtr(highs, lows, closes, atrPeriod);
     let tradesToday = 0;
-    let dayPnl = 0;
-    let consecutiveLosses = 0;
 
     for (let i = trendLookback + pullbackLookback; i < dayCandles.length; i += 1) {
       if (tradesToday >= maxTradesPerDay) break;
-      if (maxDailyLossAmount > 0 && dayPnl <= -maxDailyLossAmount) break;
-      if (maxConsecutiveLosses > 0 && consecutiveLosses >= maxConsecutiveLosses) break;
 
       const clock = getIstClock(dayCandles[i][0]);
       if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
-      if (minTrendAdx > 0 && (!Number.isFinite(adx[i]) || adx[i] < minTrendAdx)) continue;
 
       const trendStart = i - trendLookback - pullbackLookback;
       const trendEnd = i - pullbackLookback;
@@ -427,8 +376,6 @@ function runStrategyDowTheory({ candles, settings }) {
       const pullbackHigh = Math.max(...highs.slice(pullbackStart, i));
       const pullbackLow = Math.min(...lows.slice(pullbackStart, i));
       const close = closes[i];
-      const atrPct = Number.isFinite(atr[i]) && close > 0 ? (atr[i] / close) * 100 : null;
-      if (Number.isFinite(atrPct) && (atrPct < minAtrPct || atrPct > maxAtrPct)) continue;
 
       let setup = null;
       if (trendUp && close > pullbackHigh * (1 + minBreakoutPct)) {
@@ -485,7 +432,6 @@ function runStrategyDowTheory({ candles, settings }) {
           strike,
           strikeStep,
         });
-
         if (hasStopLoss && adversePremium <= stopPremium) {
           exitIndex = j;
           exitSpot = closes[j];
@@ -545,8 +491,6 @@ function runStrategyDowTheory({ candles, settings }) {
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
       });
-      dayPnl += pnl;
-      consecutiveLosses = pnl < 0 ? consecutiveLosses + 1 : 0;
       tradesToday += 1;
     }
   }
@@ -562,12 +506,12 @@ function runStrategyAdxMacdReversal({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 20);
-  const adxLength = Math.max(5, Number(settings.adxLength) || 14);
-  const adxSmoothing = Math.max(2, Number(settings.adxSmoothing) || 10);
-  const macdFast = Math.max(2, Number(settings.macdFast) || 12);
-  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 26);
-  const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
-  const minAdx = Math.max(0, Number(settings.minAdx) || 0);
+  const adxLength = Math.max(5, Number(settings.adxLength) || 22);
+  const adxSmoothing = Math.max(2, Number(settings.adxSmoothing) || 18);
+  const macdFast = Math.max(2, Number(settings.macdFast) || 18);
+  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 45);
+  const macdSignal = Math.max(2, Number(settings.macdSignal) || 15);
+  const minAdx = Math.max(0, Number(settings.minAdx) || 22);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 915);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);

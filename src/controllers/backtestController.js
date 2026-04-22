@@ -4,6 +4,19 @@ const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
 const { runStrategyBreakoutRetest, runStrategyDowTheory, runStrategyAdxMacdReversal } = require('../services/strategyService');
 
+function parseNumberInput(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'string' && value.trim() === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseStringInput(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  const parsed = String(value).trim();
+  return parsed.length > 0 ? parsed : fallback;
+}
+
 function health(_req, res) {
   res.json({ ok: true, service: 'backtesting-api' });
 }
@@ -54,31 +67,25 @@ async function runStrategyOne(req, res) {
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
-      lotCount: Number(req.body?.lotCount ?? 1),
-      lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
-      premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
-      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
-      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
-      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
-      entryFromTime: String(req.body?.entryFromTime ?? '09:30'),
-      entryToTime: String(req.body?.entryToTime ?? '14:00'),
-      minBreakoutBodyPct: Number(req.body?.minBreakoutBodyPct ?? 0.5),
-      breakoutRangeMult: Number(req.body?.breakoutRangeMult ?? 1.0),
-      breakoutVolumeMult: Number(req.body?.breakoutVolumeMult ?? 1.2),
-      minTrendAdx: Number(req.body?.minTrendAdx ?? 0),
-      atrPeriod: Number(req.body?.atrPeriod ?? 14),
-      minAtrPct: Number(req.body?.minAtrPct ?? 0),
-      maxAtrPct: Number(req.body?.maxAtrPct ?? 100),
-      maxDailyLossAmount: Number(req.body?.maxDailyLossAmount ?? 0),
-      maxConsecutiveLosses: Number(req.body?.maxConsecutiveLosses ?? 0),
-      strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      stopLossPct: hasStopLossInput ? parseNumberInput(req.body?.stopLossPct, 12) : 12,
+      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      minBreakoutBodyPct: parseNumberInput(req.body?.minBreakoutBodyPct, 0.5),
+      breakoutRangeMult: parseNumberInput(req.body?.breakoutRangeMult, 1.0),
+      breakoutVolumeMult: parseNumberInput(req.body?.breakoutVolumeMult, 1.2),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     };
 
     const payload = await fetchWithRateLimitRetry({
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
     });
 
     const result = runStrategyBreakoutRetest({ candles: payload.rows, settings });
@@ -87,7 +94,7 @@ async function runStrategyOne(req, res) {
       strategyKey: 'strategy1_breakout_retest',
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       settings,
       summary: result.summary,
       status: 'completed',
@@ -110,7 +117,7 @@ async function runStrategyOne(req, res) {
       ok: true,
       runId: runDoc._id,
       strategy: 'Strategy 1 - 15M Breakout + First Retest',
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       symbol: settings.symbol,
       interval: String(interval),
       summary: result.summary,
@@ -141,31 +148,25 @@ async function runStrategyTwo(req, res) {
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
-      lotCount: Number(req.body?.lotCount ?? 1),
-      lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
-      premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
-      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
-      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
-      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
-      entryFromTime: String(req.body?.entryFromTime ?? '09:45'),
-      entryToTime: String(req.body?.entryToTime ?? '14:30'),
-      trendLookbackCandles: Number(req.body?.trendLookbackCandles ?? 10),
-      pullbackLookbackCandles: Number(req.body?.pullbackLookbackCandles ?? 4),
-      minBreakoutPct: Number(req.body?.minBreakoutPct ?? 0.001),
-      minTrendAdx: Number(req.body?.minTrendAdx ?? 0),
-      atrPeriod: Number(req.body?.atrPeriod ?? 14),
-      minAtrPct: Number(req.body?.minAtrPct ?? 0),
-      maxAtrPct: Number(req.body?.maxAtrPct ?? 100),
-      maxDailyLossAmount: Number(req.body?.maxDailyLossAmount ?? 0),
-      maxConsecutiveLosses: Number(req.body?.maxConsecutiveLosses ?? 0),
-      strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      stopLossPct: hasStopLossInput ? parseNumberInput(req.body?.stopLossPct, 12) : 12,
+      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:45'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      trendLookbackCandles: parseNumberInput(req.body?.trendLookbackCandles, 10),
+      pullbackLookbackCandles: parseNumberInput(req.body?.pullbackLookbackCandles, 4),
+      minBreakoutPct: parseNumberInput(req.body?.minBreakoutPct, 0.001),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     };
 
     const payload = await fetchWithRateLimitRetry({
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
     });
 
     const result = runStrategyDowTheory({ candles: payload.rows, settings });
@@ -174,7 +175,7 @@ async function runStrategyTwo(req, res) {
       strategyKey: 'strategy2_dow_theory',
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       settings,
       summary: result.summary,
       status: 'completed',
@@ -197,7 +198,7 @@ async function runStrategyTwo(req, res) {
       ok: true,
       runId: runDoc._id,
       strategy: 'Strategy 2 - Dow Theory Trend Continuation',
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       symbol: settings.symbol,
       interval: String(interval),
       summary: result.summary,
@@ -226,26 +227,26 @@ async function runStrategyThree(req, res) {
     const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
-      lotCount: Number(req.body?.lotCount ?? 1),
-      lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
-      premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
-      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 20),
-      entryFromTime: String(req.body?.entryFromTime ?? '09:30'),
-      entryToTime: String(req.body?.entryToTime ?? '15:00'),
-      adxLength: Number(req.body?.adxLength ?? 14),
-      adxSmoothing: Number(req.body?.adxSmoothing ?? 10),
-      macdFast: Number(req.body?.macdFast ?? 12),
-      macdSlow: Number(req.body?.macdSlow ?? 26),
-      macdSignal: Number(req.body?.macdSignal ?? 9),
-      minAdx: Number(req.body?.minAdx ?? 0),
-      strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 20),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      adxLength: parseNumberInput(req.body?.adxLength, 22),
+      adxSmoothing: parseNumberInput(req.body?.adxSmoothing, 18),
+      macdFast: parseNumberInput(req.body?.macdFast, 18),
+      macdSlow: parseNumberInput(req.body?.macdSlow, 45),
+      macdSignal: parseNumberInput(req.body?.macdSignal, 15),
+      minAdx: parseNumberInput(req.body?.minAdx, 22),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     };
 
     const payload = await fetchWithRateLimitRetry({
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
     });
     const result = runStrategyAdxMacdReversal({ candles: payload.rows, settings });
 
@@ -253,7 +254,7 @@ async function runStrategyThree(req, res) {
       strategyKey: 'strategy3_adx_macd_reversal',
       symbol: settings.symbol,
       interval: String(interval),
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       settings,
       summary: result.summary,
       status: 'completed',
@@ -275,7 +276,7 @@ async function runStrategyThree(req, res) {
       ok: true,
       runId: runDoc._id,
       strategy: 'Strategy 3 - ADX/MACD Reversal Confluence',
-      year: Number(year),
+      year: parseNumberInput(year, 2026),
       symbol: settings.symbol,
       interval: String(interval),
       summary: result.summary,
