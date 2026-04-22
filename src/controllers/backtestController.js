@@ -2,7 +2,7 @@ const StrategyRun = require('../models/strategyRun');
 const StrategyTrade = require('../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
-const { runStrategyBreakoutRetest, runStrategyDowTheory } = require('../services/strategyService');
+const { runStrategyBreakoutRetest, runStrategyDowTheory, runStrategyEmaPullback } = require('../services/strategyService');
 
 function health(_req, res) {
   res.json({ ok: true, service: 'backtesting-api' });
@@ -209,6 +209,84 @@ async function runStrategyTwo(req, res) {
   }
 }
 
+async function runStrategyThree(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
+    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
+      lotCount: Number(req.body?.lotCount ?? 1),
+      lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
+      premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
+      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
+      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
+      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
+      entryFromTime: String(req.body?.entryFromTime ?? '09:45'),
+      entryToTime: String(req.body?.entryToTime ?? '14:30'),
+      emaFastPeriod: Number(req.body?.emaFastPeriod ?? 20),
+      emaSlowPeriod: Number(req.body?.emaSlowPeriod ?? 50),
+      pullbackTolerancePct: Number(req.body?.pullbackTolerancePct ?? 0.003),
+      strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
+    };
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: Number(year),
+    });
+    const result = runStrategyEmaPullback({ candles: payload.rows, settings });
+
+    const runDoc = await StrategyRun.create({
+      strategyKey: 'strategy3_ema_pullback',
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: Number(year),
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: 'strategy3_ema_pullback',
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 3 - EMA Pullback Bounce',
+      year: Number(year),
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 
 async function getRunTrades(req, res) {
   try {
@@ -252,6 +330,10 @@ async function getStrategyTwoRunTrades(req, res) {
   return getRunTradesByStrategy(req, res, 'strategy2_dow_theory');
 }
 
+async function getStrategyThreeRunTrades(req, res) {
+  return getRunTradesByStrategy(req, res, 'strategy3_ema_pullback');
+}
+
 function runBacktestStub(req, res) {
   const { symbol, from, to } = req.body || {};
   if (!symbol || !from || !to) {
@@ -268,7 +350,9 @@ module.exports = {
   getCandles,
   runStrategyOne,
   runStrategyTwo,
+  runStrategyThree,
   getStrategyOneRunTrades,
   getStrategyTwoRunTrades,
+  getStrategyThreeRunTrades,
   runBacktestStub,
 };
