@@ -20,18 +20,105 @@ function getSummaryFromTrades(trades) {
 }
 
 function calculateEma(values, period) {
-  const alpha = 2 / (period + 1);
-  const out = new Array(values.length).fill(null);
-  if (values.length < period) return out;
-  let sum = 0;
-  for (let i = 0; i < period; i += 1) sum += values[i];
-  let prevEma = sum / period;
-  out[period - 1] = prevEma;
+  const result = new Array(values.length).fill(null);
+  if (values.length < period) return result;
+  const k = 2 / (period + 1);
+  let seed = 0;
+  for (let i = 0; i < period; i += 1) seed += values[i];
+  let prev = seed / period;
+  result[period - 1] = prev;
   for (let i = period; i < values.length; i += 1) {
-    prevEma = values[i] * alpha + prevEma * (1 - alpha);
-    out[i] = prevEma;
+    prev = values[i] * k + prev * (1 - k);
+    result[i] = prev;
   }
-  return out;
+  return result;
+}
+
+function calculateMacd(values, fast, slow, signal) {
+  const emaFast = calculateEma(values, fast);
+  const emaSlow = calculateEma(values, slow);
+  const macdLine = values.map((_, i) =>
+    Number.isFinite(emaFast[i]) && Number.isFinite(emaSlow[i]) ? emaFast[i] - emaSlow[i] : null
+  );
+  const signalLine = calculateEma(macdLine.map((v) => (Number.isFinite(v) ? v : 0)), signal);
+  return { macdLine, signalLine };
+}
+
+function calculateDmi(highs, lows, closes, length = 14, smoothing = 10) {
+  const n = highs.length;
+  const tr = new Array(n).fill(0);
+  const plusDm = new Array(n).fill(0);
+  const minusDm = new Array(n).fill(0);
+  for (let i = 1; i < n; i += 1) {
+    const upMove = highs[i] - highs[i - 1];
+    const downMove = lows[i - 1] - lows[i];
+    plusDm[i] = upMove > downMove && upMove > 0 ? upMove : 0;
+    minusDm[i] = downMove > upMove && downMove > 0 ? downMove : 0;
+    const highLow = highs[i] - lows[i];
+    const highClose = Math.abs(highs[i] - closes[i - 1]);
+    const lowClose = Math.abs(lows[i] - closes[i - 1]);
+    tr[i] = Math.max(highLow, highClose, lowClose);
+  }
+  const diplus = new Array(n).fill(null);
+  const diminus = new Array(n).fill(null);
+  const dx = new Array(n).fill(null);
+  let atr = 0;
+  let pdm = 0;
+  let mdm = 0;
+  for (let i = 1; i <= length; i += 1) {
+    atr += tr[i] || 0;
+    pdm += plusDm[i] || 0;
+    mdm += minusDm[i] || 0;
+  }
+  for (let i = length; i < n; i += 1) {
+    if (i > length) {
+      atr = atr - atr / length + (tr[i] || 0);
+      pdm = pdm - pdm / length + (plusDm[i] || 0);
+      mdm = mdm - mdm / length + (minusDm[i] || 0);
+    }
+    const plus = atr > 0 ? (100 * pdm) / atr : 0;
+    const minus = atr > 0 ? (100 * mdm) / atr : 0;
+    diplus[i] = plus;
+    diminus[i] = minus;
+    const sum = plus + minus;
+    dx[i] = sum > 0 ? (100 * Math.abs(plus - minus)) / sum : 0;
+  }
+  const adx = new Array(n).fill(null);
+  const start = length * 2 - 1;
+  let seed = 0;
+  let count = 0;
+  for (let i = length; i <= Math.min(start, n - 1); i += 1) {
+    if (Number.isFinite(dx[i])) {
+      seed += dx[i];
+      count += 1;
+    }
+  }
+  if (count > 0 && start < n) adx[start] = seed / count;
+  for (let i = start + 1; i < n; i += 1) {
+    const prev = adx[i - 1];
+    adx[i] = Number.isFinite(prev) ? (prev * (smoothing - 1) + (dx[i] || 0)) / smoothing : dx[i];
+  }
+  return { diplus, diminus, adx };
+}
+
+function calculateAtr(highs, lows, closes, period = 14) {
+  const n = highs.length;
+  const tr = new Array(n).fill(0);
+  for (let i = 1; i < n; i += 1) {
+    const highLow = highs[i] - lows[i];
+    const highClose = Math.abs(highs[i] - closes[i - 1]);
+    const lowClose = Math.abs(lows[i] - closes[i - 1]);
+    tr[i] = Math.max(highLow, highClose, lowClose);
+  }
+  const atr = new Array(n).fill(null);
+  if (n <= period) return atr;
+  let seed = 0;
+  for (let i = 1; i <= period; i += 1) seed += tr[i] || 0;
+  atr[period] = seed / period;
+  for (let i = period + 1; i < n; i += 1) {
+    atr[i] = ((atr[i - 1] || 0) * (period - 1) + (tr[i] || 0)) / period;
+  }
+  return atr;
 }
 
 function runStrategyBreakoutRetest({ candles, settings }) {
@@ -55,6 +142,12 @@ function runStrategyBreakoutRetest({ candles, settings }) {
   const minBreakoutBodyPct = Math.max(0.35, Number(settings.minBreakoutBodyPct) || 0.5);
   const breakoutRangeMult = Math.max(0.8, Number(settings.breakoutRangeMult) || 1.0);
   const breakoutVolumeMult = Math.max(0.8, Number(settings.breakoutVolumeMult) || 1.2);
+  const minTrendAdx = Math.max(0, Number(settings.minTrendAdx) || 0);
+  const atrPeriod = Math.max(5, Number(settings.atrPeriod) || 14);
+  const minAtrPct = Math.max(0, Number(settings.minAtrPct) || 0);
+  const maxAtrPct = Math.max(minAtrPct, Number(settings.maxAtrPct) || 100);
+  const maxDailyLossAmount = Math.max(0, Number(settings.maxDailyLossAmount) || 0);
+  const maxConsecutiveLosses = Math.max(0, Math.floor(Number(settings.maxConsecutiveLosses) || 0));
   const closeLocationBandPct = 0.4;
 
   const byDay = new Map();
@@ -77,6 +170,8 @@ function runStrategyBreakoutRetest({ candles, settings }) {
     const lows = dayCandles.map((c) => Number(c[3]));
     const closes = dayCandles.map((c) => Number(c[4]));
     const volumes = dayCandles.map((c) => Number(c[5] ?? 0));
+    const { adx } = calculateDmi(highs, lows, closes, 14, 10);
+    const atr = calculateAtr(highs, lows, closes, atrPeriod);
     const openingIndexes = [];
     for (let i = 0; i < dayCandles.length; i += 1) {
       const clock = getIstClock(dayCandles[i][0]);
@@ -90,11 +185,16 @@ function runStrategyBreakoutRetest({ candles, settings }) {
     if (!Number.isFinite(openingRange) || openingRange <= 0) continue;
 
     let tradesToday = 0;
+    let dayPnl = 0;
+    let consecutiveLosses = 0;
 
     for (let i = openingIndexes[openingIndexes.length - 1] + 1; i < dayCandles.length; i += 1) {
       if (tradesToday >= maxTradesPerDay) break;
+      if (maxDailyLossAmount > 0 && dayPnl <= -maxDailyLossAmount) break;
+      if (maxConsecutiveLosses > 0 && consecutiveLosses >= maxConsecutiveLosses) break;
       const clock = getIstClock(dayCandles[i][0]);
       if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
+      if (minTrendAdx > 0 && (!Number.isFinite(adx[i]) || adx[i] < minTrendAdx)) continue;
 
       const open = opens[i];
       const high = highs[i];
@@ -103,6 +203,8 @@ function runStrategyBreakoutRetest({ candles, settings }) {
       const range = Math.max(0.0001, high - low);
       const body = Math.abs(close - open);
       const bodyPct = body / range;
+      const atrPct = Number.isFinite(atr[i]) && close > 0 ? (atr[i] / close) * 100 : null;
+      if (Number.isFinite(atrPct) && (atrPct < minAtrPct || atrPct > maxAtrPct)) continue;
       const closesNearHigh = (high - close) <= range * closeLocationBandPct;
       const closesNearLow = (close - low) <= range * closeLocationBandPct;
       const avgPrevRange =
@@ -235,6 +337,8 @@ function runStrategyBreakoutRetest({ candles, settings }) {
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
       });
+      dayPnl += pnl;
+      consecutiveLosses = pnl < 0 ? consecutiveLosses + 1 : 0;
       tradesToday += 1;
     }
   }
@@ -258,6 +362,12 @@ function runStrategyDowTheory({ candles, settings }) {
   const trendLookback = Math.max(6, Number(settings.trendLookbackCandles) || 10);
   const pullbackLookback = Math.max(2, Number(settings.pullbackLookbackCandles) || 4);
   const minBreakoutPct = Math.max(0.0005, Number(settings.minBreakoutPct) || 0.001);
+  const minTrendAdx = Math.max(0, Number(settings.minTrendAdx) || 0);
+  const atrPeriod = Math.max(5, Number(settings.atrPeriod) || 14);
+  const minAtrPct = Math.max(0, Number(settings.minAtrPct) || 0);
+  const maxAtrPct = Math.max(minAtrPct, Number(settings.maxAtrPct) || 100);
+  const maxDailyLossAmount = Math.max(0, Number(settings.maxDailyLossAmount) || 0);
+  const maxConsecutiveLosses = Math.max(0, Math.floor(Number(settings.maxConsecutiveLosses) || 0));
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 585);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
@@ -282,13 +392,20 @@ function runStrategyDowTheory({ candles, settings }) {
     const highs = dayCandles.map((c) => Number(c[2]));
     const lows = dayCandles.map((c) => Number(c[3]));
     const closes = dayCandles.map((c) => Number(c[4]));
+    const { adx } = calculateDmi(highs, lows, closes, 14, 10);
+    const atr = calculateAtr(highs, lows, closes, atrPeriod);
     let tradesToday = 0;
+    let dayPnl = 0;
+    let consecutiveLosses = 0;
 
     for (let i = trendLookback + pullbackLookback; i < dayCandles.length; i += 1) {
       if (tradesToday >= maxTradesPerDay) break;
+      if (maxDailyLossAmount > 0 && dayPnl <= -maxDailyLossAmount) break;
+      if (maxConsecutiveLosses > 0 && consecutiveLosses >= maxConsecutiveLosses) break;
 
       const clock = getIstClock(dayCandles[i][0]);
       if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
+      if (minTrendAdx > 0 && (!Number.isFinite(adx[i]) || adx[i] < minTrendAdx)) continue;
 
       const trendStart = i - trendLookback - pullbackLookback;
       const trendEnd = i - pullbackLookback;
@@ -310,6 +427,8 @@ function runStrategyDowTheory({ candles, settings }) {
       const pullbackHigh = Math.max(...highs.slice(pullbackStart, i));
       const pullbackLow = Math.min(...lows.slice(pullbackStart, i));
       const close = closes[i];
+      const atrPct = Number.isFinite(atr[i]) && close > 0 ? (atr[i] / close) * 100 : null;
+      if (Number.isFinite(atrPct) && (atrPct < minAtrPct || atrPct > maxAtrPct)) continue;
 
       let setup = null;
       if (trendUp && close > pullbackHigh * (1 + minBreakoutPct)) {
@@ -426,6 +545,8 @@ function runStrategyDowTheory({ candles, settings }) {
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
       });
+      dayPnl += pnl;
+      consecutiveLosses = pnl < 0 ? consecutiveLosses + 1 : 0;
       tradesToday += 1;
     }
   }
@@ -433,27 +554,24 @@ function runStrategyDowTheory({ candles, settings }) {
   return { summary: getSummaryFromTrades(trades), trades };
 }
 
-function runStrategyEmaPullback({ candles, settings }) {
+function runStrategyAdxMacdReversal({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
   const lotCount = Math.max(1, Number(settings.lotCount) || 1);
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.85);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const rawStopLossPct = Number(settings.stopLossPct);
-  const hasStopLoss = Number.isFinite(rawStopLossPct) && rawStopLossPct > 0;
-  const stopLossPct = hasStopLoss ? Math.max(0.5, rawStopLossPct) : null;
-  const rawTargetPct = Number(settings.targetPct);
-  const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
-  const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
-  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
-  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 585);
-  const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 20);
+  const adxLength = Math.max(5, Number(settings.adxLength) || 14);
+  const adxSmoothing = Math.max(2, Number(settings.adxSmoothing) || 10);
+  const macdFast = Math.max(2, Number(settings.macdFast) || 12);
+  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 26);
+  const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
+  const minAdx = Math.max(0, Number(settings.minAdx) || 0);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 915);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
   const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
-  const emaFastPeriod = Math.max(5, Number(settings.emaFastPeriod) || 20);
-  const emaSlowPeriod = Math.max(10, Number(settings.emaSlowPeriod) || 50);
-  const pullbackTolerancePct = Math.max(0.0002, Number(settings.pullbackTolerancePct) || 0.003);
 
   const byDay = new Map();
   for (const c of candles) {
@@ -465,162 +583,222 @@ function runStrategyEmaPullback({ candles, settings }) {
 
   const dayKeys = Array.from(byDay.keys()).sort();
   const trades = [];
-
-  for (let d = 0; d < dayKeys.length; d += 1) {
-    const dayCandles = byDay.get(dayKeys[d]) || [];
-    const closes = dayCandles.map((c) => Number(c[4]));
+  for (const dayKey of dayKeys) {
+    const dayCandles = byDay.get(dayKey) || [];
+    if (dayCandles.length < Math.max(adxLength * 2 + 2, macdSlow + macdSignal + 2)) continue;
     const highs = dayCandles.map((c) => Number(c[2]));
     const lows = dayCandles.map((c) => Number(c[3]));
-    const opens = dayCandles.map((c) => Number(c[1]));
-    if (dayCandles.length < Math.max(emaFastPeriod, emaSlowPeriod) + 5) continue;
+    const closes = dayCandles.map((c) => Number(c[4]));
+    const { diplus, diminus, adx } = calculateDmi(highs, lows, closes, adxLength, adxSmoothing);
+    const { macdLine, signalLine } = calculateMacd(closes, macdFast, macdSlow, macdSignal);
 
-    const emaFast = calculateEma(closes, emaFastPeriod);
-    const emaSlow = calculateEma(closes, emaSlowPeriod);
+    let position = 0;
+    let openTrade = null;
     let tradesToday = 0;
-
-    for (let i = Math.max(emaFastPeriod, emaSlowPeriod); i < dayCandles.length; i += 1) {
-      if (tradesToday >= maxTradesPerDay) break;
+    for (let i = 0; i < dayCandles.length; i += 1) {
       const clock = getIstClock(dayCandles[i][0]);
-      if (clock.minutes < normalizedEntryFrom || clock.minutes > normalizedEntryTo) continue;
-      if (!Number.isFinite(emaFast[i]) || !Number.isFinite(emaSlow[i])) continue;
-
+      const inWindow = clock.minutes >= normalizedEntryFrom && clock.minutes <= normalizedEntryTo;
+      const metricsReady =
+        Number.isFinite(diplus[i]) &&
+        Number.isFinite(diminus[i]) &&
+        Number.isFinite(adx[i]) &&
+        Number.isFinite(macdLine[i]) &&
+        Number.isFinite(signalLine[i]);
+      const longcheck =
+        metricsReady &&
+        adx[i] >= minAdx &&
+        diplus[i] > diminus[i] &&
+        macdLine[i] > signalLine[i];
+      const shortcheck =
+        metricsReady &&
+        adx[i] >= minAdx &&
+        diminus[i] > diplus[i] &&
+        signalLine[i] > macdLine[i];
       const close = closes[i];
-      const open = opens[i];
-      const low = lows[i];
-      const high = highs[i];
-      const prevClose = i > 0 ? closes[i - 1] : close;
-      const prevFast = i > 0 ? emaFast[i - 1] : emaFast[i];
-      const prevSlow = i > 0 ? emaSlow[i - 1] : emaSlow[i];
-      const trendUp = close > emaSlow[i] && emaFast[i] > emaSlow[i];
-      const trendDown = close < emaSlow[i] && emaFast[i] < emaSlow[i];
-      const touchedFast = low <= emaFast[i] * (1 + pullbackTolerancePct);
-      const touchedSlow = low <= emaSlow[i] * (1 + pullbackTolerancePct);
-      const touchedFastBear = high >= emaFast[i] * (1 - pullbackTolerancePct);
-      const touchedSlowBear = high >= emaSlow[i] * (1 - pullbackTolerancePct);
-      const pullbackInUptrend = trendUp && (touchedFast || touchedSlow) && prevClose >= Math.min(prevFast, prevSlow);
-      const pullbackInDowntrend = trendDown && (touchedFastBear || touchedSlowBear) && prevClose <= Math.max(prevFast, prevSlow);
-      const bullishBounce = close > open && close >= high - (high - low) * 0.35;
-      const bearishBounce = close < open && close <= low + (high - low) * 0.35;
 
-      let setup = null;
-      if (pullbackInUptrend && bullishBounce) setup = { side: 'LONG', optionType: 'CE' };
-      if (!setup && pullbackInDowntrend && bearishBounce) setup = { side: 'SHORT', optionType: 'PE' };
-      if (!setup) continue;
-
-      const entrySpot = close;
-      const strike = Math.round(entrySpot / strikeStep) * strikeStep;
-      const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
-      const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
-      const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
-      let exitIndex = dayCandles.length - 1;
-      let exitSpot = closes[exitIndex];
-      let exitPremium = getOptionPremiumFromSpotMove({
-        side: setup.side,
-        entrySpot,
-        currentSpot: exitSpot,
-        entryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
-      let reason = 'DAY_CLOSE';
-
-      for (let j = i + 1; j < dayCandles.length; j += 1) {
-        const favorablePremium = getOptionPremiumFromSpotMove({
-          side: setup.side,
-          entrySpot,
-          currentSpot: setup.side === 'LONG' ? highs[j] : lows[j],
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        const adversePremium = getOptionPremiumFromSpotMove({
-          side: setup.side,
-          entrySpot,
-          currentSpot: setup.side === 'LONG' ? lows[j] : highs[j],
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        const closePremium = getOptionPremiumFromSpotMove({
-          side: setup.side,
-          entrySpot,
-          currentSpot: closes[j],
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        if (hasStopLoss && adversePremium <= stopPremium) {
-          exitIndex = j;
-          exitSpot = closes[j];
-          exitPremium = stopPremium;
-          reason = 'STOP_LOSS';
-          break;
+      if (position === 0 && inWindow && tradesToday < maxTradesPerDay) {
+        if (longcheck || shortcheck) {
+          const side = longcheck ? 'LONG' : 'SHORT';
+          const optionType = longcheck ? 'CE' : 'PE';
+          const strike = Math.round(close / strikeStep) * strikeStep;
+          const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+          openTrade = {
+            pair: symbol,
+            type: optionType,
+            strike,
+            lotSize,
+            lots: lotCount,
+            closed: optionType,
+            order: 'BUY',
+            qty: lotSize * lotCount,
+            premium: Number(entryPremium.toFixed(2)),
+            lotCount,
+            side,
+            entryIndex: i,
+            entryTime: dayCandles[i][0],
+            entryPrice: Number(close.toFixed(2)),
+            entryPremium,
+          };
+          position = side === 'LONG' ? 1 : -1;
+          tradesToday += 1;
         }
-        if (hasTarget && favorablePremium >= targetPremium) {
-          exitIndex = j;
-          exitSpot = closes[j];
-          exitPremium = targetPremium;
-          reason = 'TARGET';
-          break;
+      } else if (position === 1 && shortcheck && openTrade) {
+        const exitPremium = getOptionPremiumFromSpotMove({
+          side: 'LONG',
+          entrySpot: openTrade.entryPrice,
+          currentSpot: close,
+          entryPremium: openTrade.entryPremium,
+          premiumLeverage,
+          strike: openTrade.strike,
+          strikeStep,
+        });
+        const invested = openTrade.entryPremium * lotSize * lotCount;
+        const finalValue = exitPremium * lotSize * lotCount;
+        const pnl = finalValue - invested;
+        trades.push({
+          ...openTrade,
+          buyPrice: Number(openTrade.entryPremium.toFixed(2)),
+          sellPrice: Number(exitPremium.toFixed(2)),
+          invested: Number(invested.toFixed(2)),
+          finalValue: Number(finalValue.toFixed(2)),
+          entryTime: openTrade.entryTime,
+          exitTime: dayCandles[i][0],
+          entryPrice: openTrade.entryPrice,
+          exitPrice: Number(close.toFixed(2)),
+          stopLoss: null,
+          target: null,
+          investmentAmount: Number(invested.toFixed(2)),
+          stopLossAmount: null,
+          targetAmount: null,
+          pnl: Number(pnl.toFixed(2)),
+          pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
+          reason: 'REVERSAL',
+        });
+        position = 0;
+        openTrade = null;
+        if (inWindow && tradesToday < maxTradesPerDay) {
+          const strike = Math.round(close / strikeStep) * strikeStep;
+          const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+          openTrade = {
+            pair: symbol,
+            type: 'PE',
+            strike,
+            lotSize,
+            lots: lotCount,
+            closed: 'PE',
+            order: 'BUY',
+            qty: lotSize * lotCount,
+            premium: Number(entryPremium.toFixed(2)),
+            lotCount,
+            side: 'SHORT',
+            entryIndex: i,
+            entryTime: dayCandles[i][0],
+            entryPrice: Number(close.toFixed(2)),
+            entryPremium,
+          };
+          position = -1;
+          tradesToday += 1;
         }
-        const jClock = getIstClock(dayCandles[j][0]);
-        if (jClock.minutes >= 930) {
-          exitIndex = j;
-          exitSpot = closes[j];
-          exitPremium = closePremium;
-          reason = 'DAY_CLOSE';
-          break;
+      } else if (position === -1 && longcheck && openTrade) {
+        const exitPremium = getOptionPremiumFromSpotMove({
+          side: 'SHORT',
+          entrySpot: openTrade.entryPrice,
+          currentSpot: close,
+          entryPremium: openTrade.entryPremium,
+          premiumLeverage,
+          strike: openTrade.strike,
+          strikeStep,
+        });
+        const invested = openTrade.entryPremium * lotSize * lotCount;
+        const finalValue = exitPremium * lotSize * lotCount;
+        const pnl = finalValue - invested;
+        trades.push({
+          ...openTrade,
+          buyPrice: Number(openTrade.entryPremium.toFixed(2)),
+          sellPrice: Number(exitPremium.toFixed(2)),
+          invested: Number(invested.toFixed(2)),
+          finalValue: Number(finalValue.toFixed(2)),
+          entryTime: openTrade.entryTime,
+          exitTime: dayCandles[i][0],
+          entryPrice: openTrade.entryPrice,
+          exitPrice: Number(close.toFixed(2)),
+          stopLoss: null,
+          target: null,
+          investmentAmount: Number(invested.toFixed(2)),
+          stopLossAmount: null,
+          targetAmount: null,
+          pnl: Number(pnl.toFixed(2)),
+          pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
+          reason: 'REVERSAL',
+        });
+        position = 0;
+        openTrade = null;
+        if (inWindow && tradesToday < maxTradesPerDay) {
+          const strike = Math.round(close / strikeStep) * strikeStep;
+          const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+          openTrade = {
+            pair: symbol,
+            type: 'CE',
+            strike,
+            lotSize,
+            lots: lotCount,
+            closed: 'CE',
+            order: 'BUY',
+            qty: lotSize * lotCount,
+            premium: Number(entryPremium.toFixed(2)),
+            lotCount,
+            side: 'LONG',
+            entryIndex: i,
+            entryTime: dayCandles[i][0],
+            entryPrice: Number(close.toFixed(2)),
+            entryPremium,
+          };
+          position = 1;
+          tradesToday += 1;
         }
       }
+    }
 
-      const invested = entryPremium * lotSize * lotCount;
+    if (openTrade) {
+      const finalClose = closes[closes.length - 1];
+      const exitPremium = getOptionPremiumFromSpotMove({
+        side: openTrade.side,
+        entrySpot: openTrade.entryPrice,
+        currentSpot: finalClose,
+        entryPremium: openTrade.entryPremium,
+        premiumLeverage,
+        strike: openTrade.strike,
+        strikeStep,
+      });
+      const invested = openTrade.entryPremium * lotSize * lotCount;
       const finalValue = exitPremium * lotSize * lotCount;
       const pnl = finalValue - invested;
       trades.push({
-        pair: symbol,
-        type: setup.optionType,
-        strike,
-        buyPrice: Number(entryPremium.toFixed(2)),
+        ...openTrade,
+        buyPrice: Number(openTrade.entryPremium.toFixed(2)),
         sellPrice: Number(exitPremium.toFixed(2)),
-        lotSize,
-        lots: lotCount,
         invested: Number(invested.toFixed(2)),
         finalValue: Number(finalValue.toFixed(2)),
-        closed: setup.optionType,
-        order: 'BUY',
-        entryTime: dayCandles[i][0],
-        exitTime: dayCandles[exitIndex][0],
-        entryPrice: Number(entrySpot.toFixed(2)),
-        exitPrice: Number(exitSpot.toFixed(2)),
-        stopLoss: hasStopLoss ? Number(stopPremium.toFixed(2)) : null,
-        target: hasTarget ? Number(targetPremium.toFixed(2)) : null,
-        qty: lotSize * lotCount,
-        premium: Number(entryPremium.toFixed(2)),
-        lotCount,
+        entryTime: openTrade.entryTime,
+        exitTime: dayCandles[dayCandles.length - 1][0],
+        entryPrice: openTrade.entryPrice,
+        exitPrice: Number(finalClose.toFixed(2)),
+        stopLoss: null,
+        target: null,
         investmentAmount: Number(invested.toFixed(2)),
-        stopLossAmount: hasStopLoss
-          ? Number((Math.max(0, entryPremium - stopPremium) * lotSize * lotCount).toFixed(2))
-          : null,
-        targetAmount: hasTarget
-          ? Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2))
-          : null,
+        stopLossAmount: null,
+        targetAmount: null,
         pnl: Number(pnl.toFixed(2)),
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
-        reason,
+        reason: 'DAY_CLOSE',
       });
-      tradesToday += 1;
     }
   }
-
   return { summary: getSummaryFromTrades(trades), trades };
 }
 
 module.exports = {
   runStrategyBreakoutRetest,
   runStrategyDowTheory,
-  runStrategyEmaPullback,
+  runStrategyAdxMacdReversal,
 };

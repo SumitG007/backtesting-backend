@@ -2,7 +2,7 @@ const StrategyRun = require('../models/strategyRun');
 const StrategyTrade = require('../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
-const { runStrategyBreakoutRetest, runStrategyDowTheory, runStrategyEmaPullback } = require('../services/strategyService');
+const { runStrategyBreakoutRetest, runStrategyDowTheory, runStrategyAdxMacdReversal } = require('../services/strategyService');
 
 function health(_req, res) {
   res.json({ ok: true, service: 'backtesting-api' });
@@ -49,7 +49,7 @@ async function getCandles(req, res) {
 
 async function runStrategyOne(req, res) {
   try {
-    const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
     const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
@@ -66,6 +66,12 @@ async function runStrategyOne(req, res) {
       minBreakoutBodyPct: Number(req.body?.minBreakoutBodyPct ?? 0.5),
       breakoutRangeMult: Number(req.body?.breakoutRangeMult ?? 1.0),
       breakoutVolumeMult: Number(req.body?.breakoutVolumeMult ?? 1.2),
+      minTrendAdx: Number(req.body?.minTrendAdx ?? 0),
+      atrPeriod: Number(req.body?.atrPeriod ?? 14),
+      minAtrPct: Number(req.body?.minAtrPct ?? 0),
+      maxAtrPct: Number(req.body?.maxAtrPct ?? 100),
+      maxDailyLossAmount: Number(req.body?.maxDailyLossAmount ?? 0),
+      maxConsecutiveLosses: Number(req.body?.maxConsecutiveLosses ?? 0),
       strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
     };
 
@@ -130,7 +136,7 @@ async function runStrategyOne(req, res) {
 
 async function runStrategyTwo(req, res) {
   try {
-    const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
     const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
@@ -147,6 +153,12 @@ async function runStrategyTwo(req, res) {
       trendLookbackCandles: Number(req.body?.trendLookbackCandles ?? 10),
       pullbackLookbackCandles: Number(req.body?.pullbackLookbackCandles ?? 4),
       minBreakoutPct: Number(req.body?.minBreakoutPct ?? 0.001),
+      minTrendAdx: Number(req.body?.minTrendAdx ?? 0),
+      atrPeriod: Number(req.body?.atrPeriod ?? 14),
+      minAtrPct: Number(req.body?.minAtrPct ?? 0),
+      maxAtrPct: Number(req.body?.maxAtrPct ?? 100),
+      maxDailyLossAmount: Number(req.body?.maxDailyLossAmount ?? 0),
+      maxConsecutiveLosses: Number(req.body?.maxConsecutiveLosses ?? 0),
       strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
     };
 
@@ -211,23 +223,22 @@ async function runStrategyTwo(req, res) {
 
 async function runStrategyThree(req, res) {
   try {
-    const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
-    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
-    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
+    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
     const settings = {
       symbol: String(symbol).toUpperCase(),
       basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
       lotCount: Number(req.body?.lotCount ?? 1),
       lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
       premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
-      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
-      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
-      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
-      entryFromTime: String(req.body?.entryFromTime ?? '09:45'),
-      entryToTime: String(req.body?.entryToTime ?? '14:30'),
-      emaFastPeriod: Number(req.body?.emaFastPeriod ?? 20),
-      emaSlowPeriod: Number(req.body?.emaSlowPeriod ?? 50),
-      pullbackTolerancePct: Number(req.body?.pullbackTolerancePct ?? 0.003),
+      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 20),
+      entryFromTime: String(req.body?.entryFromTime ?? '09:30'),
+      entryToTime: String(req.body?.entryToTime ?? '15:00'),
+      adxLength: Number(req.body?.adxLength ?? 14),
+      adxSmoothing: Number(req.body?.adxSmoothing ?? 10),
+      macdFast: Number(req.body?.macdFast ?? 12),
+      macdSlow: Number(req.body?.macdSlow ?? 26),
+      macdSignal: Number(req.body?.macdSignal ?? 9),
+      minAdx: Number(req.body?.minAdx ?? 0),
       strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
     };
 
@@ -236,10 +247,10 @@ async function runStrategyThree(req, res) {
       interval: String(interval),
       year: Number(year),
     });
-    const result = runStrategyEmaPullback({ candles: payload.rows, settings });
+    const result = runStrategyAdxMacdReversal({ candles: payload.rows, settings });
 
     const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy3_ema_pullback',
+      strategyKey: 'strategy3_adx_macd_reversal',
       symbol: settings.symbol,
       interval: String(interval),
       year: Number(year),
@@ -252,17 +263,18 @@ async function runStrategyThree(req, res) {
         result.trades.map((t) => ({
           ...t,
           runId: runDoc._id,
-          strategyKey: 'strategy3_ema_pullback',
+          strategyKey: 'strategy3_adx_macd_reversal',
           entryTime: new Date(t.entryTime),
           exitTime: new Date(t.exitTime),
         }))
       );
     }
+
     const pageSize = 25;
     return res.json({
       ok: true,
       runId: runDoc._id,
-      strategy: 'Strategy 3 - EMA Pullback Bounce',
+      strategy: 'Strategy 3 - ADX/MACD Reversal Confluence',
       year: Number(year),
       symbol: settings.symbol,
       interval: String(interval),
@@ -331,7 +343,7 @@ async function getStrategyTwoRunTrades(req, res) {
 }
 
 async function getStrategyThreeRunTrades(req, res) {
-  return getRunTradesByStrategy(req, res, 'strategy3_ema_pullback');
+  return getRunTradesByStrategy(req, res, 'strategy3_adx_macd_reversal');
 }
 
 function runBacktestStub(req, res) {
