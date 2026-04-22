@@ -2,7 +2,7 @@ const StrategyRun = require('../models/strategyRun');
 const StrategyTrade = require('../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
-const { runStrategyBreakoutRetest } = require('../services/strategyService');
+const { runStrategyBreakoutRetest, runStrategyDowTheory } = require('../services/strategyService');
 
 function health(_req, res) {
   res.json({ ok: true, service: 'backtesting-api' });
@@ -50,6 +50,7 @@ async function getCandles(req, res) {
 async function runStrategyOne(req, res) {
   try {
     const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
@@ -57,15 +58,14 @@ async function runStrategyOne(req, res) {
       lotCount: Number(req.body?.lotCount ?? 1),
       lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
       premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
-      stopLossPct: Number(req.body?.stopLossPct ?? 10),
+      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
       targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
-      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 1),
+      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
       entryFromTime: String(req.body?.entryFromTime ?? '09:30'),
       entryToTime: String(req.body?.entryToTime ?? '14:00'),
       minBreakoutBodyPct: Number(req.body?.minBreakoutBodyPct ?? 0.5),
       breakoutRangeMult: Number(req.body?.breakoutRangeMult ?? 1.0),
-      minOpeningRangePct: Number(req.body?.minOpeningRangePct ?? 0.07),
-      retestBufferPct: Number(req.body?.retestBufferPct ?? 0.08),
+      breakoutVolumeMult: Number(req.body?.breakoutVolumeMult ?? 1.2),
       strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
     };
 
@@ -128,17 +128,100 @@ async function runStrategyOne(req, res) {
   }
 }
 
+async function runStrategyTwo(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '5', year = 2025 } = req.body || {};
+    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
+    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      basePremiumPct: Number(req.body?.basePremiumPct ?? 0.85),
+      lotCount: Number(req.body?.lotCount ?? 1),
+      lotSize: Number(req.body?.lotSize ?? getLotSize(symbol)),
+      premiumLeverage: Number(req.body?.premiumLeverage ?? 8),
+      stopLossPct: hasStopLossInput ? Number(req.body?.stopLossPct) : 12,
+      targetPct: hasTargetInput ? Number(req.body?.targetPct) : null,
+      maxTradesPerDay: Number(req.body?.maxTradesPerDay ?? 2),
+      entryFromTime: String(req.body?.entryFromTime ?? '09:45'),
+      entryToTime: String(req.body?.entryToTime ?? '14:30'),
+      trendLookbackCandles: Number(req.body?.trendLookbackCandles ?? 10),
+      pullbackLookbackCandles: Number(req.body?.pullbackLookbackCandles ?? 4),
+      minBreakoutPct: Number(req.body?.minBreakoutPct ?? 0.001),
+      strikeStep: Number(req.body?.strikeStep ?? getStrikeStep(symbol)),
+    };
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: Number(year),
+    });
+
+    const result = runStrategyDowTheory({ candles: payload.rows, settings });
+
+    const runDoc = await StrategyRun.create({
+      strategyKey: 'strategy2_dow_theory',
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: Number(year),
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: 'strategy2_dow_theory',
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 2 - Dow Theory Trend Continuation',
+      year: Number(year),
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+
 async function getRunTrades(req, res) {
   try {
     const { runId } = req.params;
+    const strategyKey = String(req.query.strategyKey || 'strategy1_breakout_retest');
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
-    const totalRows = await StrategyTrade.countDocuments({ runId, strategyKey: 'strategy1_breakout_retest' });
+    const totalRows = await StrategyTrade.countDocuments({ runId, strategyKey });
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const currentPage = Math.min(page, totalPages);
     const skip = (currentPage - 1) * pageSize;
 
-    const trades = await StrategyTrade.find({ runId, strategyKey: 'strategy1_breakout_retest' })
+    const trades = await StrategyTrade.find({ runId, strategyKey })
       .sort({ entryTime: 1 })
       .skip(skip)
       .limit(pageSize)
@@ -153,6 +236,20 @@ async function getRunTrades(req, res) {
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
+}
+
+async function getRunTradesByStrategy(req, res, strategyKey) {
+  const mergedQuery = { ...req.query, strategyKey };
+  const reqWithStrategy = { ...req, query: mergedQuery };
+  return getRunTrades(reqWithStrategy, res);
+}
+
+async function getStrategyOneRunTrades(req, res) {
+  return getRunTradesByStrategy(req, res, 'strategy1_breakout_retest');
+}
+
+async function getStrategyTwoRunTrades(req, res) {
+  return getRunTradesByStrategy(req, res, 'strategy2_dow_theory');
 }
 
 function runBacktestStub(req, res) {
@@ -170,6 +267,8 @@ module.exports = {
   health,
   getCandles,
   runStrategyOne,
-  getRunTrades,
+  runStrategyTwo,
+  getStrategyOneRunTrades,
+  getStrategyTwoRunTrades,
   runBacktestStub,
 };
