@@ -234,12 +234,12 @@ async function runStrategyThree(req, res) {
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 20),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
-      adxLength: parseNumberInput(req.body?.adxLength, 22),
-      adxSmoothing: parseNumberInput(req.body?.adxSmoothing, 18),
-      macdFast: parseNumberInput(req.body?.macdFast, 18),
-      macdSlow: parseNumberInput(req.body?.macdSlow, 45),
-      macdSignal: parseNumberInput(req.body?.macdSignal, 15),
-      minAdx: parseNumberInput(req.body?.minAdx, 22),
+      adxLength: parseNumberInput(req.body?.adxLength, 18),
+      adxSmoothing: parseNumberInput(req.body?.adxSmoothing, 14),
+      macdFast: parseNumberInput(req.body?.macdFast, 15),
+      macdSlow: parseNumberInput(req.body?.macdSlow, 35),
+      macdSignal: parseNumberInput(req.body?.macdSignal, 12),
+      minAdx: parseNumberInput(req.body?.minAdx, 18),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     };
 
