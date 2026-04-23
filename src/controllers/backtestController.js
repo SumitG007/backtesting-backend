@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const StrategyRun = require('../models/strategyRun');
 const StrategyTrade = require('../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../utils/market');
@@ -231,7 +232,7 @@ async function runStrategyThree(req, res) {
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 20),
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 1),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
       adxLength: parseNumberInput(req.body?.adxLength, 18),
@@ -307,21 +308,66 @@ async function getRunTrades(req, res) {
     const strategyKey = String(req.query.strategyKey || 'strategy1_breakout_retest');
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
-    const totalRows = await StrategyTrade.countDocuments({ runId, strategyKey });
+    const month = Number(req.query.month);
+    const query = { runId, strategyKey };
+    if (Number.isInteger(month) && month >= 1 && month <= 12) {
+      const runDoc = await StrategyRun.findById(runId).select('year').lean();
+      const year = Number(runDoc?.year);
+      if (Number.isFinite(year) && year > 1900) {
+        const monthStartUtc = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+        const monthEndUtc = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
+        query.entryTime = { $gte: monthStartUtc, $lt: monthEndUtc };
+      }
+    }
+
+    const totalRows = await StrategyTrade.countDocuments(query);
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const currentPage = Math.min(page, totalPages);
     const skip = (currentPage - 1) * pageSize;
 
-    const trades = await StrategyTrade.find({ runId, strategyKey })
+    const trades = await StrategyTrade.find(query)
       .sort({ entryTime: 1 })
       .skip(skip)
       .limit(pageSize)
       .lean();
 
+    const aggMatch = { ...query };
+    if (mongoose.Types.ObjectId.isValid(runId)) {
+      aggMatch.runId = new mongoose.Types.ObjectId(runId);
+    }
+
+    const [summaryAgg] = await StrategyTrade.aggregate([
+      { $match: aggMatch },
+      {
+        $group: {
+          _id: null,
+          totalTrades: { $sum: 1 },
+          wins: { $sum: { $cond: [{ $gt: ['$pnl', 0] }, 1, 0] } },
+          grossProfit: { $sum: { $cond: [{ $gt: ['$pnl', 0] }, '$pnl', 0] } },
+          grossLoss: { $sum: { $cond: [{ $lt: ['$pnl', 0] }, '$pnl', 0] } },
+          netPnl: { $sum: '$pnl' },
+        },
+      },
+    ]);
+
+    const totalTradesSummary = Number(summaryAgg?.totalTrades || 0);
+    const winsSummary = Number(summaryAgg?.wins || 0);
+    const lossesSummary = Math.max(0, totalTradesSummary - winsSummary);
+    const summary = {
+      totalTrades: totalTradesSummary,
+      wins: winsSummary,
+      losses: lossesSummary,
+      winRate: totalTradesSummary ? Number(((winsSummary / totalTradesSummary) * 100).toFixed(2)) : 0,
+      grossProfit: Number(Number(summaryAgg?.grossProfit || 0).toFixed(2)),
+      grossLoss: Number(Number(summaryAgg?.grossLoss || 0).toFixed(2)),
+      netPnl: Number(Number(summaryAgg?.netPnl || 0).toFixed(2)),
+    };
+
     return res.json({
       ok: true,
       runId,
       trades,
+      summary,
       pagination: { page: currentPage, pageSize, totalRows, totalPages },
     });
   } catch (error) {
