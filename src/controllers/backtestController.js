@@ -68,7 +68,7 @@ async function runStrategyOne(req, res) {
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
@@ -76,7 +76,7 @@ async function runStrategyOne(req, res) {
       targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
-      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       minBreakoutBodyPct: parseNumberInput(req.body?.minBreakoutBodyPct, 0.5),
       breakoutRangeMult: parseNumberInput(req.body?.breakoutRangeMult, 1.0),
       breakoutVolumeMult: parseNumberInput(req.body?.breakoutVolumeMult, 1.2),
@@ -149,7 +149,7 @@ async function runStrategyTwo(req, res) {
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
@@ -157,7 +157,7 @@ async function runStrategyTwo(req, res) {
       targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:45'),
-      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       trendLookbackCandles: parseNumberInput(req.body?.trendLookbackCandles, 10),
       pullbackLookbackCandles: parseNumberInput(req.body?.pullbackLookbackCandles, 4),
       minBreakoutPct: parseNumberInput(req.body?.minBreakoutPct, 0.001),
@@ -228,13 +228,13 @@ async function runStrategyThree(req, res) {
     const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.85),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 1),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
-      entryToTime: parseStringInput(req.body?.entryToTime, '15:00'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       adxLength: parseNumberInput(req.body?.adxLength, 18),
       adxSmoothing: parseNumberInput(req.body?.adxSmoothing, 14),
       macdFast: parseNumberInput(req.body?.macdFast, 15),

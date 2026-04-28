@@ -105,7 +105,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
   const lotCount = Math.max(1, Number(settings.lotCount) || 1);
-  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.85);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const rawStopLossPct = Number(settings.stopLossPct);
@@ -116,7 +116,7 @@ function runStrategyBreakoutRetest({ candles, settings }) {
   const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
-  const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
   const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
   const minBreakoutBodyPct = Math.max(0.35, Number(settings.minBreakoutBodyPct) || 0.5);
@@ -311,7 +311,7 @@ function runStrategyDowTheory({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
   const lotCount = Math.max(1, Number(settings.lotCount) || 1);
-  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.85);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const rawStopLossPct = Number(settings.stopLossPct);
@@ -325,7 +325,7 @@ function runStrategyDowTheory({ candles, settings }) {
   const pullbackLookback = Math.max(2, Number(settings.pullbackLookbackCandles) || 4);
   const minBreakoutPct = Math.max(0.0005, Number(settings.minBreakoutPct) || 0.001);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 585);
-  const entryToMinutes = parseClockMinutes(settings.entryToTime, 900);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
   const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
 
@@ -502,7 +502,7 @@ function runStrategyAdxMacdReversal({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
   const lotCount = Math.max(1, Number(settings.lotCount) || 1);
-  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.85);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 20);
@@ -513,7 +513,7 @@ function runStrategyAdxMacdReversal({ candles, settings }) {
   const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
   const minAdx = Math.max(0, Number(settings.minAdx) || 0);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
-  const entryToMinutes = parseClockMinutes(settings.entryToTime, 915);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
   const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
 
