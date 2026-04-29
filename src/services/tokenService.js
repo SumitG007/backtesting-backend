@@ -5,7 +5,10 @@ const { BACKEND_ENV_PATH, TOKEN_RENEW_INTERVAL_MS } = require('../config/constan
 let currentDhanAccessToken = process.env.DHAN_ACCESS_TOKEN || '';
 let currentDhanTokenExpiresAt = Number(process.env.DHAN_TOKEN_EXPIRES_AT || 0);
 let renewTokenInFlight = null;
+let profileExpirySyncInFlight = null;
+let lastProfileExpiryAttemptAt = 0;
 const TOKEN_RENEW_BUFFER_MS = 10 * 60 * 1000;
+const PROFILE_EXPIRY_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
 
 function readLatestAccessToken() {
   return currentDhanAccessToken || process.env.DHAN_ACCESS_TOKEN || '';
@@ -17,7 +20,7 @@ function getTokenExpiryMs() {
 
 function shouldRenewSoon() {
   const expiresAt = getTokenExpiryMs();
-  if (!Number.isFinite(expiresAt) || expiresAt <= 0) return true;
+  if (!Number.isFinite(expiresAt) || expiresAt <= 0) return false;
   return Date.now() >= expiresAt - TOKEN_RENEW_BUFFER_MS;
 }
 
@@ -38,6 +41,82 @@ function extractExpiryMs(payload) {
   if (!raw) return Date.now() + 24 * 60 * 60 * 1000;
   const parsed = new Date(raw).getTime();
   return Number.isFinite(parsed) ? parsed : Date.now() + 24 * 60 * 60 * 1000;
+}
+
+/** Profile returns tokenValidity like "30/03/2025 15:37" (DD/MM/YYYY HH:mm, IST per Dhan docs). */
+function parseProfileTokenValidityMs(tokenValidity) {
+  if (!tokenValidity || typeof tokenValidity !== 'string') return null;
+  const [datePart, timePart] = tokenValidity.trim().split(/\s+/);
+  if (!datePart || !timePart) return null;
+  const [dd, mm, yyyy] = datePart.split('/').map(Number);
+  const [hh, mi] = timePart.split(':').map(Number);
+  if (![dd, mm, yyyy, hh, mi].every((n) => Number.isFinite(n))) return null;
+  const isoLocalIst = `${yyyy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}T${String(hh).padStart(2, '0')}:${String(mi).padStart(2, '0')}:00+05:30`;
+  const ms = new Date(isoLocalIst).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function renewTokenHeaders(token, clientId, withContentType) {
+  const h = {
+    'access-token': token,
+    dhanClientId: clientId,
+  };
+  if (withContentType) h['Content-Type'] = 'application/json';
+  return h;
+}
+
+async function fetchRenewToken(baseUrl, token, clientId) {
+  try {
+    return await axios.get(`${baseUrl}/RenewToken`, {
+      headers: renewTokenHeaders(token, clientId, false),
+      timeout: 15000,
+    });
+  } catch (getErr) {
+    const status = Number(getErr?.response?.status || 0);
+    if (status !== 405 && status !== 400) throw getErr;
+    return axios.post(`${baseUrl}/RenewToken`, {}, {
+      headers: renewTokenHeaders(token, clientId, true),
+      timeout: 15000,
+    });
+  }
+}
+
+async function refreshExpiryFromProfileIfUnknown() {
+  const existing = getTokenExpiryMs();
+  if (Number.isFinite(existing) && existing > 0) return;
+  if (Date.now() - lastProfileExpiryAttemptAt < PROFILE_EXPIRY_SYNC_COOLDOWN_MS) return;
+
+  if (profileExpirySyncInFlight) return profileExpirySyncInFlight;
+
+  profileExpirySyncInFlight = (async () => {
+    lastProfileExpiryAttemptAt = Date.now();
+    const token = readLatestAccessToken();
+    if (!token) return;
+
+    const baseUrl = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
+    try {
+      const { data } = await axios.get(`${baseUrl}/profile`, {
+        headers: {
+          'access-token': token,
+        },
+        timeout: 15000,
+      });
+      const ms = parseProfileTokenValidityMs(data?.tokenValidity);
+      if (ms != null) {
+        currentDhanTokenExpiresAt = ms;
+        process.env.DHAN_TOKEN_EXPIRES_AT = String(ms);
+        await persistTokenStateToEnv({ token, expiresAt: ms });
+      }
+    } catch (_err) {
+      /* keep unknown expiry; renewal path may still run */
+    }
+  })();
+
+  try {
+    await profileExpirySyncInFlight;
+  } finally {
+    profileExpirySyncInFlight = null;
+  }
 }
 
 async function persistTokenStateToEnv({ token, expiresAt }) {
@@ -101,19 +180,8 @@ async function renewDhanAccessToken(reason = 'manual') {
     }
 
     const baseUrl = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
-    const response = await axios.post(
-      `${baseUrl}/RenewToken`,
-      {},
-      {
-        headers: {
-          'access-token': oldToken,
-          'client-id': clientId,
-          dhanClientId: clientId,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
+    // Dhan docs: RenewToken uses GET with access-token + dhanClientId only; works only for web-generated tokens.
+    const response = await fetchRenewToken(baseUrl, oldToken, clientId);
     const renewedToken = extractRenewedToken(response.data);
     if (!renewedToken) {
       throw new Error('RenewToken succeeded but no access token found in response');
@@ -134,7 +202,16 @@ async function ensureValidDhanAccessToken(reason = 'ensure-valid') {
   if (!hasToken) {
     throw new Error(`Cannot ensure Dhan token (${reason}): missing DHAN_ACCESS_TOKEN`);
   }
-  if (shouldRenewSoon()) {
+  await refreshExpiryFromProfileIfUnknown();
+
+  const expiresAt = getTokenExpiryMs();
+  const unknownExpiry = !Number.isFinite(expiresAt) || expiresAt <= 0;
+  const recoveringAuth = String(reason).includes('auth-retry');
+  const periodicBootstrap = /^(startup|scheduled)/.test(String(reason));
+
+  const needRenew = recoveringAuth || shouldRenewSoon() || (unknownExpiry && periodicBootstrap);
+
+  if (needRenew) {
     return renewDhanAccessToken(`${reason}:expiring`);
   }
   return readLatestAccessToken();
