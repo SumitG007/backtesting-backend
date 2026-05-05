@@ -5,9 +5,11 @@ const {
   runStrategyOne,
   runStrategyTwo,
   runStrategyThree,
+  runStrategyFour,
   getStrategyOneRunTrades,
   getStrategyTwoRunTrades,
   getStrategyThreeRunTrades,
+  getStrategyFourRunTrades,
   runBacktestStub,
 } = require('../controllers/backtestController');
 
@@ -21,6 +23,8 @@ router.post('/strategy2/run', runStrategyTwo);
 router.get('/strategy2/runs/:runId/trades', getStrategyTwoRunTrades);
 router.post('/strategy3/run', runStrategyThree);
 router.get('/strategy3/runs/:runId/trades', getStrategyThreeRunTrades);
+router.post('/strategy4/run', runStrategyFour);
+router.get('/strategy4/runs/:runId/trades', getStrategyFourRunTrades);
 router.post('/backtest/run', runBacktestStub);
 
 module.exports = router;

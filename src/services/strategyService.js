@@ -44,6 +44,30 @@ function calculateMacd(values, fast, slow, signal) {
   return { macdLine, signalLine };
 }
 
+function calculateVwap(highs, lows, closes, volumes) {
+  const n = closes.length;
+  const vwap = new Array(n).fill(null);
+  let cumulativePv = 0;
+  let cumulativeVolume = 0;
+  for (let i = 0; i < n; i += 1) {
+    const high = Number(highs[i]);
+    const low = Number(lows[i]);
+    const close = Number(closes[i]);
+    const typicalPrice = (high + low + close) / 3;
+    const volume = Math.max(0, Number(volumes[i] ?? 0));
+    cumulativePv += typicalPrice * volume;
+    cumulativeVolume += volume;
+    if (cumulativeVolume > 0) {
+      vwap[i] = cumulativePv / cumulativeVolume;
+    } else {
+      // If feed has no volume (common in some index candles), fallback to running typical price average.
+      const prev = i > 0 && Number.isFinite(vwap[i - 1]) ? vwap[i - 1] : typicalPrice;
+      vwap[i] = (prev * i + typicalPrice) / (i + 1);
+    }
+  }
+  return vwap;
+}
+
 function calculateDmi(highs, lows, closes, length = 14, smoothing = 10) {
   const n = highs.length;
   const tr = new Array(n).fill(0);
@@ -505,7 +529,7 @@ function runStrategyAdxMacdReversal({ candles, settings }) {
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 20);
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
   const adxLength = Math.max(5, Number(settings.adxLength) || 14);
   const adxSmoothing = Math.max(2, Number(settings.adxSmoothing) || 10);
   const macdFast = Math.max(2, Number(settings.macdFast) || 12);
@@ -741,8 +765,269 @@ function runStrategyAdxMacdReversal({ candles, settings }) {
   return { summary: getSummaryFromTrades(trades), trades };
 }
 
+function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
+  const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
+  const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
+  const lotCount = Math.max(1, Number(settings.lotCount) || 1);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
+  const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
+  const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
+  const rawStopLossPct = Number(settings.stopLossPct);
+  const hasStopLoss = Number.isFinite(rawStopLossPct) && rawStopLossPct > 0;
+  const stopLossPct = hasStopLoss ? Math.max(0.5, rawStopLossPct) : null;
+  const rawTargetPct = Number(settings.targetPct);
+  const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
+  const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
+  const emaLength = Math.max(2, Number(settings.emaLength) || 9);
+  const macdFast = Math.max(2, Number(settings.macdFast) || 12);
+  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 26);
+  const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
+  const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
+  const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
+  const sessionCandles = [];
+  for (const c of candles) {
+    const clock = getIstClock(c[0]);
+    if (clock.minutes < 555 || clock.minutes > 930) continue;
+    sessionCandles.push(c);
+  }
+  if (sessionCandles.length < Math.max(emaLength + 2, macdSlow + macdSignal + 2)) {
+    return { summary: getSummaryFromTrades([]), trades: [] };
+  }
+
+  const highs = sessionCandles.map((c) => Number(c[2]));
+  const lows = sessionCandles.map((c) => Number(c[3]));
+  const closes = sessionCandles.map((c) => Number(c[4]));
+  const volumes = sessionCandles.map((c) => Number(c[5] ?? 0));
+  const ema = calculateEma(closes, emaLength);
+  const { macdLine, signalLine } = calculateMacd(closes, macdFast, macdSlow, macdSignal);
+
+  // VWAP resets each day.
+  const vwap = new Array(sessionCandles.length).fill(null);
+  let vwapDateKey = null;
+  let cumulativePv = 0;
+  let cumulativeVolume = 0;
+  for (let i = 0; i < sessionCandles.length; i += 1) {
+    const clock = getIstClock(sessionCandles[i][0]);
+    if (clock.dateKey !== vwapDateKey) {
+      vwapDateKey = clock.dateKey;
+      cumulativePv = 0;
+      cumulativeVolume = 0;
+    }
+    const typicalPrice = (highs[i] + lows[i] + closes[i]) / 3;
+    const volume = Math.max(0, Number(volumes[i] ?? 0));
+    cumulativePv += typicalPrice * volume;
+    cumulativeVolume += volume;
+    if (cumulativeVolume > 0) {
+      vwap[i] = cumulativePv / cumulativeVolume;
+    } else {
+      const prev = i > 0 && Number.isFinite(vwap[i - 1]) ? vwap[i - 1] : typicalPrice;
+      vwap[i] = (prev + typicalPrice) / 2;
+    }
+  }
+
+  const trades = [];
+  let position = 0;
+  let openTrade = null;
+  let tradesToday = 0;
+  let activeDateKey = null;
+
+  function closeOpenTrade(exitIndex, reason) {
+    if (!openTrade) return;
+    const exitClose = closes[exitIndex];
+    const exitPremium = getOptionPremiumFromSpotMove({
+      side: openTrade.side,
+      entrySpot: openTrade.entryPrice,
+      currentSpot: exitClose,
+      entryPremium: openTrade.entryPremium,
+      premiumLeverage,
+      strike: openTrade.strike,
+      strikeStep,
+    });
+    const invested = openTrade.entryPremium * lotSize * lotCount;
+    const finalValue = exitPremium * lotSize * lotCount;
+    const pnl = finalValue - invested;
+    trades.push({
+      ...openTrade,
+      buyPrice: Number(openTrade.entryPremium.toFixed(2)),
+      sellPrice: Number(exitPremium.toFixed(2)),
+      invested: Number(invested.toFixed(2)),
+      finalValue: Number(finalValue.toFixed(2)),
+      entryTime: openTrade.entryTime,
+      exitTime: sessionCandles[exitIndex][0],
+      entryPrice: openTrade.entryPrice,
+      exitPrice: Number(exitClose.toFixed(2)),
+      stopLoss: hasStopLoss && Number.isFinite(openTrade.stopPremium)
+        ? Number(openTrade.stopPremium.toFixed(2))
+        : null,
+      target: hasTarget && Number.isFinite(openTrade.targetPremium)
+        ? Number(openTrade.targetPremium.toFixed(2))
+        : null,
+      investmentAmount: Number(invested.toFixed(2)),
+      stopLossAmount: hasStopLoss && Number.isFinite(openTrade.stopPremium)
+        ? Number((Math.max(0, openTrade.entryPremium - openTrade.stopPremium) * lotSize * lotCount).toFixed(2))
+        : null,
+      targetAmount: hasTarget && Number.isFinite(openTrade.targetPremium)
+        ? Number((Math.max(0, openTrade.targetPremium - openTrade.entryPremium) * lotSize * lotCount).toFixed(2))
+        : null,
+      pnl: Number(pnl.toFixed(2)),
+      pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
+      reason,
+    });
+    position = 0;
+    openTrade = null;
+  }
+
+  for (let i = 0; i < sessionCandles.length; i += 1) {
+    const clock = getIstClock(sessionCandles[i][0]);
+    if (clock.dateKey !== activeDateKey) {
+      if (openTrade && i > 0) closeOpenTrade(i - 1, 'DAY_CLOSE');
+      activeDateKey = clock.dateKey;
+      tradesToday = 0;
+    }
+
+    const inWindow = clock.minutes >= normalizedEntryFrom && clock.minutes <= normalizedEntryTo;
+    const metricsReady =
+      Number.isFinite(ema[i]) &&
+      Number.isFinite(vwap[i]) &&
+      Number.isFinite(macdLine[i]) &&
+      Number.isFinite(signalLine[i]);
+    const hist = metricsReady ? macdLine[i] - signalLine[i] : null;
+    const close = closes[i];
+    const longSignal = metricsReady && close > ema[i] && close > vwap[i] && hist > 0;
+    const shortSignal = metricsReady && close < ema[i] && close < vwap[i] && hist < 0;
+
+    if (position === 0 && inWindow && tradesToday < maxTradesPerDay) {
+      if (longSignal || shortSignal) {
+        const side = longSignal ? 'LONG' : 'SHORT';
+        const optionType = longSignal ? 'CE' : 'PE';
+        const strike = Math.round(close / strikeStep) * strikeStep;
+        const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
+        const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
+        openTrade = {
+          pair: symbol,
+          type: optionType,
+          strike,
+          lotSize,
+          lots: lotCount,
+          closed: optionType,
+          order: 'BUY',
+          qty: lotSize * lotCount,
+          premium: Number(entryPremium.toFixed(2)),
+          lotCount,
+          side,
+          entryIndex: i,
+          entryTime: sessionCandles[i][0],
+          entryPrice: Number(close.toFixed(2)),
+          entryPremium,
+          stopPremium,
+          targetPremium,
+        };
+        position = side === 'LONG' ? 1 : -1;
+        tradesToday += 1;
+      }
+    }
+
+    if (openTrade) {
+      const favorablePremium = getOptionPremiumFromSpotMove({
+        side: openTrade.side,
+        entrySpot: openTrade.entryPrice,
+        currentSpot: openTrade.side === 'LONG' ? highs[i] : lows[i],
+        entryPremium: openTrade.entryPremium,
+        premiumLeverage,
+        strike: openTrade.strike,
+        strikeStep,
+      });
+      const adversePremium = getOptionPremiumFromSpotMove({
+        side: openTrade.side,
+        entrySpot: openTrade.entryPrice,
+        currentSpot: openTrade.side === 'LONG' ? lows[i] : highs[i],
+        entryPremium: openTrade.entryPremium,
+        premiumLeverage,
+        strike: openTrade.strike,
+        strikeStep,
+      });
+      if (hasStopLoss && Number.isFinite(openTrade.stopPremium) && adversePremium <= openTrade.stopPremium) {
+        closeOpenTrade(i, 'STOP_LOSS');
+        continue;
+      }
+      if (hasTarget && Number.isFinite(openTrade.targetPremium) && favorablePremium >= openTrade.targetPremium) {
+        closeOpenTrade(i, 'TARGET');
+        continue;
+      }
+    }
+
+    if (position === 1 && shortSignal && openTrade) {
+      closeOpenTrade(i, 'REVERSAL');
+      if (inWindow && tradesToday < maxTradesPerDay) {
+        const strike = Math.round(close / strikeStep) * strikeStep;
+        const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
+        const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
+        openTrade = {
+          pair: symbol,
+          type: 'PE',
+          strike,
+          lotSize,
+          lots: lotCount,
+          closed: 'PE',
+          order: 'BUY',
+          qty: lotSize * lotCount,
+          premium: Number(entryPremium.toFixed(2)),
+          lotCount,
+          side: 'SHORT',
+          entryIndex: i,
+          entryTime: sessionCandles[i][0],
+          entryPrice: Number(close.toFixed(2)),
+          entryPremium,
+          stopPremium,
+          targetPremium,
+        };
+        position = -1;
+        tradesToday += 1;
+      }
+    } else if (position === -1 && longSignal && openTrade) {
+      closeOpenTrade(i, 'REVERSAL');
+      if (inWindow && tradesToday < maxTradesPerDay) {
+        const strike = Math.round(close / strikeStep) * strikeStep;
+        const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
+        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
+        const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
+        openTrade = {
+          pair: symbol,
+          type: 'CE',
+          strike,
+          lotSize,
+          lots: lotCount,
+          closed: 'CE',
+          order: 'BUY',
+          qty: lotSize * lotCount,
+          premium: Number(entryPremium.toFixed(2)),
+          lotCount,
+          side: 'LONG',
+          entryIndex: i,
+          entryTime: sessionCandles[i][0],
+          entryPrice: Number(close.toFixed(2)),
+          entryPremium,
+          stopPremium,
+          targetPremium,
+        };
+        position = 1;
+        tradesToday += 1;
+      }
+    }
+  }
+
+  if (openTrade) closeOpenTrade(sessionCandles.length - 1, 'DAY_CLOSE');
+  return { summary: getSummaryFromTrades(trades), trades };
+}
+
 module.exports = {
   runStrategyBreakoutRetest,
   runStrategyDowTheory,
   runStrategyAdxMacdReversal,
+  runStrategyEmaVwapMacdHistogram,
 };

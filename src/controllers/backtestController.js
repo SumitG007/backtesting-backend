@@ -3,7 +3,12 @@ const StrategyRun = require('../models/strategyRun');
 const StrategyTrade = require('../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
-const { runStrategyBreakoutRetest, runStrategyDowTheory, runStrategyAdxMacdReversal } = require('../services/strategyService');
+const {
+  runStrategyBreakoutRetest,
+  runStrategyDowTheory,
+  runStrategyAdxMacdReversal,
+  runStrategyEmaVwapMacdHistogram,
+} = require('../services/strategyService');
 
 function parseNumberInput(value, fallback) {
   if (value === undefined || value === null) return fallback;
@@ -301,6 +306,86 @@ async function runStrategyThree(req, res) {
   }
 }
 
+async function runStrategyFour(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
+    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
+    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      stopLossPct: hasStopLossInput ? parseNumberInput(req.body?.stopLossPct, 12) : null,
+      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
+      emaLength: parseNumberInput(req.body?.emaLength, 9),
+      macdFast: parseNumberInput(req.body?.macdFast, 12),
+      macdSlow: parseNumberInput(req.body?.macdSlow, 26),
+      macdSignal: parseNumberInput(req.body?.macdSignal, 9),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
+    };
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+    });
+    const result = runStrategyEmaVwapMacdHistogram({ candles: payload.rows, settings });
+
+    const runDoc = await StrategyRun.create({
+      strategyKey: 'strategy4_ema_vwap_macd_histogram',
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: 'strategy4_ema_vwap_macd_histogram',
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 4 - EMA9 + VWAP + MACD Histogram',
+      year: parseNumberInput(year, 2026),
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 
 async function getRunTrades(req, res) {
   try {
@@ -393,6 +478,10 @@ async function getStrategyThreeRunTrades(req, res) {
   return getRunTradesByStrategy(req, res, 'strategy3_adx_macd_reversal');
 }
 
+async function getStrategyFourRunTrades(req, res) {
+  return getRunTradesByStrategy(req, res, 'strategy4_ema_vwap_macd_histogram');
+}
+
 function runBacktestStub(req, res) {
   const { symbol, from, to } = req.body || {};
   if (!symbol || !from || !to) {
@@ -410,8 +499,10 @@ module.exports = {
   runStrategyOne,
   runStrategyTwo,
   runStrategyThree,
+  runStrategyFour,
   getStrategyOneRunTrades,
   getStrategyTwoRunTrades,
   getStrategyThreeRunTrades,
+  getStrategyFourRunTrades,
   runBacktestStub,
 };
