@@ -309,23 +309,24 @@ async function runStrategyThree(req, res) {
 async function runStrategyFour(req, res) {
   try {
     const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
-    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
+    const hasTargetField = Object.prototype.hasOwnProperty.call(req.body || {}, 'targetPct');
     const settings = {
       symbol: String(symbol).toUpperCase(),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      stopLossPct: hasStopLossInput ? parseNumberInput(req.body?.stopLossPct, 12) : null,
-      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
-      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
+      stopLossPct: null,
+      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, 12) : hasTargetField ? null : 12,
+      oppositeSignalExitEnabled: req.body?.oppositeSignalExitEnabled !== false && req.body?.oppositeSignalExitEnabled !== 'false',
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 1),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       emaLength: parseNumberInput(req.body?.emaLength, 9),
-      macdFast: parseNumberInput(req.body?.macdFast, 12),
-      macdSlow: parseNumberInput(req.body?.macdSlow, 26),
-      macdSignal: parseNumberInput(req.body?.macdSignal, 9),
+      macdFast: parseNumberInput(req.body?.macdFast, 48),
+      macdSlow: parseNumberInput(req.body?.macdSlow, 104),
+      macdSignal: parseNumberInput(req.body?.macdSignal, 36),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     };
 

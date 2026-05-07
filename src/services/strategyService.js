@@ -772,17 +772,17 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const rawStopLossPct = Number(settings.stopLossPct);
-  const hasStopLoss = Number.isFinite(rawStopLossPct) && rawStopLossPct > 0;
-  const stopLossPct = hasStopLoss ? Math.max(0.5, rawStopLossPct) : null;
+  const hasStopLoss = false;
   const rawTargetPct = Number(settings.targetPct);
   const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
   const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
-  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
+  const oppositeSignalExitEnabled =
+    settings.oppositeSignalExitEnabled !== false && settings.oppositeSignalExitEnabled !== 'false';
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
   const emaLength = Math.max(2, Number(settings.emaLength) || 9);
-  const macdFast = Math.max(2, Number(settings.macdFast) || 12);
-  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 26);
-  const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
+  const macdFast = Math.max(2, Number(settings.macdFast) || 48);
+  const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 104);
+  const macdSignal = Math.max(2, Number(settings.macdSignal) || 36);
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
@@ -898,6 +898,8 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
     const close = closes[i];
     const longSignal = metricsReady && close > ema[i] && close > vwap[i] && hist > 0;
     const shortSignal = metricsReady && close < ema[i] && close < vwap[i] && hist < 0;
+    const longExitSignal = metricsReady && close < ema[i] && close < vwap[i];
+    const shortExitSignal = metricsReady && close > ema[i] && close > vwap[i];
 
     if (position === 0 && inWindow && tradesToday < maxTradesPerDay) {
       if (longSignal || shortSignal) {
@@ -905,7 +907,7 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
         const optionType = longSignal ? 'CE' : 'PE';
         const strike = Math.round(close / strikeStep) * strikeStep;
         const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
-        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
+        const stopPremium = null;
         const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
         openTrade = {
           pair: symbol,
@@ -941,83 +943,16 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
         strike: openTrade.strike,
         strikeStep,
       });
-      const adversePremium = getOptionPremiumFromSpotMove({
-        side: openTrade.side,
-        entrySpot: openTrade.entryPrice,
-        currentSpot: openTrade.side === 'LONG' ? lows[i] : highs[i],
-        entryPremium: openTrade.entryPremium,
-        premiumLeverage,
-        strike: openTrade.strike,
-        strikeStep,
-      });
-      if (hasStopLoss && Number.isFinite(openTrade.stopPremium) && adversePremium <= openTrade.stopPremium) {
-        closeOpenTrade(i, 'STOP_LOSS');
-        continue;
-      }
       if (hasTarget && Number.isFinite(openTrade.targetPremium) && favorablePremium >= openTrade.targetPremium) {
         closeOpenTrade(i, 'TARGET');
         continue;
       }
     }
 
-    if (position === 1 && shortSignal && openTrade) {
-      closeOpenTrade(i, 'REVERSAL');
-      if (inWindow && tradesToday < maxTradesPerDay) {
-        const strike = Math.round(close / strikeStep) * strikeStep;
-        const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
-        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
-        const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
-        openTrade = {
-          pair: symbol,
-          type: 'PE',
-          strike,
-          lotSize,
-          lots: lotCount,
-          closed: 'PE',
-          order: 'BUY',
-          qty: lotSize * lotCount,
-          premium: Number(entryPremium.toFixed(2)),
-          lotCount,
-          side: 'SHORT',
-          entryIndex: i,
-          entryTime: sessionCandles[i][0],
-          entryPrice: Number(close.toFixed(2)),
-          entryPremium,
-          stopPremium,
-          targetPremium,
-        };
-        position = -1;
-        tradesToday += 1;
-      }
-    } else if (position === -1 && longSignal && openTrade) {
-      closeOpenTrade(i, 'REVERSAL');
-      if (inWindow && tradesToday < maxTradesPerDay) {
-        const strike = Math.round(close / strikeStep) * strikeStep;
-        const entryPremium = Math.max(1, (close * basePremiumPct) / 100);
-        const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
-        const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
-        openTrade = {
-          pair: symbol,
-          type: 'CE',
-          strike,
-          lotSize,
-          lots: lotCount,
-          closed: 'CE',
-          order: 'BUY',
-          qty: lotSize * lotCount,
-          premium: Number(entryPremium.toFixed(2)),
-          lotCount,
-          side: 'LONG',
-          entryIndex: i,
-          entryTime: sessionCandles[i][0],
-          entryPrice: Number(close.toFixed(2)),
-          entryPremium,
-          stopPremium,
-          targetPremium,
-        };
-        position = 1;
-        tradesToday += 1;
-      }
+    if (oppositeSignalExitEnabled && position === 1 && longExitSignal && openTrade) {
+      closeOpenTrade(i, 'OPPOSITE_SIGNAL');
+    } else if (oppositeSignalExitEnabled && position === -1 && shortExitSignal && openTrade) {
+      closeOpenTrade(i, 'OPPOSITE_SIGNAL');
     }
   }
 
