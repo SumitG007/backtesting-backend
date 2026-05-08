@@ -960,9 +960,203 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
   return { summary: getSummaryFromTrades(trades), trades };
 }
 
+function runStrategyConfirmationBreakout({ candles, settings }) {
+  const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
+  const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
+  const lotCount = Math.max(1, Number(settings.lotCount) || 1);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
+  const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
+  const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
+  const rawTargetPct = Number(settings.targetPct);
+  const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
+  const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : 12;
+  const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
+  const confirmationCandles = Math.max(1, Number(settings.confirmationCandles) || 3);
+  const confirmationWindow = Math.max(1, Number(settings.confirmationWindow) || 2);
+  const breakoutBufferPct = Math.max(0, Number(settings.breakoutBufferPct) || 0.08);
+  const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
+  const premiumStopLossCapPct = Math.max(0.5, Number(settings.premiumStopLossCapPct) || 1);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
+  const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
+  const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
+
+  const byDay = new Map();
+  for (const c of candles) {
+    const clock = getIstClock(c[0]);
+    if (clock.minutes < 555 || clock.minutes > 930) continue;
+    if (!byDay.has(clock.dateKey)) byDay.set(clock.dateKey, []);
+    byDay.get(clock.dateKey).push(c);
+  }
+
+  const dayKeys = Array.from(byDay.keys()).sort();
+  const trades = [];
+  for (const dayKey of dayKeys) {
+    const dayCandles = byDay.get(dayKey) || [];
+    if (dayCandles.length <= confirmationCandles + 1) continue;
+    const highs = dayCandles.map((c) => Number(c[2]));
+    const lows = dayCandles.map((c) => Number(c[3]));
+    const closes = dayCandles.map((c) => Number(c[4]));
+    const volumes = dayCandles.map((c) => Number(c[5] ?? 0));
+    const vwap = calculateVwap(highs, lows, closes, volumes);
+    let tradesToday = 0;
+
+    for (let i = 0; i < dayCandles.length - confirmationCandles; i += 1) {
+      if (tradesToday >= maxTradesPerDay) break;
+      const refClock = getIstClock(dayCandles[i][0]);
+      if (refClock.minutes < normalizedEntryFrom || refClock.minutes > normalizedEntryTo) continue;
+      if (i + 1 >= dayCandles.length) break;
+
+      const refHigh = Math.max(highs[i], highs[i + 1]);
+      const refLow = Math.min(lows[i], lows[i + 1]);
+      if (!Number.isFinite(refHigh) || !Number.isFinite(refLow) || refHigh <= refLow) continue;
+      const refRange = refHigh - refLow;
+      const refRangePct = (refRange / Math.max(1, closes[i])) * 100;
+      if (refRangePct < minRefRangePct) continue;
+
+      let confirmationIndex = null;
+      let setup = null;
+      const confirmStart = i + 1 + confirmationCandles;
+      const confirmEnd = Math.min(dayCandles.length - 1, confirmStart + confirmationWindow - 1);
+      for (let k = confirmStart; k <= confirmEnd; k += 1) {
+        const confirmClock = getIstClock(dayCandles[k][0]);
+        if (confirmClock.minutes > normalizedEntryTo) break;
+        const confirmationClose = closes[k];
+        const bufferUp = refHigh * (1 + breakoutBufferPct / 100);
+        const bufferDown = refLow * (1 - breakoutBufferPct / 100);
+        const vwapValue = vwap[k];
+        const bullishTrendOkay = Number.isFinite(vwapValue) ? confirmationClose > vwapValue : true;
+        const bearishTrendOkay = Number.isFinite(vwapValue) ? confirmationClose < vwapValue : true;
+        if (confirmationClose > bufferUp && bullishTrendOkay) {
+          confirmationIndex = k;
+          setup = { side: 'LONG', optionType: 'CE', stopSpot: refLow };
+          break;
+        }
+        if (confirmationClose < bufferDown && bearishTrendOkay) {
+          confirmationIndex = k;
+          setup = { side: 'SHORT', optionType: 'PE', stopSpot: refHigh };
+          break;
+        }
+      }
+      if (!setup || confirmationIndex == null) continue;
+
+      const entrySpot = closes[confirmationIndex];
+      const strike = Math.round(entrySpot / strikeStep) * strikeStep;
+      const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
+      const structureStopPremium = getOptionPremiumFromSpotMove({
+        side: setup.side,
+        entrySpot,
+        currentSpot: setup.stopSpot,
+        entryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      const cappedStopPremium = Math.max(0.05, entryPremium * (1 - premiumStopLossCapPct / 100));
+      const stopPremium = Math.max(cappedStopPremium, structureStopPremium);
+      const targetPremium = entryPremium * (1 + targetPct / 100);
+
+      let exitIndex = dayCandles.length - 1;
+      let exitSpot = closes[exitIndex];
+      let exitPremium = getOptionPremiumFromSpotMove({
+        side: setup.side,
+        entrySpot,
+        currentSpot: exitSpot,
+        entryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      let reason = 'DAY_CLOSE';
+
+      for (let j = confirmationIndex + 1; j < dayCandles.length; j += 1) {
+        const stopHit = setup.side === 'LONG' ? lows[j] <= setup.stopSpot : highs[j] >= setup.stopSpot;
+        if (stopHit) {
+          exitIndex = j;
+          exitSpot = setup.stopSpot;
+          exitPremium = stopPremium;
+          reason = 'STOP_LOSS';
+          break;
+        }
+
+        const favorablePremium = getOptionPremiumFromSpotMove({
+          side: setup.side,
+          entrySpot,
+          currentSpot: setup.side === 'LONG' ? highs[j] : lows[j],
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (favorablePremium >= targetPremium) {
+          exitIndex = j;
+          exitSpot = closes[j];
+          exitPremium = targetPremium;
+          reason = 'TARGET';
+          break;
+        }
+
+        const jClock = getIstClock(dayCandles[j][0]);
+        if (jClock.minutes >= 930) {
+          exitIndex = j;
+          exitSpot = closes[j];
+          exitPremium = getOptionPremiumFromSpotMove({
+            side: setup.side,
+            entrySpot,
+            currentSpot: exitSpot,
+            entryPremium,
+            premiumLeverage,
+            strike,
+            strikeStep,
+          });
+          reason = 'DAY_CLOSE';
+          break;
+        }
+      }
+
+      const invested = entryPremium * lotSize * lotCount;
+      const finalValue = exitPremium * lotSize * lotCount;
+      const pnl = finalValue - invested;
+      trades.push({
+        pair: symbol,
+        type: setup.optionType,
+        strike,
+        buyPrice: Number(entryPremium.toFixed(2)),
+        sellPrice: Number(exitPremium.toFixed(2)),
+        lotSize,
+        lots: lotCount,
+        invested: Number(invested.toFixed(2)),
+        finalValue: Number(finalValue.toFixed(2)),
+        closed: setup.optionType,
+        order: 'BUY',
+        entryTime: dayCandles[confirmationIndex][0],
+        exitTime: dayCandles[exitIndex][0],
+        entryPrice: Number(entrySpot.toFixed(2)),
+        exitPrice: Number(exitSpot.toFixed(2)),
+        stopLoss: Number(stopPremium.toFixed(2)),
+        target: Number(targetPremium.toFixed(2)),
+        qty: lotSize * lotCount,
+        premium: Number(entryPremium.toFixed(2)),
+        lotCount,
+        investmentAmount: Number(invested.toFixed(2)),
+        stopLossAmount: Number((Math.max(0, entryPremium - stopPremium) * lotSize * lotCount).toFixed(2)),
+        targetAmount: Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2)),
+        pnl: Number(pnl.toFixed(2)),
+        pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
+        reason,
+      });
+      tradesToday += 1;
+      i = Math.max(i, exitIndex - 1);
+    }
+  }
+
+  return { summary: getSummaryFromTrades(trades), trades };
+}
+
 module.exports = {
   runStrategyBreakoutRetest,
   runStrategyDowTheory,
   runStrategyAdxMacdReversal,
   runStrategyEmaVwapMacdHistogram,
+  runStrategyConfirmationBreakout,
 };

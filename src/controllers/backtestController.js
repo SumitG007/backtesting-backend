@@ -5,6 +5,7 @@ const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
 const {
   runStrategyBreakoutRetest,
+  runStrategyConfirmationBreakout,
 } = require('../services/strategyService');
 
 function parseNumberInput(value, fallback) {
@@ -65,7 +66,7 @@ async function getCandles(req, res) {
 
 async function runStrategyOne(req, res) {
   try {
-    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
+    const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
     const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
     const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
     const settings = {
@@ -120,6 +121,85 @@ async function runStrategyOne(req, res) {
       ok: true,
       runId: runDoc._id,
       strategy: 'Strategy 1 - 15M Breakout + First Retest',
+      year: parseNumberInput(year, 2026),
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function runStrategyTwo(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      targetPct: parseNumberInput(req.body?.targetPct, 12),
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
+      confirmationCandles: parseNumberInput(req.body?.confirmationCandles, 3),
+      confirmationWindow: parseNumberInput(req.body?.confirmationWindow, 2),
+      breakoutBufferPct: parseNumberInput(req.body?.breakoutBufferPct, 0.08),
+      minRefRangePct: parseNumberInput(req.body?.minRefRangePct, 0.15),
+      premiumStopLossCapPct: parseNumberInput(req.body?.premiumStopLossCapPct, 1),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
+    };
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+    });
+
+    const result = runStrategyConfirmationBreakout({ candles: payload.rows, settings });
+    const runDoc = await StrategyRun.create({
+      strategyKey: 'strategy2_confirmation_breakout',
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: 'strategy2_confirmation_breakout',
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 2 - Confirmation Breakout (Ref High/Low SL)',
       year: parseNumberInput(year, 2026),
       symbol: settings.symbol,
       interval: String(interval),
@@ -227,6 +307,10 @@ async function getStrategyOneRunTrades(req, res) {
   return getRunTradesByStrategy(req, res, 'strategy1_breakout_retest');
 }
 
+async function getStrategyTwoRunTrades(req, res) {
+  return getRunTradesByStrategy(req, res, 'strategy2_confirmation_breakout');
+}
+
 function runBacktestStub(req, res) {
   const { symbol, from, to } = req.body || {};
   if (!symbol || !from || !to) {
@@ -242,6 +326,8 @@ module.exports = {
   health,
   getCandles,
   runStrategyOne,
+  runStrategyTwo,
   getStrategyOneRunTrades,
+  getStrategyTwoRunTrades,
   runBacktestStub,
 };
