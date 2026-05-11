@@ -5,10 +5,13 @@ const { getLotSize, getStrikeStep } = require('../utils/market');
 const { getIstClock } = require('../utils/dateTime');
 const { getCandlesWithCache, fetchWithRateLimitRetry } = require('../services/dhanDataService');
 const {
-  runStrategyBreakoutRetest,
   runStrategyConfirmationBreakout,
   runStrategyShortStraddle,
 } = require('../services/strategyService');
+
+// Mongo strategyKey constants are kept stable so historical runs and live trades remain readable.
+const STRATEGY_ONE_KEY = 'strategy2_confirmation_breakout';
+const STRATEGY_TWO_KEY = 'strategy3_short_straddle';
 
 function parseNumberInput(value, fallback) {
   if (value === undefined || value === null) return fallback;
@@ -68,87 +71,6 @@ async function getCandles(req, res) {
 
 async function runStrategyOne(req, res) {
   try {
-    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
-    const hasStopLossInput = String(req.body?.stopLossPct ?? '').trim() !== '';
-    const hasTargetInput = String(req.body?.targetPct ?? '').trim() !== '';
-    const settings = {
-      symbol: String(symbol).toUpperCase(),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.50),
-      lotCount: parseNumberInput(req.body?.lotCount, 1),
-      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
-      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      stopLossPct: hasStopLossInput ? parseNumberInput(req.body?.stopLossPct, 12) : 12,
-      targetPct: hasTargetInput ? parseNumberInput(req.body?.targetPct, null) : null,
-      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
-      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
-      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
-      minBreakoutBodyPct: parseNumberInput(req.body?.minBreakoutBodyPct, 0.5),
-      breakoutRangeMult: parseNumberInput(req.body?.breakoutRangeMult, 1.0),
-      breakoutVolumeMult: parseNumberInput(req.body?.breakoutVolumeMult, 1.2),
-      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
-    };
-
-    const payload = await fetchWithRateLimitRetry({
-      symbol: settings.symbol,
-      interval: String(interval),
-      year: parseNumberInput(year, 2026),
-    });
-
-    const result = runStrategyBreakoutRetest({ candles: payload.rows, settings });
-
-    const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy1_breakout_retest',
-      symbol: settings.symbol,
-      interval: String(interval),
-      year: parseNumberInput(year, 2026),
-      settings,
-      summary: result.summary,
-      status: 'completed',
-    });
-
-    if (result.trades.length > 0) {
-      await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          ...t,
-          runId: runDoc._id,
-          strategyKey: 'strategy1_breakout_retest',
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-        }))
-      );
-    }
-
-    const pageSize = 25;
-    return res.json({
-      ok: true,
-      runId: runDoc._id,
-      strategy: 'Strategy 1 - 15M Breakout + First Retest',
-      year: parseNumberInput(year, 2026),
-      symbol: settings.symbol,
-      interval: String(interval),
-      summary: result.summary,
-      trades: result.trades.slice(0, pageSize),
-      pagination: {
-        page: 1,
-        pageSize,
-        totalRows: result.trades.length,
-        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
-      },
-    });
-  } catch (error) {
-    if (error.response) {
-      return res.status(error.response.status).json({
-        ok: false,
-        error: 'Dhan API error',
-        details: error.response.data,
-      });
-    }
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-}
-
-async function runStrategyTwo(req, res) {
-  try {
     const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
     const settings = {
       symbol: String(symbol).toUpperCase(),
@@ -176,7 +98,7 @@ async function runStrategyTwo(req, res) {
 
     const result = runStrategyConfirmationBreakout({ candles: payload.rows, settings });
     const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy2_confirmation_breakout',
+      strategyKey: STRATEGY_ONE_KEY,
       symbol: settings.symbol,
       interval: String(interval),
       year: parseNumberInput(year, 2026),
@@ -190,7 +112,7 @@ async function runStrategyTwo(req, res) {
         result.trades.map((t) => ({
           ...t,
           runId: runDoc._id,
-          strategyKey: 'strategy2_confirmation_breakout',
+          strategyKey: STRATEGY_ONE_KEY,
           entryTime: new Date(t.entryTime),
           exitTime: new Date(t.exitTime),
         }))
@@ -201,7 +123,88 @@ async function runStrategyTwo(req, res) {
     return res.json({
       ok: true,
       runId: runDoc._id,
-      strategy: 'Strategy 2 - Confirmation Breakout (Ref High/Low SL)',
+      strategy: 'Strategy 1 - Confirmation Breakout (Ref High/Low SL)',
+      year: parseNumberInput(year, 2026),
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function runStrategyTwo(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
+    const skipExpiryDayRaw = req.body?.skipExpiryDay;
+    const skipExpiryDay =
+      skipExpiryDayRaw === undefined
+        ? true
+        : skipExpiryDayRaw !== false && skipExpiryDayRaw !== 'false';
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      targetPct: parseNumberInput(req.body?.targetPct, 50),
+      stopLossPct: parseNumberInput(req.body?.stopLossPct, 30),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
+      dayCloseTime: parseStringInput(req.body?.dayCloseTime, '09:20'),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
+      expiryWeekday: parseNumberInput(req.body?.expiryWeekday, 4),
+      skipExpiryDay,
+    };
+
+    const payload = await fetchWithRateLimitRetry({
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+    });
+
+    const result = runStrategyShortStraddle({ candles: payload.rows, settings });
+    const runDoc = await StrategyRun.create({
+      strategyKey: STRATEGY_TWO_KEY,
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: parseNumberInput(year, 2026),
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: STRATEGY_TWO_KEY,
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 2 - Short Straddle (Overnight Hold)',
       year: parseNumberInput(year, 2026),
       symbol: settings.symbol,
       interval: String(interval),
@@ -229,7 +232,7 @@ async function runStrategyTwo(req, res) {
 async function getRunTrades(req, res) {
   try {
     const { runId } = req.params;
-    const strategyKey = String(req.query.strategyKey || 'strategy1_breakout_retest');
+    const strategyKey = String(req.query.strategyKey || STRATEGY_ONE_KEY);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(500, Math.max(10, Number(req.query.pageSize) || 25));
     const month = Number(req.query.month);
@@ -411,108 +414,19 @@ async function getRunValidationByStrategy(req, res, strategyKey) {
 }
 
 async function getStrategyOneRunTrades(req, res) {
-  return getRunTradesByStrategy(req, res, 'strategy1_breakout_retest');
+  return getRunTradesByStrategy(req, res, STRATEGY_ONE_KEY);
 }
 
 async function getStrategyOneValidation(req, res) {
-  return getRunValidationByStrategy(req, res, 'strategy1_breakout_retest');
+  return getRunValidationByStrategy(req, res, STRATEGY_ONE_KEY);
 }
 
 async function getStrategyTwoRunTrades(req, res) {
-  return getRunTradesByStrategy(req, res, 'strategy2_confirmation_breakout');
+  return getRunTradesByStrategy(req, res, STRATEGY_TWO_KEY);
 }
 
 async function getStrategyTwoValidation(req, res) {
-  return getRunValidationByStrategy(req, res, 'strategy2_confirmation_breakout');
-}
-
-async function runStrategyThree(req, res) {
-  try {
-    const { symbol = 'NIFTY', interval = '5', year = 2026 } = req.body || {};
-    const skipExpiryDayRaw = req.body?.skipExpiryDay;
-    const skipExpiryDay =
-      skipExpiryDayRaw === undefined
-        ? true
-        : skipExpiryDayRaw !== false && skipExpiryDayRaw !== 'false';
-    const settings = {
-      symbol: String(symbol).toUpperCase(),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
-      lotCount: parseNumberInput(req.body?.lotCount, 1),
-      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
-      targetPct: parseNumberInput(req.body?.targetPct, 50),
-      stopLossPct: parseNumberInput(req.body?.stopLossPct, 30),
-      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
-      entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
-      dayCloseTime: parseStringInput(req.body?.dayCloseTime, '15:15'),
-      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
-      expiryWeekday: parseNumberInput(req.body?.expiryWeekday, 4),
-      skipExpiryDay,
-    };
-
-    const payload = await fetchWithRateLimitRetry({
-      symbol: settings.symbol,
-      interval: String(interval),
-      year: parseNumberInput(year, 2026),
-    });
-
-    const result = runStrategyShortStraddle({ candles: payload.rows, settings });
-    const runDoc = await StrategyRun.create({
-      strategyKey: 'strategy3_short_straddle',
-      symbol: settings.symbol,
-      interval: String(interval),
-      year: parseNumberInput(year, 2026),
-      settings,
-      summary: result.summary,
-      status: 'completed',
-    });
-
-    if (result.trades.length > 0) {
-      await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          ...t,
-          runId: runDoc._id,
-          strategyKey: 'strategy3_short_straddle',
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-        }))
-      );
-    }
-
-    const pageSize = 25;
-    return res.json({
-      ok: true,
-      runId: runDoc._id,
-      strategy: 'Strategy 3 - Short Straddle (Intraday)',
-      year: parseNumberInput(year, 2026),
-      symbol: settings.symbol,
-      interval: String(interval),
-      summary: result.summary,
-      trades: result.trades.slice(0, pageSize),
-      pagination: {
-        page: 1,
-        pageSize,
-        totalRows: result.trades.length,
-        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
-      },
-    });
-  } catch (error) {
-    if (error.response) {
-      return res.status(error.response.status).json({
-        ok: false,
-        error: 'Dhan API error',
-        details: error.response.data,
-      });
-    }
-    return res.status(500).json({ ok: false, error: error.message });
-  }
-}
-
-async function getStrategyThreeRunTrades(req, res) {
-  return getRunTradesByStrategy(req, res, 'strategy3_short_straddle');
-}
-
-async function getStrategyThreeValidation(req, res) {
-  return getRunValidationByStrategy(req, res, 'strategy3_short_straddle');
+  return getRunValidationByStrategy(req, res, STRATEGY_TWO_KEY);
 }
 
 function runBacktestStub(req, res) {
@@ -531,12 +445,9 @@ module.exports = {
   getCandles,
   runStrategyOne,
   runStrategyTwo,
-  runStrategyThree,
   getStrategyOneRunTrades,
   getStrategyOneValidation,
   getStrategyTwoRunTrades,
   getStrategyTwoValidation,
-  getStrategyThreeRunTrades,
-  getStrategyThreeValidation,
   runBacktestStub,
 };

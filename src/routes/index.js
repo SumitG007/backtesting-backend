@@ -4,13 +4,10 @@ const {
   getCandles,
   runStrategyOne,
   runStrategyTwo,
-  runStrategyThree,
   getStrategyOneRunTrades,
   getStrategyOneValidation,
   getStrategyTwoRunTrades,
   getStrategyTwoValidation,
-  getStrategyThreeRunTrades,
-  getStrategyThreeValidation,
   runBacktestStub,
 } = require('../controllers/backtestController');
 const {
@@ -29,18 +26,17 @@ const router = express.Router();
 
 router.get('/health', health);
 router.get('/data/candles', getCandles);
+// Strategy 1 — Confirmation Breakout (Ref High/Low SL)
 router.post('/strategy1/run', runStrategyOne);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);
 router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);
+// Strategy 2 — Short Straddle (Overnight Hold, Skip Expiry Day)
 router.post('/strategy2/run', runStrategyTwo);
 router.get('/strategy2/runs/:runId/trades', getStrategyTwoRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyTwoValidation);
-router.post('/strategy3/run', runStrategyThree);
-router.get('/strategy3/runs/:runId/trades', getStrategyThreeRunTrades);
-router.get('/strategy3/runs/:runId/validation', getStrategyThreeValidation);
 router.post('/backtest/run', runBacktestStub);
 
-// Live paper trading (Strategy 2 only for now)
+// Live paper trading (Strategy 1 only for now)
 router.get('/live/status', getStatus);
 router.post('/live/start', startLive);
 router.post('/live/stop', stopLive);
