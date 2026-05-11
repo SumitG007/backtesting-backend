@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const app = require('./app');
 const { PORT } = require('./config/constants');
 const { startTokenAutoRenewJob } = require('./services/tokenService');
+const { bootEngineFromDb } = require('./services/liveTradingEngine');
 
 async function start() {
   const mongoUri = process.env.MONGODB_URI;
@@ -16,6 +17,13 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`Backend listening on http://localhost:${PORT}`);
   });
+  // Always-on live paper trading engine (Strategy 2 on NIFTY).
+  bootEngineFromDb({ symbol: 'NIFTY' })
+    .then((result) => {
+      if (result?.ok) console.log('[LiveEngine] auto-started for NIFTY');
+      else console.warn('[LiveEngine] auto-start skipped:', result?.error);
+    })
+    .catch((err) => console.error('[LiveEngine] auto-start error:', err.message));
 }
 
 start().catch((error) => {

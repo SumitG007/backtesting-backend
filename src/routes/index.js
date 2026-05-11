@@ -13,6 +13,17 @@ const {
   getStrategyThreeValidation,
   runBacktestStub,
 } = require('../controllers/backtestController');
+const {
+  getStatus,
+  startLive,
+  stopLive,
+  saveLiveSettings,
+  updateWallet,
+  resetWallet,
+  listTrades,
+  exportTradesExcel,
+  getLiveMeta,
+} = require('../controllers/liveTradeController');
 
 const router = express.Router();
 
@@ -28,5 +39,16 @@ router.post('/strategy3/run', runStrategyThree);
 router.get('/strategy3/runs/:runId/trades', getStrategyThreeRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyThreeValidation);
 router.post('/backtest/run', runBacktestStub);
+
+// Live paper trading (Strategy 2 only for now)
+router.get('/live/status', getStatus);
+router.post('/live/start', startLive);
+router.post('/live/stop', stopLive);
+router.post('/live/settings', saveLiveSettings);
+router.post('/live/wallet', updateWallet);
+router.post('/live/wallet/reset', resetWallet);
+router.get('/live/trades', listTrades);
+router.get('/live/trades/export', exportTradesExcel);
+router.get('/live/meta', getLiveMeta);
 
 module.exports = router;
