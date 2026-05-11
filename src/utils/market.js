@@ -17,8 +17,10 @@ function getLotSize(symbol) {
 }
 
 function getStrikeStep(symbol) {
-  const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
-  return resolvedSymbol === 'NIFTY' ? 50 : 100;
+  // All supported symbols use 100-point strike steps so strikes are always
+  // multiples of 100 (e.g. 25200, 25500, 25700) and never fall on 50-mid points.
+  void symbol;
+  return 100;
 }
 
 function getOptionPremiumFromSpotMove({

@@ -63,6 +63,16 @@ function getIstClock(isoValue) {
   };
 }
 
+function getWeekdayFromDateKey(dateKey) {
+  // dateKey format: YYYY-MM-DD (already in IST). Returns 0=Sunday ... 6=Saturday.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
+  if (!match) return -1;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
 function parseClockMinutes(value, fallbackMinutes) {
   const raw = String(value || '').trim();
   const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
@@ -86,6 +96,7 @@ module.exports = {
   differenceInDaysInclusive,
   normalizeTimestamp,
   getIstClock,
+  getWeekdayFromDateKey,
   parseClockMinutes,
   sleep,
 };
