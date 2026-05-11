@@ -770,6 +770,8 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
   const breakoutBufferPct = Math.max(0, Number(settings.breakoutBufferPct) || 0.08);
   const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
   const premiumStopLossCapPct = Math.max(0.5, Number(settings.premiumStopLossCapPct) || 1);
+  const rawPerTradeCost = Number(settings.perTradeCost);
+  const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
@@ -910,7 +912,10 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
 
       const invested = entryPremium * lotSize * lotCount;
       const finalValue = exitPremium * lotSize * lotCount;
-      const pnl = finalValue - invested;
+      const rawPnl = finalValue - invested;
+      // Per-trade cost (brokerage + slippage + other charges) applied to every
+      // Strategy 1 trade. Profitable trades earn this much less, losing trades lose this much more.
+      const pnl = rawPnl - perTradeCost;
       trades.push({
         pair: symbol,
         type: setup.optionType,
@@ -935,6 +940,8 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
         investmentAmount: Number(invested.toFixed(2)),
         stopLossAmount: Number((Math.max(0, entryPremium - stopPremium) * lotSize * lotCount).toFixed(2)),
         targetAmount: Number((Math.max(0, targetPremium - entryPremium) * lotSize * lotCount).toFixed(2)),
+        grossPnl: Number(rawPnl.toFixed(2)),
+        charges: perTradeCost,
         pnl: Number(pnl.toFixed(2)),
         pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
         reason,
@@ -972,6 +979,10 @@ function runStrategyShortStraddle({ candles, settings }) {
   const expiryWeekday = Number.isFinite(rawExpiryWeekday)
     ? Math.max(0, Math.min(6, Math.trunc(rawExpiryWeekday)))
     : 4;
+
+  // Per-trade tax/brokerage applied to every Strategy 2 trade (default Rs 100).
+  const rawPerTradeCost = Number(settings.perTradeCost);
+  const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
 
   // Group candles by IST date (session minutes 555..930).
   const byDay = new Map();
@@ -1020,10 +1031,13 @@ function runStrategyShortStraddle({ candles, settings }) {
 
     // Build the holding-period candle stream: from the candle AFTER entry on Day N,
     // through the rest of Day N, then all of Day N+1 up to the configured exit time.
+    // For BTST behaviour, SL/Target checks are ONLY active on Day N+1 candles — Day N
+    // candles are held through (no intraday exits on entry day).
     const holdingCandles = [];
     for (let i = entryIdx + 1; i < entryDayCandles.length; i += 1) {
       holdingCandles.push(entryDayCandles[i]);
     }
+    const dayOneCandleCount = holdingCandles.length;
     for (let i = 0; i < nextDayCandles.length; i += 1) {
       holdingCandles.push(nextDayCandles[i]);
       const nClock = getIstClock(nextDayCandles[i][0]);
@@ -1061,6 +1075,11 @@ function runStrategyShortStraddle({ candles, settings }) {
       const atHigh = combinedAtSpot(high, elapsed);
       const atLow = combinedAtSpot(low, elapsed);
       const atClose = combinedAtSpot(close, elapsed);
+
+      // BTST: ignore intraday exits on Day N — only check SL/Target on Day N+1 candles.
+      const isDayOne = j < dayOneCandleCount;
+      if (isDayOne) continue;
+
       const worst = Math.max(atHigh, atLow, atClose);
       const best = Math.min(atHigh, atLow, atClose);
 
@@ -1089,7 +1108,8 @@ function runStrategyShortStraddle({ candles, settings }) {
     const qty = lotSize * lotCount;
     const credit = entryCredit * qty;
     const buyback = exitCombined * qty;
-    const pnl = credit - buyback;
+    const rawPnl = credit - buyback;
+    const pnl = rawPnl - perTradeCost;
 
     trades.push({
       pair: symbol,
@@ -1115,6 +1135,8 @@ function runStrategyShortStraddle({ candles, settings }) {
       investmentAmount: Number(credit.toFixed(2)),
       stopLossAmount: Number((Math.max(0, stopCombined - entryCredit) * qty).toFixed(2)),
       targetAmount: Number((Math.max(0, entryCredit - targetCombined) * qty).toFixed(2)),
+      grossPnl: Number(rawPnl.toFixed(2)),
+      charges: perTradeCost,
       pnl: Number(pnl.toFixed(2)),
       pnlPct: credit > 0 ? Number(((pnl / credit) * 100).toFixed(2)) : 0,
       reason,

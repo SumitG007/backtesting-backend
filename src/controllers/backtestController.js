@@ -85,6 +85,7 @@ async function runStrategyOne(req, res) {
       breakoutBufferPct: parseNumberInput(req.body?.breakoutBufferPct, 0.08),
       minRefRangePct: parseNumberInput(req.body?.minRefRangePct, 0.15),
       premiumStopLossCapPct: parseNumberInput(req.body?.premiumStopLossCapPct, 1),
+      perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
@@ -169,6 +170,7 @@ async function runStrategyTwo(req, res) {
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       expiryWeekday: parseNumberInput(req.body?.expiryWeekday, 4),
       skipExpiryDay,
+      perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
     };
 
     const payload = await fetchWithRateLimitRetry({

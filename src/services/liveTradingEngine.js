@@ -305,6 +305,18 @@ async function placePaperTrade({
     wallet.balance -= invested;
     await wallet.save();
 
+    // Real broker-style execution timestamp (sub-second precision). The candle that
+    // triggered the entry is preserved in `notes` for audit.
+    const executedAt = new Date();
+    const candleTsIso = (() => {
+      try {
+        const d = entryTs instanceof Date ? entryTs : new Date(entryTs);
+        return Number.isFinite(d.getTime()) ? d.toISOString() : String(entryTs);
+      } catch (_e) {
+        return String(entryTs);
+      }
+    })();
+
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: 'strategy2_confirmation_breakout',
       symbol,
@@ -317,14 +329,14 @@ async function placePaperTrade({
       qty,
       entryPremium: Number(entryPremium.toFixed(2)),
       entrySpot: Number(entrySpot.toFixed(2)),
-      entryTime: entryTs,
+      entryTime: executedAt,
       stopLossPremium: Number(stopLossPremium.toFixed(2)),
       targetPremium: Number(targetPremium.toFixed(2)),
       refHigh: Number(refHigh.toFixed(2)),
       refLow: Number(refLow.toFixed(2)),
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
-      notes: `stopSpot=${Number(stopSpot).toFixed(2)}; capPct=${premiumStopLossCapPct}; targetPct=${targetPct}`,
+      notes: `stopSpot=${Number(stopSpot).toFixed(2)}; capPct=${premiumStopLossCapPct}; targetPct=${targetPct}; confirmCandle=${candleTsIso}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.openStopSpot = Number(stopSpot);
