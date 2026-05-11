@@ -125,6 +125,9 @@ async function fetchExpiryList(symbol) {
   }
 }
 
+const OPTION_CHAIN_MIN_INTERVAL_MS = 3100;
+const optionChainCache = new Map();
+
 async function fetchOptionChain({ symbol, expiry }) {
   const resolved = resolveSymbolConfig(symbol);
   if (!resolved.securityId || !resolved.exchangeSegment) {
@@ -161,6 +164,19 @@ async function fetchOptionChain({ symbol, expiry }) {
   }
 }
 
+/** Dhan rate limit: ~1 option-chain per 3s per underlying+expiry — coalesce all callers. */
+async function fetchOptionChainCached({ symbol, expiry }) {
+  const key = `${String(symbol).toUpperCase()}|${String(expiry)}`;
+  const now = Date.now();
+  const cached = optionChainCache.get(key);
+  if (cached && now - cached.at < OPTION_CHAIN_MIN_INTERVAL_MS) {
+    return cached.data;
+  }
+  const data = await fetchOptionChain({ symbol, expiry });
+  optionChainCache.set(key, { at: now, data });
+  return data;
+}
+
 async function getNearestWeeklyExpiry(symbol) {
   const list = await fetchExpiryList(symbol);
   if (list.length === 0) return null;
@@ -173,19 +189,58 @@ async function getNearestWeeklyExpiry(symbol) {
   return sorted[sorted.length - 1];
 }
 
+function pickLegHighMark(leg) {
+  if (!leg || typeof leg !== 'object') return null;
+  const candidates = [
+    Number(leg.last_price),
+    Number(leg.top_ask_price),
+    Number(leg.top_bid_price),
+  ].filter((n) => Number.isFinite(n) && n > 0);
+  if (candidates.length === 0) return null;
+  return Math.max(...candidates);
+}
+
+function pickLegLowMark(leg) {
+  if (!leg || typeof leg !== 'object') return null;
+  const candidates = [
+    Number(leg.last_price),
+    Number(leg.top_bid_price),
+    Number(leg.top_ask_price),
+  ].filter((n) => Number.isFinite(n) && n > 0);
+  if (candidates.length === 0) return null;
+  return Math.min(...candidates);
+}
+
 async function getAtmPremiums({ symbol, strike, expiry }) {
-  const chain = await fetchOptionChain({ symbol, expiry });
+  const chain = await fetchOptionChainCached({ symbol, expiry });
   const spot = Number(chain.last_price);
   const strikes = chain.oc || {};
   const strikeKey = Object.keys(strikes).find((k) => Math.abs(Number(k) - Number(strike)) < 0.5);
   if (!strikeKey) {
-    return { spot, ceLtp: null, peLtp: null, chainSpot: spot };
+    return {
+      spot,
+      ceLtp: null,
+      peLtp: null,
+      ceMarkHigh: null,
+      ceMarkLow: null,
+      peMarkHigh: null,
+      peMarkLow: null,
+      chainSpot: spot,
+    };
   }
   const row = strikes[strikeKey] || {};
+  const ce = row.ce || {};
+  const pe = row.pe || {};
+  const ceLast = Number(ce.last_price) || null;
+  const peLast = Number(pe.last_price) || null;
   return {
     spot,
-    ceLtp: Number(row.ce?.last_price) || null,
-    peLtp: Number(row.pe?.last_price) || null,
+    ceLtp: ceLast,
+    peLtp: peLast,
+    ceMarkHigh: pickLegHighMark(ce),
+    ceMarkLow: pickLegLowMark(ce),
+    peMarkHigh: pickLegHighMark(pe),
+    peMarkLow: pickLegLowMark(pe),
     chainSpot: spot,
   };
 }

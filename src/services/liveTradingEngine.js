@@ -23,7 +23,8 @@ const {
 
 const SUBSCRIPTION_KEY = 'engine:strategy2';
 const CANDLE_POLL_INTERVAL_MS = 30000;
-const CHAIN_POLL_THROTTLE_MS = 5000;
+/** How often we re-check option LTP vs target / premium-cap while a position is open (Dhan chain ~1/3s). */
+const OPTION_POSITION_POLL_MS = 3200;
 
 const engineState = {
   running: false,
@@ -54,6 +55,7 @@ const engineState = {
   tradesToday: 0,
   // Last live tick from WebSocket (used for instant SL/Target/DayClose detection)
   lastTick: null,
+  optionPositionPollTimer: null,
   // Open trade tracking
   openTradeId: null,
   openStopSpot: null,
@@ -330,6 +332,7 @@ async function placePaperTrade({
     engineState.tradesToday += 1;
     engineState.lastConfirmIndexToday = confirmationIndex;
     engineState.lastSignalAt = new Date();
+    startOptionPositionPoll();
   } catch (err) {
     engineState.lastError = err.message;
   }
@@ -363,12 +366,6 @@ async function onLiveTick({ ltp, ltt }) {
     await closeOpenTrade({ reason: 'DAY_CLOSE', spot: ltp, ts: tickDate });
     return;
   }
-
-  // Throttled premium-side check for TARGET hit & premium-cap safety SL
-  const now = Date.now();
-  if (now - engineState.chainPollAt < CHAIN_POLL_THROTTLE_MS) return;
-  engineState.chainPollAt = now;
-  await checkPremiumExits({ spot: ltp, ts: tickDate });
 }
 
 async function checkPremiumExits({ spot, ts }) {
@@ -377,33 +374,36 @@ async function checkPremiumExits({ spot, ts }) {
     clearOpenTrade();
     return;
   }
-  let livePremium = null;
+  let chain = null;
   try {
-    const chain = await getAtmPremiums({
+    chain = await getAtmPremiums({
       symbol: trade.symbol,
       strike: trade.strike,
       expiry: trade.expiryDate,
     });
-    livePremium = trade.optionType === 'CE' ? Number(chain.ceLtp) : Number(chain.peLtp);
   } catch (err) {
     engineState.lastError = `Option chain refresh: ${err.message}`;
     return;
   }
-  if (!Number.isFinite(livePremium) || livePremium <= 0) return;
+  const spotForExit =
+    Number.isFinite(Number(spot)) && Number(spot) > 0 ? Number(spot) : Number(chain.chainSpot);
 
-  if (livePremium >= trade.targetPremium) {
+  const markHigh = trade.optionType === 'CE' ? chain.ceMarkHigh : chain.peMarkHigh;
+  const markLow = trade.optionType === 'CE' ? chain.ceMarkLow : chain.peMarkLow;
+
+  if (Number.isFinite(markHigh) && markHigh >= trade.targetPremium) {
     await finalizeTrade(trade, {
       exitPremium: trade.targetPremium,
-      exitSpot: spot,
+      exitSpot: spotForExit,
       ts,
       reason: 'TARGET',
     });
     return;
   }
-  if (livePremium <= trade.stopLossPremium) {
+  if (Number.isFinite(markLow) && markLow <= trade.stopLossPremium) {
     await finalizeTrade(trade, {
       exitPremium: trade.stopLossPremium,
-      exitSpot: spot,
+      exitSpot: spotForExit,
       ts,
       reason: 'STOP_LOSS_PREMIUM_CAP',
     });
@@ -464,6 +464,7 @@ async function finalizeTrade(trade, { exitPremium, exitSpot, ts, reason }) {
 }
 
 function clearOpenTrade() {
+  stopOptionPositionPoll();
   engineState.openTradeId = null;
   engineState.openStopSpot = null;
   engineState.openSide = null;
@@ -478,6 +479,30 @@ async function ensureWallet() {
 }
 
 // ----------------- Engine lifecycle -----------------
+
+function stopOptionPositionPoll() {
+  if (engineState.optionPositionPollTimer) {
+    clearInterval(engineState.optionPositionPollTimer);
+    engineState.optionPositionPollTimer = null;
+  }
+}
+
+function startOptionPositionPoll() {
+  stopOptionPositionPoll();
+  if (!engineState.openTradeId) return;
+  const tick = () => {
+    if (!engineState.running || !engineState.openTradeId) return;
+    const st = engineState.lastTick;
+    checkPremiumExits({
+      spot: Number.isFinite(st?.ltp) ? st.ltp : null,
+      ts: new Date(),
+    }).catch((e) => {
+      console.error('[LiveEngine] checkPremiumExits:', e.message);
+    });
+  };
+  tick();
+  engineState.optionPositionPollTimer = setInterval(tick, OPTION_POSITION_POLL_MS);
+}
 
 function startCandlePoll() {
   if (engineState.pollTimer) clearInterval(engineState.pollTimer);
@@ -524,6 +549,9 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   } catch (err) {
     engineState.lastError = `Adopt orphan failed: ${err.message}`;
   }
+  if (engineState.openTradeId) {
+    startOptionPositionPoll();
+  }
 
   // Initial poll: hydrate today's candles AND set the boundary so historical signals
   // (those that already happened before the engine started) are skipped.
@@ -541,6 +569,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
 
 function stopEngine() {
   unsubscribeLiveSymbol(SUBSCRIPTION_KEY);
+  stopOptionPositionPoll();
   if (engineState.pollTimer) {
     clearInterval(engineState.pollTimer);
     engineState.pollTimer = null;
