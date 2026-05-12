@@ -45,6 +45,10 @@ async function getStatus(req, res) {
     const ctx = getLiveContext(req);
     const wallet = await ensureWallet();
     const openTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey, status: 'OPEN' }).lean();
+    const [chargesAgg] = await LivePaperTrade.aggregate([
+      { $match: { strategyKey: ctx.strategyKey, status: 'CLOSED' } },
+      { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
+    ]);
     return res.json({
       ok: true,
       strategyId: ctx.strategyId,
@@ -57,6 +61,7 @@ async function getStatus(req, res) {
         totalTrades: wallet.totalTrades,
         wins: wallet.wins,
         losses: wallet.losses,
+        totalCharges: Number(Number(chargesAgg?.totalCharges || 0).toFixed(2)),
         lastResetAt: wallet.lastResetAt,
       },
       openTrade: openTrade || null,
