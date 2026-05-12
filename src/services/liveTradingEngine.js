@@ -23,8 +23,9 @@ const {
   resolveOptionInstrument,
 } = require('./dhanLiveService');
 
-const SUBSCRIPTION_KEY = 'engine:strategy2';
-const OPTION_SUBSCRIPTION_KEY = 'engine:strategy2:option';
+const STRATEGY_KEY = 'strategy2_confirmation_breakout';
+const SUBSCRIPTION_KEY = 'engine:strategy1';
+const OPTION_SUBSCRIPTION_KEY = 'engine:strategy1:option';
 const CANDLE_POLL_INTERVAL_MS = 30000;
 /** How often we re-check option LTP vs target / premium-cap while a position is open (Dhan chain ~1/3s). */
 const OPTION_POSITION_POLL_MS = 3200;
@@ -318,7 +319,7 @@ async function placePaperTrade({
     })();
 
     const tradeDoc = await LivePaperTrade.create({
-      strategyKey: 'strategy2_confirmation_breakout',
+      strategyKey: STRATEGY_KEY,
       symbol,
       side,
       optionType,
@@ -625,7 +626,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
 
   // Adopt any orphan OPEN trades from a previous process so they continue to be managed.
   try {
-    const orphan = await LivePaperTrade.findOne({ status: 'OPEN' }).sort({ entryTime: -1 });
+    const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, status: 'OPEN' }).sort({ entryTime: -1 });
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.openSide = orphan.side;

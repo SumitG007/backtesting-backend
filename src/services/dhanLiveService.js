@@ -189,6 +189,20 @@ async function getNearestWeeklyExpiry(symbol) {
   return sorted[sorted.length - 1];
 }
 
+async function getTradableWeeklyExpiry(symbol, dateKey) {
+  const list = await fetchExpiryList(symbol);
+  if (list.length === 0) return null;
+  const today = String(dateKey || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const sorted = [...list].sort();
+  for (const expiry of sorted) {
+    if (String(expiry).slice(0, 10) > today) return expiry;
+  }
+  for (const expiry of sorted) {
+    if (String(expiry).slice(0, 10) >= today) return expiry;
+  }
+  return sorted[sorted.length - 1];
+}
+
 function pickLegHighMark(leg) {
   if (!leg || typeof leg !== 'object') return null;
   const candidates = [
@@ -485,6 +499,7 @@ module.exports = {
   fetchExpiryList,
   fetchOptionChain,
   getNearestWeeklyExpiry,
+  getTradableWeeklyExpiry,
   getAtmPremiums,
   resolveOptionInstrument,
   subscribeLiveInstrument,

@@ -973,7 +973,9 @@ function runStrategyShortStraddle({ candles, settings }) {
   // Exit time on NEXT trading day (default 09:20 IST = 560 minutes).
   const nextDayExitMinutes = parseClockMinutes(settings.dayCloseTime, 560);
 
-  // Skip entry on weekly expiry day (default Thursday = 4). Use 0..6 Sun..Sat.
+  // Avoid same-day expiry contracts on weekly expiry day (default Thursday = 4).
+  // Historical backtests do not have the live expiry list, so an expiry-weekday entry
+  // is modeled as rolling to the next available expiry instead of skipping the day.
   const skipExpiryDay = settings.skipExpiryDay !== false && settings.skipExpiryDay !== 'false';
   const rawExpiryWeekday = Number(settings.expiryWeekday);
   const expiryWeekday = Number.isFinite(rawExpiryWeekday)
@@ -997,7 +999,7 @@ function runStrategyShortStraddle({ candles, settings }) {
 
   for (let dIdx = 0; dIdx < dayKeys.length; dIdx += 1) {
     const entryDayKey = dayKeys[dIdx];
-    if (skipExpiryDay && getWeekdayFromDateKey(entryDayKey) === expiryWeekday) continue;
+    const usesNextExpiry = skipExpiryDay && getWeekdayFromDateKey(entryDayKey) === expiryWeekday;
 
     const entryDayCandles = byDay.get(entryDayKey) || [];
     if (entryDayCandles.length < 1) continue;
@@ -1140,6 +1142,7 @@ function runStrategyShortStraddle({ candles, settings }) {
       pnl: Number(pnl.toFixed(2)),
       pnlPct: credit > 0 ? Number(((pnl / credit) * 100).toFixed(2)) : 0,
       reason,
+      expiryMode: usesNextExpiry ? 'NEXT_EXPIRY' : 'CURRENT_EXPIRY',
     });
   }
 

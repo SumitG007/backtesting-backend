@@ -30,13 +30,19 @@ router.get('/data/candles', getCandles);
 router.post('/strategy1/run', runStrategyOne);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);
 router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);
-// Strategy 2 — Short Straddle (Overnight Hold, Skip Expiry Day)
+// Strategy 2 — Short Straddle (Overnight Hold, Avoid Same-Day Expiry)
 router.post('/strategy2/run', runStrategyTwo);
 router.get('/strategy2/runs/:runId/trades', getStrategyTwoRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyTwoValidation);
 router.post('/backtest/run', runBacktestStub);
 
-// Live paper trading (Strategy 1 only for now)
+// Live paper trading
+router.get('/live/:strategyId/status', getStatus);
+router.post('/live/:strategyId/start', startLive);
+router.post('/live/:strategyId/stop', stopLive);
+router.post('/live/:strategyId/settings', saveLiveSettings);
+router.get('/live/:strategyId/trades', listTrades);
+router.get('/live/:strategyId/trades/export', exportTradesExcel);
 router.get('/live/status', getStatus);
 router.post('/live/start', startLive);
 router.post('/live/stop', stopLive);

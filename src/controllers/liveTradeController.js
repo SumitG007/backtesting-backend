@@ -8,19 +8,48 @@ const {
   getEngineSnapshot,
   ensureWallet,
 } = require('../services/liveTradingEngine');
+const strategyTwoEngine = require('../services/liveShortStraddleEngine');
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
   getAtmPremiums,
 } = require('../services/dhanLiveService');
 
-async function getStatus(_req, res) {
+const STRATEGY_ONE_KEY = 'strategy2_confirmation_breakout';
+const STRATEGY_TWO_KEY = 'strategy3_short_straddle';
+
+function getLiveContext(req) {
+  const strategyId = String(req.params?.strategyId || 'strategy-1').toLowerCase();
+  if (strategyId === 'strategy-2') {
+    return {
+      strategyId,
+      strategyKey: STRATEGY_TWO_KEY,
+      startEngine: strategyTwoEngine.startEngine,
+      stopEngine: strategyTwoEngine.stopEngine,
+      updateEngineSettings: strategyTwoEngine.updateEngineSettings,
+      getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
+    };
+  }
+  return {
+    strategyId: 'strategy-1',
+    strategyKey: STRATEGY_ONE_KEY,
+    startEngine,
+    stopEngine,
+    updateEngineSettings,
+    getEngineSnapshot,
+  };
+}
+
+async function getStatus(req, res) {
   try {
+    const ctx = getLiveContext(req);
     const wallet = await ensureWallet();
-    const openTrade = await LivePaperTrade.findOne({ status: 'OPEN' }).lean();
+    const openTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey, status: 'OPEN' }).lean();
     return res.json({
       ok: true,
-      engine: getEngineSnapshot(),
+      strategyId: ctx.strategyId,
+      strategyKey: ctx.strategyKey,
+      engine: ctx.getEngineSnapshot(),
       wallet: {
         startingBalance: wallet.startingBalance,
         balance: wallet.balance,
@@ -39,17 +68,19 @@ async function getStatus(_req, res) {
 
 async function startLive(req, res) {
   try {
+    const ctx = getLiveContext(req);
     const { symbol = 'NIFTY', settings = {} } = req.body || {};
-    const result = await startEngine({ symbol, settings });
+    const result = await ctx.startEngine({ symbol, settings });
     return res.json(result);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
 }
 
-function stopLive(_req, res) {
+function stopLive(req, res) {
   try {
-    return res.json(stopEngine());
+    const ctx = getLiveContext(req);
+    return res.json(ctx.stopEngine());
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -57,6 +88,7 @@ function stopLive(_req, res) {
 
 async function saveLiveSettings(req, res) {
   try {
+    const ctx = getLiveContext(req);
     const settings = req.body?.settings || {};
     const numeric = {};
     for (const [key, value] of Object.entries(settings)) {
@@ -67,7 +99,7 @@ async function saveLiveSettings(req, res) {
         numeric[key] = Number.isFinite(n) ? n : value;
       }
     }
-    const result = await updateEngineSettings(numeric);
+    const result = await ctx.updateEngineSettings(numeric);
     return res.json(result);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -99,10 +131,11 @@ async function resetWallet(_req, res) {
 
 async function listTrades(req, res) {
   try {
+    const ctx = getLiveContext(req);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize) || 25));
     const status = String(req.query.status || '').toUpperCase();
-    const filter = {};
+    const filter = { strategyKey: ctx.strategyKey };
     if (status === 'OPEN' || status === 'CLOSED') filter.status = status;
     const totalRows = await LivePaperTrade.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -123,9 +156,10 @@ async function listTrades(req, res) {
   }
 }
 
-async function exportTradesExcel(_req, res) {
+async function exportTradesExcel(req, res) {
   try {
-    const trades = await LivePaperTrade.find().sort({ entryTime: -1 }).lean();
+    const ctx = getLiveContext(req);
+    const trades = await LivePaperTrade.find({ strategyKey: ctx.strategyKey }).sort({ entryTime: -1 }).lean();
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Live Paper Trades');
     sheet.columns = [
