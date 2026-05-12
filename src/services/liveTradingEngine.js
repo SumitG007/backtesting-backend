@@ -15,13 +15,16 @@ const {
 } = require('./tokenService');
 const {
   subscribeLiveSymbol,
+  subscribeLiveInstrument,
   unsubscribeLiveSymbol,
   getCurrentLotSize,
   getNearestWeeklyExpiry,
   getAtmPremiums,
+  resolveOptionInstrument,
 } = require('./dhanLiveService');
 
 const SUBSCRIPTION_KEY = 'engine:strategy2';
+const OPTION_SUBSCRIPTION_KEY = 'engine:strategy2:option';
 const CANDLE_POLL_INTERVAL_MS = 30000;
 /** How often we re-check option LTP vs target / premium-cap while a position is open (Dhan chain ~1/3s). */
 const OPTION_POSITION_POLL_MS = 3200;
@@ -37,9 +40,10 @@ const engineState = {
     confirmationWindow: 2,
     breakoutBufferPct: 0.08,
     minRefRangePct: 0.15,
-    premiumStopLossCapPct: 1,
+    premiumStopLossCapPct: 3,
     targetPct: 12,
     maxTradesPerDay: 2,
+    perTradeCost: 100,
     entryFromTime: '09:30',
     entryToTime: '14:00',
   },
@@ -60,6 +64,9 @@ const engineState = {
   openTradeId: null,
   openStopSpot: null,
   openSide: null,
+  openTargetPremium: null,
+  openStopLossPremium: null,
+  closingTrade: false,
   // Diagnostics
   lastSignalAt: null,
   lastError: null,
@@ -289,21 +296,14 @@ async function placePaperTrade({
     const qty = lotSize * lots;
     const invested = entryPremium * qty;
 
-    const wallet = await ensureWallet();
-    if (wallet.balance < invested) {
-      engineState.lastError = `Insufficient wallet: needed ${invested.toFixed(2)}, have ${wallet.balance.toFixed(2)}`;
-      return;
-    }
-
     const targetPct = Number.isFinite(Number(engineState.settings.targetPct))
       ? Math.max(0.5, Number(engineState.settings.targetPct))
       : 12;
-    const premiumStopLossCapPct = Math.max(0.5, Number(engineState.settings.premiumStopLossCapPct) || 1);
+    const premiumStopLossCapPct = Math.max(0.5, Number(engineState.settings.premiumStopLossCapPct) || 3);
+    const rawPerTradeCost = Number(engineState.settings.perTradeCost);
+    const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
     const targetPremium = entryPremium * (1 + targetPct / 100);
     const stopLossPremium = Math.max(0.05, entryPremium * (1 - premiumStopLossCapPct / 100));
-
-    wallet.balance -= invested;
-    await wallet.save();
 
     // Real broker-style execution timestamp (sub-second precision). The candle that
     // triggered the entry is preserved in `notes` for audit.
@@ -336,17 +336,65 @@ async function placePaperTrade({
       refLow: Number(refLow.toFixed(2)),
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
+      charges: Number(perTradeCost.toFixed(2)),
       notes: `stopSpot=${Number(stopSpot).toFixed(2)}; capPct=${premiumStopLossCapPct}; targetPct=${targetPct}; confirmCandle=${candleTsIso}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.openStopSpot = Number(stopSpot);
     engineState.openSide = side;
+    engineState.openTargetPremium = Number(tradeDoc.targetPremium);
+    engineState.openStopLossPremium = Number(tradeDoc.stopLossPremium);
     engineState.tradesToday += 1;
     engineState.lastConfirmIndexToday = confirmationIndex;
     engineState.lastSignalAt = new Date();
+    await subscribeOpenOptionTrade(tradeDoc);
     startOptionPositionPoll();
   } catch (err) {
     engineState.lastError = err.message;
+  }
+}
+
+async function subscribeOpenOptionTrade(trade) {
+  try {
+    const instrument = await resolveOptionInstrument({
+      symbol: trade.symbol,
+      strike: trade.strike,
+      expiry: trade.expiryDate,
+      optionType: trade.optionType,
+    });
+    subscribeLiveInstrument({
+      key: OPTION_SUBSCRIPTION_KEY,
+      securityId: instrument.securityId,
+      exchangeSegment: instrument.exchangeSegment,
+      onTick: onOptionTick,
+    });
+  } catch (err) {
+    engineState.lastError = `Option WS subscribe failed: ${err.message}`;
+  }
+}
+
+async function onOptionTick({ ltp, ltt }) {
+  if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
+  const optionPremium = Number(ltp);
+  if (!Number.isFinite(optionPremium) || optionPremium <= 0) return;
+
+  const targetPremium = Number(engineState.openTargetPremium);
+  if (Number.isFinite(targetPremium) && optionPremium >= targetPremium) {
+    await closeOpenTradeAtOptionPremium({
+      reason: 'TARGET',
+      optionPremium: targetPremium,
+      ts: ltt ? new Date(ltt * 1000) : new Date(),
+    });
+    return;
+  }
+
+  const stopLossPremium = Number(engineState.openStopLossPremium);
+  if (Number.isFinite(stopLossPremium) && optionPremium <= stopLossPremium) {
+    await closeOpenTradeAtOptionPremium({
+      reason: 'STOP_LOSS_PREMIUM_CAP',
+      optionPremium: stopLossPremium,
+      ts: ltt ? new Date(ltt * 1000) : new Date(),
+    });
   }
 }
 
@@ -381,6 +429,7 @@ async function onLiveTick({ ltp, ltt }) {
 }
 
 async function checkPremiumExits({ spot, ts }) {
+  if (engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
   if (!trade || trade.status === 'CLOSED') {
     clearOpenTrade();
@@ -423,6 +472,7 @@ async function checkPremiumExits({ spot, ts }) {
 }
 
 async function closeOpenTrade({ reason, spot, ts }) {
+  if (engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
   if (!trade || trade.status === 'CLOSED') {
     clearOpenTrade();
@@ -448,44 +498,70 @@ async function closeOpenTrade({ reason, spot, ts }) {
   await finalizeTrade(trade, { exitPremium, exitSpot: spot, ts, reason });
 }
 
+async function closeOpenTradeAtOptionPremium({ reason, optionPremium, ts }) {
+  if (engineState.closingTrade) return;
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.status === 'CLOSED') {
+    clearOpenTrade();
+    return;
+  }
+  const spot = Number.isFinite(Number(engineState.lastTick?.ltp)) ? engineState.lastTick.ltp : trade.entrySpot;
+  await finalizeTrade(trade, { exitPremium: optionPremium, exitSpot: spot, ts, reason });
+}
+
 async function finalizeTrade(trade, { exitPremium, exitSpot, ts, reason }) {
+  if (engineState.closingTrade) return;
+  engineState.closingTrade = true;
   const safeExitPremium = Math.max(0, Number(exitPremium) || 0);
-  const finalValue = safeExitPremium * trade.qty;
-  const pnl = finalValue - trade.investedAmount;
-  trade.status = 'CLOSED';
-  trade.exitPremium = Number(safeExitPremium.toFixed(2));
-  trade.exitSpot = Number(Number(exitSpot).toFixed(2));
-  trade.exitTime = ts;
-  trade.reason = reason;
-  trade.finalValue = Number(finalValue.toFixed(2));
-  trade.pnl = Number(pnl.toFixed(2));
-  trade.pnlPct = trade.investedAmount > 0
-    ? Number(((pnl / trade.investedAmount) * 100).toFixed(2))
-    : 0;
-  await trade.save();
+  try {
+    const finalValue = safeExitPremium * trade.qty;
+    const charges = Math.max(0, Number(trade.charges) || 0);
+    const pnl = finalValue - trade.investedAmount - charges;
+    trade.status = 'CLOSED';
+    trade.exitPremium = Number(safeExitPremium.toFixed(2));
+    trade.exitSpot = Number(Number(exitSpot).toFixed(2));
+    trade.exitTime = ts;
+    trade.reason = reason;
+    trade.finalValue = Number(finalValue.toFixed(2));
+    trade.charges = Number(charges.toFixed(2));
+    trade.pnl = Number(pnl.toFixed(2));
+    trade.pnlPct = trade.investedAmount > 0
+      ? Number(((pnl / trade.investedAmount) * 100).toFixed(2))
+      : 0;
+    await trade.save();
 
-  const wallet = await ensureWallet();
-  wallet.balance += finalValue;
-  wallet.realizedPnl += pnl;
-  wallet.totalTrades += 1;
-  if (pnl > 0) wallet.wins += 1;
-  else if (pnl < 0) wallet.losses += 1;
-  await wallet.save();
-
-  clearOpenTrade();
+    const wallet = await ensureWallet();
+    wallet.balance += pnl;
+    wallet.realizedPnl += pnl;
+    wallet.totalTrades += 1;
+    if (pnl > 0) wallet.wins += 1;
+    else if (pnl < 0) wallet.losses += 1;
+    await wallet.save();
+  } finally {
+    clearOpenTrade();
+    engineState.closingTrade = false;
+  }
 }
 
 function clearOpenTrade() {
   stopOptionPositionPoll();
+  unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
   engineState.openTradeId = null;
   engineState.openStopSpot = null;
   engineState.openSide = null;
+  engineState.openTargetPremium = null;
+  engineState.openStopLossPremium = null;
 }
 
 async function ensureWallet() {
   let wallet = await LiveWallet.findOne({ walletKey: 'default' });
   if (!wallet) {
     wallet = await LiveWallet.create({ walletKey: 'default' });
+  }
+  if (wallet.startingBalance !== 0 || wallet.balance !== wallet.realizedPnl) {
+    wallet.startingBalance = 0;
+    wallet.balance = Number(wallet.realizedPnl || 0);
+    await wallet.save();
   }
   return wallet;
 }
@@ -554,6 +630,9 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
       engineState.openTradeId = orphan._id.toString();
       engineState.openSide = orphan.side;
       engineState.openStopSpot = orphan.side === 'LONG' ? orphan.refLow : orphan.refHigh;
+      engineState.openTargetPremium = Number(orphan.targetPremium);
+      engineState.openStopLossPremium = Number(orphan.stopLossPremium);
+      await subscribeOpenOptionTrade(orphan);
       console.log(
         `[LiveEngine] adopted orphan open trade ${orphan._id} (${orphan.side} ${orphan.optionType} ${orphan.strike})`
       );
@@ -581,6 +660,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
 
 function stopEngine() {
   unsubscribeLiveSymbol(SUBSCRIPTION_KEY);
+  unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
   stopOptionPositionPoll();
   if (engineState.pollTimer) {
     clearInterval(engineState.pollTimer);
@@ -597,6 +677,7 @@ async function updateEngineSettings(partial = {}) {
     'premiumStopLossCapPct',
     'targetPct',
     'maxTradesPerDay',
+    'perTradeCost',
     'entryFromTime',
     'entryToTime',
   ];

@@ -291,14 +291,59 @@ function exchangeSegmentToCode(seg) {
   }
 }
 
+function normalizeExchangeSegment(row) {
+  const exch = String(pickField(row, ['EXCH_ID', 'EXCHANGE']) || '').toUpperCase();
+  const segment = String(pickField(row, ['SEGMENT', 'EXCHANGE_SEGMENT']) || '').toUpperCase();
+  if (exch === 'NSE' && segment === 'D') return 'NSE_FNO';
+  if (exch === 'BSE' && segment === 'D') return 'BSE_FNO';
+  if (exch === 'NSE' && segment === 'E') return 'NSE_EQ';
+  if (exch === 'BSE' && segment === 'E') return 'BSE_EQ';
+  return segment || exch;
+}
+
+async function resolveOptionInstrument({ symbol, strike, expiry, optionType }) {
+  const upperSymbol = String(symbol || '').toUpperCase();
+  const normalizedExpiry = String(expiry || '').slice(0, 10);
+  const normalizedType = String(optionType || '').toUpperCase();
+  const targetStrike = Number(strike);
+  if (!upperSymbol || !normalizedExpiry || !Number.isFinite(targetStrike) || !normalizedType) {
+    throw new Error('Missing option instrument inputs');
+  }
+
+  const rows = await loadInstrumentMaster();
+  const match = rows.find((r) => {
+    const instrument = String(pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE']) || '').toUpperCase();
+    const underlying = String(pickField(r, ['UNDERLYING_SYMBOL', 'SYMBOL_NAME']) || '').toUpperCase();
+    const rowExpiry = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
+    const rowStrike = Number(pickField(r, ['STRIKE_PRICE', 'STRIKE']));
+    const rowType = String(pickField(r, ['OPTION_TYPE', 'OPT_TYPE']) || '').toUpperCase();
+    return instrument === 'OPTIDX'
+      && underlying === upperSymbol
+      && rowExpiry === normalizedExpiry
+      && Math.abs(rowStrike - targetStrike) < 0.5
+      && rowType === normalizedType;
+  });
+  if (!match) {
+    throw new Error(`Option instrument not found: ${upperSymbol} ${normalizedExpiry} ${targetStrike} ${normalizedType}`);
+  }
+
+  return {
+    securityId: String(pickField(match, ['SECURITY_ID', 'SEM_SMST_SECURITY_ID'])),
+    exchangeSegment: normalizeExchangeSegment(match),
+    tradingSymbol: pickField(match, ['SYMBOL_NAME', 'DISPLAY_NAME']) || '',
+  };
+}
+
 function decodeTickerPacket(buffer) {
   // Header (8 bytes) + Ticker payload: LTP (4 byte float) + LTT (4 byte int)
   if (buffer.length < 16) return null;
   const responseCode = buffer.readUInt8(0);
   if (responseCode !== 2) return null;
+  const exchangeSegmentCode = buffer.readUInt8(3);
+  const securityId = String(buffer.readInt32LE(4));
   const ltp = buffer.readFloatLE(8);
   const ltt = buffer.readInt32LE(12);
-  return { ltp, ltt, responseCode };
+  return { ltp, ltt, responseCode, exchangeSegmentCode, securityId };
 }
 
 function ensureWsConnection() {
@@ -337,8 +382,13 @@ function ensureWsConnection() {
     if (!(data instanceof Buffer)) return;
     const decoded = decodeTickerPacket(data);
     if (!decoded || !Number.isFinite(decoded.ltp) || decoded.ltp <= 0) return;
-    // We only have one symbol subscribed at a time for the engine — broadcast LTP to all listeners.
     for (const [key, sub] of wsState.subscribers.entries()) {
+      if (
+        String(sub.securityId) !== decoded.securityId
+        || Number(sub.exchangeSegmentCode) !== Number(decoded.exchangeSegmentCode)
+      ) {
+        continue;
+      }
       wsState.lastPrices.set(key, { ltp: decoded.ltp, ts: Date.now() });
       if (typeof sub.onTick === 'function') {
         try {
@@ -391,6 +441,26 @@ function subscribeLiveSymbol({ key, symbol, onTick }) {
   }
 }
 
+function subscribeLiveInstrument({ key, securityId, exchangeSegment, onTick }) {
+  const exchangeSegmentCode = exchangeSegmentToCode(exchangeSegment);
+  wsState.subscribers.set(key, {
+    securityId: String(securityId),
+    exchangeSegmentCode,
+    onTick,
+  });
+  const ws = ensureWsConnection();
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try {
+      ws.send(packInstrumentSubscription({
+        securityId: String(securityId),
+        exchangeSegmentCode,
+      }));
+    } catch (err) {
+      console.error('[DhanLive] WS sub failed:', err.message);
+    }
+  }
+}
+
 function unsubscribeLiveSymbol(key) {
   wsState.subscribers.delete(key);
   wsState.lastPrices.delete(key);
@@ -416,6 +486,8 @@ module.exports = {
   fetchOptionChain,
   getNearestWeeklyExpiry,
   getAtmPremiums,
+  resolveOptionInstrument,
+  subscribeLiveInstrument,
   subscribeLiveSymbol,
   unsubscribeLiveSymbol,
   getLastPrice,

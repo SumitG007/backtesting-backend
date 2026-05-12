@@ -25,6 +25,7 @@ const livePaperTradeSchema = new mongoose.Schema(
     reason: { type: String, default: null },
     investedAmount: { type: Number, required: true },
     finalValue: { type: Number, default: null },
+    charges: { type: Number, default: 100 },
     pnl: { type: Number, default: null },
     pnlPct: { type: Number, default: null },
     notes: { type: String, default: null },

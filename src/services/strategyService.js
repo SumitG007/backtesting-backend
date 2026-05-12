@@ -769,7 +769,7 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
   const confirmationWindow = Math.max(1, Number(settings.confirmationWindow) || 2);
   const breakoutBufferPct = Math.max(0, Number(settings.breakoutBufferPct) || 0.08);
   const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
-  const premiumStopLossCapPct = Math.max(0.5, Number(settings.premiumStopLossCapPct) || 1);
+  const premiumStopLossCapPct = Math.max(0.5, Number(settings.premiumStopLossCapPct) || 3);
   const rawPerTradeCost = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);

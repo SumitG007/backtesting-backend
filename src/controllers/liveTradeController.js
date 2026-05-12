@@ -55,7 +55,7 @@ function stopLive(_req, res) {
   }
 }
 
-function saveLiveSettings(req, res) {
+async function saveLiveSettings(req, res) {
   try {
     const settings = req.body?.settings || {};
     const numeric = {};
@@ -67,34 +67,22 @@ function saveLiveSettings(req, res) {
         numeric[key] = Number.isFinite(n) ? n : value;
       }
     }
-    return res.json(updateEngineSettings(numeric));
+    const result = await updateEngineSettings(numeric);
+    return res.json(result);
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
 }
 
 async function updateWallet(req, res) {
-  try {
-    const startingBalance = Number(req.body?.startingBalance);
-    if (!Number.isFinite(startingBalance) || startingBalance <= 0) {
-      return res.status(400).json({ ok: false, error: 'startingBalance must be a positive number' });
-    }
-    const wallet = await ensureWallet();
-    wallet.startingBalance = startingBalance;
-    if (req.body?.applyToCurrent === true) {
-      wallet.balance = startingBalance;
-    }
-    await wallet.save();
-    return res.json({ ok: true, wallet });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error.message });
-  }
+  return res.status(400).json({ ok: false, error: 'Wallet balance is managed by live trade P/L only' });
 }
 
 async function resetWallet(_req, res) {
   try {
     const wallet = await ensureWallet();
-    wallet.balance = wallet.startingBalance;
+    wallet.startingBalance = 0;
+    wallet.balance = 0;
     wallet.realizedPnl = 0;
     wallet.totalTrades = 0;
     wallet.wins = 0;
@@ -164,6 +152,7 @@ async function exportTradesExcel(_req, res) {
       { header: 'Reason', key: 'reason', width: 14 },
       { header: 'Invested (Rs)', key: 'investedAmount', width: 14 },
       { header: 'Final Value (Rs)', key: 'finalValue', width: 16 },
+      { header: 'Tax / Charges (Rs)', key: 'charges', width: 18 },
       { header: 'P/L (Rs)', key: 'pnl', width: 12 },
       { header: 'P/L %', key: 'pnlPct', width: 10 },
     ];
