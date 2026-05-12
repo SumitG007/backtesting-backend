@@ -24,6 +24,7 @@ const liveWalletSchema = new mongoose.Schema(
       targetPct: { type: Number, default: 50 },
       stopLossPct: { type: Number, default: 30 },
       entryTime: { type: String, default: '09:30' },
+      entryWindowMinutes: { type: Number, default: 5 },
       dayCloseTime: { type: String, default: '09:20' },
       skipExpiryDay: { type: Boolean, default: true },
       perTradeCost: { type: Number, default: 100 },

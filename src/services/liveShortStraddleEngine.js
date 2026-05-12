@@ -27,6 +27,7 @@ const engineState = {
     targetPct: 50,
     stopLossPct: 30,
     entryTime: '09:30',
+    entryWindowMinutes: 5,
     dayCloseTime: '09:20',
     skipExpiryDay: true,
     perTradeCost: 100,
@@ -52,6 +53,7 @@ function normalizeSettings(settings = {}) {
     targetPct: Math.max(1, Number(settings.targetPct) || 50),
     stopLossPct: Math.max(1, Number(settings.stopLossPct) || 30),
     entryTime: String(settings.entryTime || settings.entryFromTime || '09:30'),
+    entryWindowMinutes: Math.max(0, Math.min(30, Number(settings.entryWindowMinutes) || 5)),
     dayCloseTime: String(settings.dayCloseTime || '09:20'),
     skipExpiryDay,
     perTradeCost: Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100,
@@ -134,7 +136,8 @@ async function getCurrentExpiry(symbol, dateKey) {
 
 async function shouldEnterNow(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
-  if (clock.minutes !== entryMinutes) return false;
+  const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+  if (clock.minutes < entryMinutes || clock.minutes > entryMinutes + entryWindowMinutes) return false;
   if (engineState.tradeDateKey === clock.dateKey) return false;
   if (engineState.openTradeId) return false;
   await getCurrentExpiry(engineState.symbol, clock.dateKey);
