@@ -2,7 +2,8 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const app = require('./app');
 const { PORT } = require('./config/constants');
-const { startTokenAutoRenewJob } = require('./services/tokenService');
+const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
+const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
 const { bootEngineFromDb } = require('./services/liveTradingEngine');
 const { bootEngineFromDb: bootShortStraddleEngineFromDb } = require('./services/liveShortStraddleEngine');
 
@@ -14,7 +15,8 @@ async function start() {
 
   await mongoose.connect(mongoUri);
   console.log('MongoDB connected');
-  startTokenAutoRenewJob();
+  await hydrateDhanTokenFromMongo();
+  scheduleDhanTokenMaintenance();
   app.listen(PORT, () => {
     console.log(`Backend listening on http://localhost:${PORT}`);
   });

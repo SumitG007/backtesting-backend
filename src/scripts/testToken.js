@@ -1,24 +1,37 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').resolve(__dirname, '..', '..', '.env') });
 const axios = require('axios');
+const mongoose = require('mongoose');
+const DhanTokenCache = require('../models/DhanTokenCache');
 
 const baseUrl = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
-const clientId = process.env.DHAN_CLIENT_ID;
-const accessToken = process.env.DHAN_ACCESS_TOKEN;
 
 function fail(message, details) {
   console.error(`Token test failed: ${message}`);
-  if (details) {
-    console.error(details);
-  }
+  if (details) console.error(details);
   process.exit(1);
 }
 
-async function testDhanToken() {
-  if (!clientId) {
-    fail('DHAN_CLIENT_ID is missing in .env');
+async function main() {
+  let accessToken = String(process.env.DHAN_ACCESS_TOKEN || '').trim();
+  let clientId = String(process.env.DHAN_CLIENT_ID || '').trim();
+
+  const uri = process.env.MONGODB_URI;
+  if (uri && (!accessToken || !clientId)) {
+    await mongoose.connect(uri);
+    try {
+      const doc = await DhanTokenCache.findOne({ key: 'singleton' }).lean();
+      if (!accessToken) accessToken = String(doc?.accessToken || '').trim();
+      if (!clientId) clientId = String(doc?.dhanClientId || '').trim();
+    } finally {
+      await mongoose.disconnect();
+    }
   }
+
+  if (!clientId) fail('DHAN_CLIENT_ID is missing in .env and not stored in Mongo.');
   if (!accessToken) {
-    fail('DHAN_ACCESS_TOKEN is missing in .env');
+    fail(
+      'No JWT: use JWT stored in Mongo (POST /api/dhan/access-token) or set DHAN_ACCESS_TOKEN temporarily for this script.'
+    );
   }
 
   const url = `${baseUrl}/profile`;
@@ -49,4 +62,4 @@ async function testDhanToken() {
   }
 }
 
-testDhanToken();
+main();

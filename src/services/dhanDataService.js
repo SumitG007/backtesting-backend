@@ -19,7 +19,9 @@ async function fetchDhanIntradayChunk({ fromDate, toDate, interval, securityId, 
   const clientId = process.env.DHAN_CLIENT_ID;
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) {
-    throw new Error('DHAN_CLIENT_ID or DHAN_ACCESS_TOKEN not configured in backend .env');
+    throw new Error(
+      'Dhan credentials missing: set DHAN_CLIENT_ID in .env and seed JWT in Mongo (POST /api/dhan/access-token).'
+    );
   }
 
   const baseUrl = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';

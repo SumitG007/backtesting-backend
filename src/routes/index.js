@@ -21,10 +21,13 @@ const {
   exportTradesExcel,
   getLiveMeta,
 } = require('../controllers/liveTradeController');
+const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 
 const router = express.Router();
 
 router.get('/health', health);
+router.get('/dhan/token-status', getDhanTokenStatus);
+router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
 // Strategy 1 — Confirmation Breakout (Ref High/Low SL)
 router.post('/strategy1/run', runStrategyOne);
