@@ -82,7 +82,7 @@ async function persistDhanTokenToMongo(token, options = {}) {
     const doc = await DhanTokenCache.findOneAndUpdate(
       { key: 'singleton' },
       { $set },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
     return doc;
   } catch (err) {

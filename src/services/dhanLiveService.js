@@ -268,6 +268,9 @@ const wsState = {
   connecting: false,
   reconnectAttempts: 0,
   intentionalClose: false,
+  reconnectTimer: null,
+  rateLimitedUntil: 0,
+  lastErrorWasRateLimit: false,
 };
 
 function packInstrumentSubscription({ securityId, exchangeSegmentCode }) {
@@ -361,6 +364,10 @@ function decodeTickerPacket(buffer) {
 }
 
 function ensureWsConnection() {
+  const now = Date.now();
+  if (wsState.rateLimitedUntil && now < wsState.rateLimitedUntil) {
+    return null;
+  }
   if (wsState.ws && (wsState.ws.readyState === WebSocket.OPEN || wsState.ws.readyState === WebSocket.CONNECTING)) {
     return wsState.ws;
   }
@@ -383,6 +390,8 @@ function ensureWsConnection() {
     console.log('[DhanLive] WS connected');
     wsState.connecting = false;
     wsState.reconnectAttempts = 0;
+    wsState.rateLimitedUntil = 0;
+    wsState.lastErrorWasRateLimit = false;
     for (const sub of wsState.subscribers.values()) {
       try {
         ws.send(packInstrumentSubscription(sub));
@@ -415,7 +424,14 @@ function ensureWsConnection() {
   });
 
   ws.on('error', (err) => {
-    console.error('[DhanLive] WS error:', err.message);
+    const message = String(err?.message || err);
+    wsState.lastErrorWasRateLimit = message.includes('429');
+    if (wsState.lastErrorWasRateLimit) {
+      wsState.rateLimitedUntil = Date.now() + 2 * 60 * 1000;
+      console.error('[DhanLive] WS rate-limited (429). Cooling down reconnects for 2 minutes.');
+      return;
+    }
+    console.error('[DhanLive] WS error:', message);
   });
 
   ws.on('close', (code) => {
@@ -425,8 +441,14 @@ function ensureWsConnection() {
     if (wsState.intentionalClose) return;
     if (wsState.subscribers.size === 0) return;
     wsState.reconnectAttempts = Math.min(10, wsState.reconnectAttempts + 1);
-    const backoff = Math.min(30000, 1000 * 2 ** wsState.reconnectAttempts);
-    setTimeout(() => ensureWsConnection(), backoff);
+    const rateLimitBackoff = Math.max(0, wsState.rateLimitedUntil - Date.now());
+    const normalBackoff = Math.min(120000, 1000 * 2 ** wsState.reconnectAttempts);
+    const backoff = wsState.lastErrorWasRateLimit ? Math.max(rateLimitBackoff, 120000) : normalBackoff;
+    if (wsState.reconnectTimer) clearTimeout(wsState.reconnectTimer);
+    wsState.reconnectTimer = setTimeout(() => {
+      wsState.reconnectTimer = null;
+      ensureWsConnection();
+    }, backoff);
   });
 
   return ws;
@@ -442,6 +464,9 @@ function subscribeLiveSymbol({ key, symbol, onTick }) {
     exchangeSegmentCode: exchangeSegmentToCode(resolved.exchangeSegment),
     onTick,
   });
+  if (wsState.rateLimitedUntil && Date.now() < wsState.rateLimitedUntil) {
+    return;
+  }
   const ws = ensureWsConnection();
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
@@ -462,6 +487,9 @@ function subscribeLiveInstrument({ key, securityId, exchangeSegment, onTick }) {
     exchangeSegmentCode,
     onTick,
   });
+  if (wsState.rateLimitedUntil && Date.now() < wsState.rateLimitedUntil) {
+    return;
+  }
   const ws = ensureWsConnection();
   if (ws && ws.readyState === WebSocket.OPEN) {
     try {
