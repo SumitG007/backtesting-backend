@@ -55,6 +55,42 @@ function getOptionPremiumFromSpotMove({
   return Math.max(0.05, safePremium + premiumChange);
 }
 
+function isBreakoutCandleQualityOk({
+  side,
+  open,
+  high,
+  low,
+  close,
+  minBodyPct = 50,
+  closeNearEdgePct = 25,
+}) {
+  const safeOpen = Number(open);
+  const safeHigh = Number(high);
+  const safeLow = Number(low);
+  const safeClose = Number(close);
+  if (![safeOpen, safeHigh, safeLow, safeClose].every(Number.isFinite)) return false;
+  const range = safeHigh - safeLow;
+  if (range <= 0) return false;
+
+  const bodyPct = (Math.abs(safeClose - safeOpen) / range) * 100;
+  if (bodyPct < Math.max(0, Number(minBodyPct) || 0)) return false;
+
+  const maxEdgeDistancePct = Math.max(0, Number(closeNearEdgePct) || 0);
+  if (side === 'LONG') {
+    if (safeClose <= safeOpen) return false;
+    return ((safeHigh - safeClose) / range) * 100 <= maxEdgeDistancePct;
+  }
+  if (safeClose >= safeOpen) return false;
+  return ((safeClose - safeLow) / range) * 100 <= maxEdgeDistancePct;
+}
+
+function isVwapSlopeOk({ side, currentVwap, previousVwap }) {
+  const current = Number(currentVwap);
+  const previous = Number(previousVwap);
+  if (!Number.isFinite(current) || !Number.isFinite(previous)) return false;
+  return side === 'LONG' ? current > previous : current < previous;
+}
+
 function calculateEma(values, period) {
   const k = 2 / (period + 1);
   const out = Array(values.length).fill(null);
@@ -73,5 +109,7 @@ module.exports = {
   getLotSize,
   getStrikeStep,
   getOptionPremiumFromSpotMove,
+  isBreakoutCandleQualityOk,
+  isVwapSlopeOk,
   calculateEma,
 };

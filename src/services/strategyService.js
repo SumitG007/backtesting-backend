@@ -875,6 +875,23 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
           break;
         }
 
+        const adversePremium = getOptionPremiumFromSpotMove({
+          side: setup.side,
+          entrySpot,
+          currentSpot: setup.side === 'LONG' ? lows[j] : highs[j],
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (adversePremium <= stopPremium) {
+          exitIndex = j;
+          exitSpot = closes[j];
+          exitPremium = stopPremium;
+          reason = 'STOP_LOSS_PREMIUM';
+          break;
+        }
+
         const favorablePremium = getOptionPremiumFromSpotMove({
           side: setup.side,
           entrySpot,
