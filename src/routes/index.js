@@ -29,7 +29,7 @@ router.get('/health', health);
 router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
-// Strategy 1 — Confirmation Breakout (Ref High/Low SL)
+// Strategy 1 — Two-candle range (green+red / red+green), close confirmation
 router.post('/strategy1/run', runStrategyOne);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);
 router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);

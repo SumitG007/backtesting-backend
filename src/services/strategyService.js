@@ -761,15 +761,11 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const rawTargetPct = Number(settings.targetPct);
-  const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
-  const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : 12;
+  const rawRewardMult = Number(settings.rewardMultiple);
+  const rewardMultiple =
+    Number.isFinite(rawRewardMult) && rawRewardMult > 0 ? Math.max(0.5, rawRewardMult) : 1.2;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
-  const confirmationCandles = Math.max(1, Number(settings.confirmationCandles) || 3);
-  const confirmationWindow = Math.max(1, Number(settings.confirmationWindow) || 2);
-  const breakoutBufferPct = Math.max(0, Number(settings.breakoutBufferPct) || 0.08);
   const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
-  const premiumStopLossCapPct = Math.max(0.5, Number(settings.premiumStopLossCapPct) || 3);
   const rawPerTradeCost = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
@@ -789,68 +785,145 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
   const trades = [];
   for (const dayKey of dayKeys) {
     const dayCandles = byDay.get(dayKey) || [];
-    if (dayCandles.length <= confirmationCandles + 1) continue;
+    if (dayCandles.length < 3) continue;
+    const opens = dayCandles.map((c) => Number(c[1]));
     const highs = dayCandles.map((c) => Number(c[2]));
     const lows = dayCandles.map((c) => Number(c[3]));
     const closes = dayCandles.map((c) => Number(c[4]));
-    const volumes = dayCandles.map((c) => Number(c[5] ?? 0));
-    const vwap = calculateVwap(highs, lows, closes, volumes);
     let tradesToday = 0;
 
-    for (let i = 0; i < dayCandles.length - confirmationCandles; i += 1) {
+    // Two-candle reference pair, then entry from bar i+2 onward (user charts: green low + red high, then close below green low for PUT; mirror for CALL).
+    for (let i = 0; i < dayCandles.length - 2; i += 1) {
       if (tradesToday >= maxTradesPerDay) break;
-      const refClock = getIstClock(dayCandles[i][0]);
-      if (refClock.minutes < normalizedEntryFrom || refClock.minutes > normalizedEntryTo) continue;
-      if (i + 1 >= dayCandles.length) break;
+      const clockI = getIstClock(dayCandles[i][0]);
+      const clockI1 = getIstClock(dayCandles[i + 1][0]);
+      if (
+        clockI.minutes < normalizedEntryFrom ||
+        clockI.minutes > normalizedEntryTo ||
+        clockI1.minutes < normalizedEntryFrom ||
+        clockI1.minutes > normalizedEntryTo
+      ) {
+        continue;
+      }
 
-      const refHigh = Math.max(highs[i], highs[i + 1]);
-      const refLow = Math.min(lows[i], lows[i + 1]);
-      if (!Number.isFinite(refHigh) || !Number.isFinite(refLow) || refHigh <= refLow) continue;
-      const refRange = refHigh - refLow;
-      const refRangePct = (refRange / Math.max(1, closes[i])) * 100;
-      if (refRangePct < minRefRangePct) continue;
+      const o0 = opens[i];
+      const hi0 = highs[i];
+      const lo0 = lows[i];
+      const cl0 = closes[i];
+      const o1 = opens[i + 1];
+      const hi1 = highs[i + 1];
+      const lo1 = lows[i + 1];
+      const cl1 = closes[i + 1];
+      if (![o0, hi0, lo0, cl0, o1, hi1, lo1, cl1].every(Number.isFinite)) continue;
+      if (cl0 === o0 || cl1 === o1) continue;
+
+      const green0 = cl0 > o0;
+      const red0 = cl0 < o0;
+      const green1 = cl1 > o1;
+      const red1 = cl1 < o1;
 
       let confirmationIndex = null;
       let setup = null;
-      const confirmStart = i + 1 + confirmationCandles;
-      const confirmEnd = Math.min(dayCandles.length - 1, confirmStart + confirmationWindow - 1);
-      for (let k = confirmStart; k <= confirmEnd; k += 1) {
-        const confirmClock = getIstClock(dayCandles[k][0]);
-        if (confirmClock.minutes > normalizedEntryTo) break;
-        const confirmationClose = closes[k];
-        const bufferUp = refHigh * (1 + breakoutBufferPct / 100);
-        const bufferDown = refLow * (1 - breakoutBufferPct / 100);
-        const vwapValue = vwap[k];
-        const bullishTrendOkay = Number.isFinite(vwapValue) ? confirmationClose > vwapValue : true;
-        const bearishTrendOkay = Number.isFinite(vwapValue) ? confirmationClose < vwapValue : true;
-        if (confirmationClose > bufferUp && bullishTrendOkay) {
-          confirmationIndex = k;
-          setup = { side: 'LONG', optionType: 'CE', stopSpot: refLow };
-          break;
-        }
-        if (confirmationClose < bufferDown && bearishTrendOkay) {
-          confirmationIndex = k;
-          setup = { side: 'SHORT', optionType: 'PE', stopSpot: refHigh };
-          break;
+      let lowRef = null;
+      let highRef = null;
+
+      // PUT: green candle i, red candle i+1 — low from green, high (wick) from red, SL at red high.
+      if (green0 && red1) {
+        lowRef = lo0;
+        highRef = hi1;
+        if (highRef > lowRef) {
+          const refRangePct = ((highRef - lowRef) / Math.max(1, cl0)) * 100;
+          if (refRangePct >= minRefRangePct) {
+            for (let k = i + 2; k < dayCandles.length; k += 1) {
+              const confirmClock = getIstClock(dayCandles[k][0]);
+              if (confirmClock.minutes < normalizedEntryFrom) continue;
+              if (confirmClock.minutes > normalizedEntryTo) break;
+
+              let invalidated = false;
+              for (let j = i + 2; j < k; j += 1) {
+                if (highs[j] >= highRef) {
+                  invalidated = true;
+                  break;
+                }
+              }
+              if (invalidated) continue;
+              if (highs[k] >= highRef) continue;
+              if (closes[k] < lowRef) {
+                confirmationIndex = k;
+                setup = { side: 'SHORT', optionType: 'PE', stopSpot: highRef, refHigh: highRef, refLow: lowRef };
+                break;
+              }
+            }
+          }
         }
       }
+
+      // CALL: red candle i, green candle i+1 — high from green, low from red, SL at red low.
+      if (!setup && red0 && green1) {
+        lowRef = lo0;
+        highRef = hi1;
+        if (highRef > lowRef) {
+          const refRangePct = ((highRef - lowRef) / Math.max(1, cl1)) * 100;
+          if (refRangePct >= minRefRangePct) {
+            for (let k = i + 2; k < dayCandles.length; k += 1) {
+              const confirmClock = getIstClock(dayCandles[k][0]);
+              if (confirmClock.minutes < normalizedEntryFrom) continue;
+              if (confirmClock.minutes > normalizedEntryTo) break;
+
+              let invalidated = false;
+              for (let j = i + 2; j < k; j += 1) {
+                if (lows[j] <= lowRef) {
+                  invalidated = true;
+                  break;
+                }
+              }
+              if (invalidated) continue;
+              if (lows[k] <= lowRef) continue;
+              if (closes[k] > highRef) {
+                confirmationIndex = k;
+                setup = { side: 'LONG', optionType: 'CE', stopSpot: lowRef, refHigh: highRef, refLow: lowRef };
+                break;
+              }
+            }
+          }
+        }
+      }
+
       if (!setup || confirmationIndex == null) continue;
 
       const entrySpot = closes[confirmationIndex];
       const strike = Math.round(entrySpot / strikeStep) * strikeStep;
       const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
-      const structureStopPremium = getOptionPremiumFromSpotMove({
+
+      const structuralStop = setup.stopSpot;
+      const riskPts =
+        setup.side === 'LONG' ? entrySpot - structuralStop : structuralStop - entrySpot;
+      if (!(riskPts > 0)) continue;
+
+      const combinedStopSpot = structuralStop;
+      const targetSpot =
+        setup.side === 'LONG'
+          ? entrySpot + rewardMultiple * riskPts
+          : entrySpot - rewardMultiple * riskPts;
+
+      const stopPremium = getOptionPremiumFromSpotMove({
         side: setup.side,
         entrySpot,
-        currentSpot: setup.stopSpot,
+        currentSpot: combinedStopSpot,
         entryPremium,
         premiumLeverage,
         strike,
         strikeStep,
       });
-      const cappedStopPremium = Math.max(0.05, entryPremium * (1 - premiumStopLossCapPct / 100));
-      const stopPremium = Math.max(cappedStopPremium, structureStopPremium);
-      const targetPremium = entryPremium * (1 + targetPct / 100);
+      const targetPremium = getOptionPremiumFromSpotMove({
+        side: setup.side,
+        entrySpot,
+        currentSpot: targetSpot,
+        entryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
 
       let exitIndex = dayCandles.length - 1;
       let exitSpot = closes[exitIndex];
@@ -866,44 +939,20 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
       let reason = 'DAY_CLOSE';
 
       for (let j = confirmationIndex + 1; j < dayCandles.length; j += 1) {
-        const stopHit = setup.side === 'LONG' ? lows[j] <= setup.stopSpot : highs[j] >= setup.stopSpot;
-        if (stopHit) {
+        const slHit =
+          setup.side === 'LONG' ? lows[j] <= combinedStopSpot : highs[j] >= combinedStopSpot;
+        if (slHit) {
           exitIndex = j;
-          exitSpot = setup.stopSpot;
+          exitSpot = combinedStopSpot;
           exitPremium = stopPremium;
           reason = 'STOP_LOSS';
           break;
         }
 
-        const adversePremium = getOptionPremiumFromSpotMove({
-          side: setup.side,
-          entrySpot,
-          currentSpot: setup.side === 'LONG' ? lows[j] : highs[j],
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        if (adversePremium <= stopPremium) {
+        const tpHit = setup.side === 'LONG' ? highs[j] >= targetSpot : lows[j] <= targetSpot;
+        if (tpHit) {
           exitIndex = j;
-          exitSpot = closes[j];
-          exitPremium = stopPremium;
-          reason = 'STOP_LOSS_PREMIUM';
-          break;
-        }
-
-        const favorablePremium = getOptionPremiumFromSpotMove({
-          side: setup.side,
-          entrySpot,
-          currentSpot: setup.side === 'LONG' ? highs[j] : lows[j],
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        if (favorablePremium >= targetPremium) {
-          exitIndex = j;
-          exitSpot = closes[j];
+          exitSpot = targetSpot;
           exitPremium = targetPremium;
           reason = 'TARGET';
           break;
@@ -964,7 +1013,7 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
         reason,
       });
       tradesToday += 1;
-      i = Math.max(i, exitIndex - 1);
+      i = exitIndex;
     }
   }
 

@@ -12,8 +12,9 @@ const liveWalletSchema = new mongoose.Schema(
     lastResetAt: { type: Date, default: null },
     engineSettings: {
       lotCount: { type: Number, default: 1 },
-      premiumStopLossCapPct: { type: Number, default: 3 },
-      targetPct: { type: Number, default: 12 },
+      rewardMultiple: { type: Number, default: 1.2 },
+      premiumLeverage: { type: Number, default: 8 },
+      minRefRangePct: { type: Number, default: 0.15 },
       maxTradesPerDay: { type: Number, default: 2 },
       perTradeCost: { type: Number, default: 100 },
       entryFromTime: { type: String, default: '09:30' },

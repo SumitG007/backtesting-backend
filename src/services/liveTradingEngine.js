@@ -7,7 +7,7 @@ const {
   normalizeTimestamp,
   toIntradayDateTime,
 } = require('../utils/dateTime');
-const { getStrikeStep, resolveSymbolConfig } = require('../utils/market');
+const { getStrikeStep, resolveSymbolConfig, getOptionPremiumFromSpotMove } = require('../utils/market');
 const {
   readLatestAccessToken,
   isLikelyDhanAuthError,
@@ -34,15 +34,12 @@ const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
-  // Strategy 2 settings (mirror backtest exactly)
+  // Strategy 1 settings (mirror backtest; two-candle reference pair)
   settings: {
     lotCount: 1,
-    confirmationCandles: 3,
-    confirmationWindow: 2,
-    breakoutBufferPct: 0.08,
     minRefRangePct: 0.15,
-    premiumStopLossCapPct: 3,
-    targetPct: 12,
+    rewardMultiple: 1.2,
+    premiumLeverage: 8,
     maxTradesPerDay: 2,
     perTradeCost: 100,
     entryFromTime: '09:30',
@@ -67,6 +64,8 @@ const engineState = {
   openSide: null,
   openTargetPremium: null,
   openStopLossPremium: null,
+  openCombinedStopSpot: null,
+  openTargetSpot: null,
   closingTrade: false,
   // Diagnostics
   lastSignalAt: null,
@@ -191,80 +190,127 @@ async function refreshTodayCandles() {
   }
 }
 
-// ----------------- Entry Signal (matches runStrategyConfirmationBreakout exactly) -----------------
+// ----------------- Entry Signal (matches runStrategyConfirmationBreakout: two-candle ref + scan) -----------------
 
 async function evaluateEntrySignal() {
   if (engineState.openTradeId) return;
   if (engineState.tradesToday >= engineState.settings.maxTradesPerDay) return;
   const candles = engineState.todayCandles;
   const s = engineState.settings;
-  const confirmationCandles = Math.max(1, Number(s.confirmationCandles) || 3);
-  const confirmationWindow = Math.max(1, Number(s.confirmationWindow) || 2);
-  const breakoutBufferPct = Math.max(0, Number(s.breakoutBufferPct) || 0.08);
   const minRefRangePct = Math.max(0.01, Number(s.minRefRangePct) || 0.15);
   const entryFromMin = parseClockMinutes(s.entryFromTime, 570);
   const entryToMin = parseClockMinutes(s.entryToTime, 840);
   const fromMin = Math.min(entryFromMin, entryToMin);
   const toMin = Math.max(entryFromMin, entryToMin);
 
-  if (candles.length <= confirmationCandles + 1) return;
+  if (candles.length < 3) return;
 
   const minConfirmIndex = Math.max(
     engineState.bootBoundaryConfirmIndex,
     engineState.lastConfirmIndexToday
   );
 
-  for (let i = 0; i < candles.length - confirmationCandles; i += 1) {
-    if (candles[i].bucketStart < fromMin || candles[i].bucketStart > toMin) continue;
-    if (i + 1 >= candles.length) break;
+  // Two-candle reference (same rules as runStrategyConfirmationBreakout).
+  for (let i = 0; i < candles.length - 2; i += 1) {
+    if (
+      candles[i].bucketStart < fromMin ||
+      candles[i].bucketStart > toMin ||
+      candles[i + 1].bucketStart < fromMin ||
+      candles[i + 1].bucketStart > toMin
+    ) {
+      continue;
+    }
 
-    const ref1 = candles[i];
-    const ref2 = candles[i + 1];
-    const refHigh = Math.max(ref1.high, ref2.high);
-    const refLow = Math.min(ref1.low, ref2.low);
-    if (!Number.isFinite(refHigh) || !Number.isFinite(refLow) || refHigh <= refLow) continue;
-    const refRangePct = ((refHigh - refLow) / Math.max(1, ref1.close)) * 100;
-    if (refRangePct < minRefRangePct) continue;
+    const c0 = candles[i];
+    const c1 = candles[i + 1];
+    const { open: o0, high: hi0, low: lo0, close: cl0 } = c0;
+    const { open: o1, high: hi1, low: lo1, close: cl1 } = c1;
+    if (![o0, hi0, lo0, cl0, o1, hi1, lo1, cl1].every(Number.isFinite)) continue;
+    if (cl0 === o0 || cl1 === o1) continue;
 
-    const confirmStart = i + 1 + confirmationCandles;
-    const confirmEnd = Math.min(candles.length - 1, confirmStart + confirmationWindow - 1);
-    let setup = null;
-    let confirmationIndex = null;
-    for (let k = confirmStart; k <= confirmEnd; k += 1) {
-      if (k <= minConfirmIndex) continue;
-      if (candles[k].bucketStart > toMin) break;
-      const close = candles[k].close;
-      const bufferUp = refHigh * (1 + breakoutBufferPct / 100);
-      const bufferDown = refLow * (1 - breakoutBufferPct / 100);
-      const vwapValue = candles[k].vwap;
-      const bullishTrendOkay = Number.isFinite(vwapValue) ? close > vwapValue : true;
-      const bearishTrendOkay = Number.isFinite(vwapValue) ? close < vwapValue : true;
-      if (close > bufferUp && bullishTrendOkay) {
-        setup = { side: 'LONG', optionType: 'CE', stopSpot: refLow };
-        confirmationIndex = k;
-        break;
-      }
-      if (close < bufferDown && bearishTrendOkay) {
-        setup = { side: 'SHORT', optionType: 'PE', stopSpot: refHigh };
-        confirmationIndex = k;
-        break;
+    const green0 = cl0 > o0;
+    const red0 = cl0 < o0;
+    const green1 = cl1 > o1;
+    const red1 = cl1 < o1;
+
+    let lowRef = null;
+    let highRef = null;
+
+    if (green0 && red1) {
+      lowRef = lo0;
+      highRef = hi1;
+      if (highRef > lowRef) {
+        const refRangePct = ((highRef - lowRef) / Math.max(1, cl0)) * 100;
+        if (refRangePct >= minRefRangePct) {
+          for (let k = i + 2; k < candles.length; k += 1) {
+            if (k <= minConfirmIndex) continue;
+            if (candles[k].bucketStart > toMin) break;
+            if (candles[k].bucketStart < fromMin) continue;
+            let invalidated = false;
+            for (let j = i + 2; j < k; j += 1) {
+              if (candles[j].high >= highRef) {
+                invalidated = true;
+                break;
+              }
+            }
+            if (invalidated) continue;
+            if (candles[k].high >= highRef) continue;
+            if (candles[k].close < lowRef) {
+              const opened = await placePaperTrade({
+                side: 'SHORT',
+                optionType: 'PE',
+                stopSpot: highRef,
+                refHigh: highRef,
+                refLow: lowRef,
+                confirmationIndex: k,
+                entrySpot: candles[k].close,
+                entryTs: candles[k].ts,
+              });
+              if (opened) return;
+              break;
+            }
+          }
+        }
       }
     }
-    if (!setup || confirmationIndex == null) continue;
 
-    const confirmCandle = candles[confirmationIndex];
-    const entrySpot = confirmCandle.close;
-    await placePaperTrade({
-      side: setup.side,
-      optionType: setup.optionType,
-      stopSpot: setup.stopSpot,
-      refHigh,
-      refLow,
-      confirmationIndex,
-      entrySpot,
-      entryTs: confirmCandle.ts,
-    });
-    return;
+    if (red0 && green1) {
+      lowRef = lo0;
+      highRef = hi1;
+      if (highRef > lowRef) {
+        const refRangePct = ((highRef - lowRef) / Math.max(1, cl1)) * 100;
+        if (refRangePct >= minRefRangePct) {
+          for (let k = i + 2; k < candles.length; k += 1) {
+            if (k <= minConfirmIndex) continue;
+            if (candles[k].bucketStart > toMin) break;
+            if (candles[k].bucketStart < fromMin) continue;
+            let invalidated = false;
+            for (let j = i + 2; j < k; j += 1) {
+              if (candles[j].low <= lowRef) {
+                invalidated = true;
+                break;
+              }
+            }
+            if (invalidated) continue;
+            if (candles[k].low <= lowRef) continue;
+            if (candles[k].close > highRef) {
+              const opened = await placePaperTrade({
+                side: 'LONG',
+                optionType: 'CE',
+                stopSpot: lowRef,
+                refHigh: highRef,
+                refLow: lowRef,
+                confirmationIndex: k,
+                entrySpot: candles[k].close,
+                entryTs: candles[k].ts,
+              });
+              if (opened) return;
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -289,7 +335,7 @@ async function placePaperTrade({
     const entryPremium = optionType === 'CE' ? Number(premiums.ceLtp) : Number(premiums.peLtp);
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
       engineState.lastError = `No live ${optionType} premium for strike ${strike} expiry ${expiry}`;
-      return;
+      return false;
     }
     const lotSize = engineState.lotSize || (await getCurrentLotSize(symbol));
     engineState.lotSize = lotSize;
@@ -297,14 +343,43 @@ async function placePaperTrade({
     const qty = lotSize * lots;
     const invested = entryPremium * qty;
 
-    const targetPct = Number.isFinite(Number(engineState.settings.targetPct))
-      ? Math.max(0.5, Number(engineState.settings.targetPct))
-      : 12;
-    const premiumStopLossCapPct = Math.max(0.5, Number(engineState.settings.premiumStopLossCapPct) || 3);
+    const rawRm = Number(engineState.settings.rewardMultiple);
+    const rewardMultiple =
+      Number.isFinite(rawRm) && rawRm > 0 ? Math.max(0.5, rawRm) : 1.2;
     const rawPerTradeCost = Number(engineState.settings.perTradeCost);
     const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
-    const targetPremium = entryPremium * (1 + targetPct / 100);
-    const stopLossPremium = Math.max(0.05, entryPremium * (1 - premiumStopLossCapPct / 100));
+    const premiumLeverage = Math.max(1, Number(engineState.settings.premiumLeverage) || 8);
+
+    const structuralStop = Number(stopSpot);
+    const riskPts = side === 'LONG' ? entrySpot - structuralStop : structuralStop - entrySpot;
+    if (!(riskPts > 0)) {
+      engineState.lastError = `Skip entry: riskPts=${riskPts} entry=${entrySpot} structuralStop=${structuralStop}`;
+      return false;
+    }
+    const combinedStopSpot = structuralStop;
+    const targetSpot =
+      side === 'LONG'
+        ? entrySpot + rewardMultiple * riskPts
+        : entrySpot - rewardMultiple * riskPts;
+
+    const targetPremium = getOptionPremiumFromSpotMove({
+      side,
+      entrySpot,
+      currentSpot: targetSpot,
+      entryPremium,
+      premiumLeverage,
+      strike,
+      strikeStep,
+    });
+    const stopLossPremium = getOptionPremiumFromSpotMove({
+      side,
+      entrySpot,
+      currentSpot: combinedStopSpot,
+      entryPremium,
+      premiumLeverage,
+      strike,
+      strikeStep,
+    });
 
     // Real broker-style execution timestamp (sub-second precision). The candle that
     // triggered the entry is preserved in `notes` for audit.
@@ -335,13 +410,17 @@ async function placePaperTrade({
       targetPremium: Number(targetPremium.toFixed(2)),
       refHigh: Number(refHigh.toFixed(2)),
       refLow: Number(refLow.toFixed(2)),
+      combinedStopSpot: Number(combinedStopSpot.toFixed(2)),
+      targetSpot: Number(targetSpot.toFixed(2)),
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
       charges: Number(perTradeCost.toFixed(2)),
-      notes: `stopSpot=${Number(stopSpot).toFixed(2)}; capPct=${premiumStopLossCapPct}; targetPct=${targetPct}; confirmCandle=${candleTsIso}`,
+      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetSpot=${targetSpot.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; rewardMult=${rewardMultiple}; confirmCandle=${candleTsIso}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
-    engineState.openStopSpot = Number(stopSpot);
+    engineState.openStopSpot = structuralStop;
+    engineState.openCombinedStopSpot = Number(combinedStopSpot.toFixed(2));
+    engineState.openTargetSpot = Number(targetSpot.toFixed(2));
     engineState.openSide = side;
     engineState.openTargetPremium = Number(tradeDoc.targetPremium);
     engineState.openStopLossPremium = Number(tradeDoc.stopLossPremium);
@@ -350,8 +429,10 @@ async function placePaperTrade({
     engineState.lastSignalAt = new Date();
     await subscribeOpenOptionTrade(tradeDoc);
     startOptionPositionPoll();
+    return true;
   } catch (err) {
     engineState.lastError = err.message;
+    return false;
   }
 }
 
@@ -376,6 +457,7 @@ async function subscribeOpenOptionTrade(trade) {
 
 async function onOptionTick({ ltp, ltt }) {
   if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
+  if (Number.isFinite(engineState.openTargetSpot)) return;
   const optionPremium = Number(ltp);
   if (!Number.isFinite(optionPremium) || optionPremium <= 0) return;
 
@@ -411,13 +493,31 @@ async function onLiveTick({ ltp, ltt }) {
 
   if (!engineState.openTradeId) return;
 
-  // Stop-loss trigger #1: live spot crosses the structural stopSpot (matches backtest exactly)
   const stopSpot = engineState.openStopSpot;
   const side = engineState.openSide;
-  if (Number.isFinite(stopSpot)) {
-    const stopHit = side === 'LONG' ? ltp <= stopSpot : ltp >= stopSpot;
-    if (stopHit) {
+
+  // Spot-based exits: combined anchor stop vs entry−SL points (tighter side), and target at entry±TP points.
+  const combinedStop = Number.isFinite(engineState.openCombinedStopSpot)
+    ? engineState.openCombinedStopSpot
+    : stopSpot;
+  const targetSpot = engineState.openTargetSpot;
+
+  if (side === 'LONG') {
+    if (Number.isFinite(combinedStop) && ltp <= combinedStop) {
       await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
+      return;
+    }
+    if (Number.isFinite(targetSpot) && ltp >= targetSpot) {
+      await closeOpenTrade({ reason: 'TARGET', spot: ltp, ts: tickDate });
+      return;
+    }
+  } else if (side === 'SHORT') {
+    if (Number.isFinite(combinedStop) && ltp >= combinedStop) {
+      await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
+      return;
+    }
+    if (Number.isFinite(targetSpot) && ltp <= targetSpot) {
+      await closeOpenTrade({ reason: 'TARGET', spot: ltp, ts: tickDate });
       return;
     }
   }
@@ -434,6 +534,9 @@ async function checkPremiumExits({ spot, ts }) {
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
   if (!trade || trade.status === 'CLOSED') {
     clearOpenTrade();
+    return;
+  }
+  if (Number.isFinite(Number(trade.targetSpot)) && Number.isFinite(Number(trade.combinedStopSpot))) {
     return;
   }
   let chain = null;
@@ -493,7 +596,7 @@ async function closeOpenTrade({ reason, spot, ts }) {
   }
   // For STOP_LOSS via spot trigger: floor the exit at stopLossPremium to cap recorded loss
   // (mirrors backtest's `Math.max(cappedStopPremium, structureStopPremium)` semantics).
-  if (reason === 'STOP_LOSS') {
+  if (reason === 'STOP_LOSS' && trade.stopLossPremium != null && !Number.isFinite(Number(trade.combinedStopSpot))) {
     exitPremium = Math.max(exitPremium, trade.stopLossPremium);
   }
   await finalizeTrade(trade, { exitPremium, exitSpot: spot, ts, reason });
@@ -552,6 +655,8 @@ function clearOpenTrade() {
   engineState.openSide = null;
   engineState.openTargetPremium = null;
   engineState.openStopLossPremium = null;
+  engineState.openCombinedStopSpot = null;
+  engineState.openTargetSpot = null;
 }
 
 async function ensureWallet() {
@@ -607,7 +712,13 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
   }
   engineState.symbol = String(symbol).toUpperCase();
-  engineState.settings = { ...engineState.settings, ...settings };
+  const merged = { ...engineState.settings, ...settings };
+  delete merged.stopLossPoints;
+  delete merged.takeProfitPoints;
+  delete merged.breakoutBufferPct;
+  const rawRm = Number(merged.rewardMultiple);
+  merged.rewardMultiple = Number.isFinite(rawRm) && rawRm > 0 ? Math.max(0.5, rawRm) : 1.2;
+  engineState.settings = merged;
   engineState.lastError = null;
   try {
     engineState.lotSize = await getCurrentLotSize(engineState.symbol);
@@ -631,6 +742,10 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
       engineState.openTradeId = orphan._id.toString();
       engineState.openSide = orphan.side;
       engineState.openStopSpot = orphan.side === 'LONG' ? orphan.refLow : orphan.refHigh;
+      engineState.openCombinedStopSpot = Number.isFinite(Number(orphan.combinedStopSpot))
+        ? Number(orphan.combinedStopSpot)
+        : null;
+      engineState.openTargetSpot = Number.isFinite(Number(orphan.targetSpot)) ? Number(orphan.targetSpot) : null;
       engineState.openTargetPremium = Number(orphan.targetPremium);
       engineState.openStopLossPremium = Number(orphan.stopLossPremium);
       await subscribeOpenOptionTrade(orphan);
@@ -675,12 +790,13 @@ function stopEngine() {
 async function updateEngineSettings(partial = {}) {
   const allowed = [
     'lotCount',
-    'premiumStopLossCapPct',
-    'targetPct',
+    'rewardMultiple',
+    'premiumLeverage',
     'maxTradesPerDay',
     'perTradeCost',
     'entryFromTime',
     'entryToTime',
+    'minRefRangePct',
   ];
   const next = { ...engineState.settings };
   for (const key of allowed) {
@@ -688,6 +804,11 @@ async function updateEngineSettings(partial = {}) {
       next[key] = partial[key];
     }
   }
+  delete next.stopLossPoints;
+  delete next.takeProfitPoints;
+  delete next.breakoutBufferPct;
+  const rawRmUpd = Number(next.rewardMultiple);
+  next.rewardMultiple = Number.isFinite(rawRmUpd) && rawRmUpd > 0 ? Math.max(0.5, rawRmUpd) : 1.2;
   engineState.settings = next;
   try {
     const wallet = await ensureWallet();
