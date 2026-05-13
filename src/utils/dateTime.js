@@ -84,6 +84,19 @@ function parseClockMinutes(value, fallbackMinutes) {
   return hh * 60 + mm;
 }
 
+/** Align IST minute to cash-session 15m grid anchored at 09:15 (minute 555). Same formula as live candle poll. */
+function istCashSession15mBucketStart(minutes) {
+  if (!Number.isFinite(minutes)) return minutes;
+  if (minutes < 555 || minutes > 930) return minutes;
+  return 555 + Math.floor((minutes - 555) / 15) * 15;
+}
+
+/** True once IST clock has reached the first minute AFTER this 15m bucket (bucket is fully closed). */
+function ist15mBucketFullyClosed({ bucketStartMinutes, nowMinutes }) {
+  if (!Number.isFinite(bucketStartMinutes) || !Number.isFinite(nowMinutes)) return false;
+  return nowMinutes >= bucketStartMinutes + 15;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -98,5 +111,7 @@ module.exports = {
   getIstClock,
   getWeekdayFromDateKey,
   parseClockMinutes,
+  istCashSession15mBucketStart,
+  ist15mBucketFullyClosed,
   sleep,
 };

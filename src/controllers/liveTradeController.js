@@ -44,9 +44,14 @@ async function getStatus(req, res) {
   try {
     const ctx = getLiveContext(req);
     const wallet = await ensureWallet();
-    const openTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey, status: 'OPEN' }).lean();
+    const openTrade = await LivePaperTrade.findOne({
+      strategyKey: ctx.strategyKey,
+      exitTime: null,
+    })
+      .sort({ entryTime: -1 })
+      .lean();
     const [chargesAgg] = await LivePaperTrade.aggregate([
-      { $match: { strategyKey: ctx.strategyKey, status: 'CLOSED' } },
+      { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
       { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
     ]);
     return res.json({
@@ -139,9 +144,18 @@ async function listTrades(req, res) {
     const ctx = getLiveContext(req);
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize) || 25));
-    const status = String(req.query.status || '').toUpperCase();
+    const statusQ = String(req.query.status || '').toUpperCase();
     const filter = { strategyKey: ctx.strategyKey };
-    if (status === 'OPEN' || status === 'CLOSED') filter.status = status;
+    if (statusQ === 'OPEN') {
+      filter.exitTime = null;
+    } else if (statusQ === 'CLOSED') {
+      filter.exitTime = { $ne: null };
+    } else if (statusQ === 'ALL') {
+      // no extra filter — includes OPEN + CLOSED
+    } else {
+      // Default: completed trades only (open position uses GET /status → openTrade)
+      filter.exitTime = { $ne: null };
+    }
     const totalRows = await LivePaperTrade.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
     const currentPage = Math.min(page, totalPages);

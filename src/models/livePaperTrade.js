@@ -27,6 +27,7 @@ const livePaperTradeSchema = new mongoose.Schema(
     exitPremium: { type: Number, default: null },
     exitSpot: { type: Number, default: null },
     exitTime: { type: Date, default: null },
+    status: { type: String, enum: ['OPEN', 'CLOSED'], default: 'OPEN', index: true },
     reason: { type: String, default: null },
     investedAmount: { type: Number, required: true },
     finalValue: { type: Number, default: null },
@@ -39,6 +40,7 @@ const livePaperTradeSchema = new mongoose.Schema(
 );
 
 livePaperTradeSchema.index({ entryTime: -1 });
+livePaperTradeSchema.index({ strategyKey: 1, exitTime: 1 });
 
 module.exports =
   mongoose.models.LivePaperTrade || mongoose.model('LivePaperTrade', livePaperTradeSchema);

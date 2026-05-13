@@ -11,16 +11,17 @@ const {
 } = require('../utils/dateTime');
 const { resolveSymbolConfig } = require('../utils/market');
 const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
+const { getDhanClientId } = require('./dhanTokenStore');
 
 const yearCache = new Map();
 const inflightRequests = new Map();
 
 async function fetchDhanIntradayChunk({ fromDate, toDate, interval, securityId, exchangeSegment, instrument }) {
-  const clientId = process.env.DHAN_CLIENT_ID;
+  const clientId = getDhanClientId();
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) {
     throw new Error(
-      'Dhan credentials missing: set DHAN_CLIENT_ID in .env and seed JWT in Mongo (POST /api/dhan/access-token).'
+      'Dhan credentials missing: set DHAN_CLIENT_ID in .env (or store dhanClientId when seeding JWT) and POST /api/dhan/access-token.'
     );
   }
 

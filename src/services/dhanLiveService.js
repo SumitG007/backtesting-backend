@@ -1,6 +1,7 @@
 const axios = require('axios');
 const WebSocket = require('ws');
 const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
+const { getDhanClientId } = require('./dhanTokenStore');
 const { resolveSymbolConfig } = require('../utils/market');
 
 const DHAN_BASE = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
@@ -93,7 +94,7 @@ async function fetchExpiryList(symbol) {
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol for option chain');
   }
-  const clientId = process.env.DHAN_CLIENT_ID;
+  const clientId = getDhanClientId();
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) throw new Error('Missing Dhan credentials');
 
@@ -133,7 +134,7 @@ async function fetchOptionChain({ symbol, expiry }) {
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol for option chain');
   }
-  const clientId = process.env.DHAN_CLIENT_ID;
+  const clientId = getDhanClientId();
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) throw new Error('Missing Dhan credentials');
 
@@ -373,7 +374,7 @@ function ensureWsConnection() {
   }
   if (wsState.connecting) return null;
 
-  const clientId = process.env.DHAN_CLIENT_ID;
+  const clientId = getDhanClientId();
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) {
     console.warn('[DhanLive] WS skipped — missing credentials');

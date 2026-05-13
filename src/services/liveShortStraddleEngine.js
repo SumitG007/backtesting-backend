@@ -227,7 +227,7 @@ async function onOptionTick(optionType, { ltp }) {
 async function checkOpenTrade({ preferTicks = false } = {}) {
   if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.status === 'CLOSED') {
+  if (!trade || trade.exitTime) {
     clearOpenTrade();
     return;
   }
@@ -355,7 +355,8 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     engineState.lastError = `Strategy 2 setup: ${err.message}`;
   }
   try {
-    const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, status: 'OPEN' }).sort({ entryTime: -1 });
+    const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null })
+      .sort({ entryTime: -1 });
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.tradeDateKey = orphan.entryDateKey;

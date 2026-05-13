@@ -6,6 +6,8 @@ const {
   parseClockMinutes,
   normalizeTimestamp,
   toIntradayDateTime,
+  istCashSession15mBucketStart,
+  ist15mBucketFullyClosed,
 } = require('../utils/dateTime');
 const { getStrikeStep, resolveSymbolConfig, getOptionPremiumFromSpotMove } = require('../utils/market');
 const {
@@ -13,6 +15,7 @@ const {
   isLikelyDhanAuthError,
   ensureValidDhanAccessToken,
 } = require('./tokenService');
+const { getDhanClientId } = require('./dhanTokenStore');
 const {
   subscribeLiveSymbol,
   subscribeLiveInstrument,
@@ -34,7 +37,9 @@ const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
-  // Strategy 1 settings (mirror backtest; two-candle reference pair)
+  // Strategy 1 — mirrors backtest `runStrategyConfirmationBreakout`: two-candle ref, structural
+  // stop (PE=red high, CE=red low), target = rewardMultiple × risk (index pts). Entry premium =
+  // live ATM from Dhan; stop/target option premiums = getOptionPremiumFromSpotMove (same as backtest).
   settings: {
     lotCount: 1,
     minRefRangePct: 0.15,
@@ -102,7 +107,7 @@ async function fetchTodayCandles(symbol) {
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol for candle fetch');
   }
-  const clientId = process.env.DHAN_CLIENT_ID;
+  const clientId = getDhanClientId();
   const accessToken = readLatestAccessToken();
   if (!clientId || !accessToken) throw new Error('Missing Dhan credentials');
 
@@ -158,7 +163,7 @@ async function refreshTodayCandles() {
       if (clock.minutes < 555 || clock.minutes > 930) continue;
       out.push({
         ts: dt,
-        bucketStart: clock.minutes,
+        bucketStart: istCashSession15mBucketStart(clock.minutes),
         dateKey: clock.dateKey,
         open: Number(opens[i]),
         high: Number(highs[i]),
@@ -171,7 +176,7 @@ async function refreshTodayCandles() {
 
     // The candle for the currently-active 15m bucket may be partial — drop it for signal logic.
     const nowClock = getIstClock(new Date());
-    const liveBucketStart = 555 + Math.max(0, Math.floor((nowClock.minutes - 555) / 15)) * 15;
+    const liveBucketStart = istCashSession15mBucketStart(nowClock.minutes);
     const finalized = out.filter((c) => !(c.dateKey === nowClock.dateKey && c.bucketStart === liveBucketStart));
 
     computeVwapInPlace(finalized);
@@ -190,7 +195,9 @@ async function refreshTodayCandles() {
   }
 }
 
-// ----------------- Entry Signal (matches runStrategyConfirmationBreakout: two-candle ref + scan) -----------------
+// ----------------- Entry Signal (parity with `runStrategyConfirmationBreakout` in strategyService.js) -----------------
+// Live-only extras: finalized candles only (no partial 15m bar), bootBoundary + lastConfirm skip,
+// `ist15mBucketFullyClosed` (wall clock past signal bar end), entry premium = Dhan ATM not basePremiumPct.
 
 async function evaluateEntrySignal() {
   if (engineState.openTradeId) return;
@@ -255,6 +262,10 @@ async function evaluateEntrySignal() {
             }
             if (invalidated) continue;
             if (candles[k].high >= highRef) continue;
+            const nowIst = getIstClock(new Date());
+            if (!ist15mBucketFullyClosed({ bucketStartMinutes: candles[k].bucketStart, nowMinutes: nowIst.minutes })) {
+              continue;
+            }
             if (candles[k].close < lowRef) {
               const opened = await placePaperTrade({
                 side: 'SHORT',
@@ -265,6 +276,7 @@ async function evaluateEntrySignal() {
                 confirmationIndex: k,
                 entrySpot: candles[k].close,
                 entryTs: candles[k].ts,
+                signalBucketStart: candles[k].bucketStart,
               });
               if (opened) return;
               break;
@@ -293,6 +305,10 @@ async function evaluateEntrySignal() {
             }
             if (invalidated) continue;
             if (candles[k].low <= lowRef) continue;
+            const nowIst = getIstClock(new Date());
+            if (!ist15mBucketFullyClosed({ bucketStartMinutes: candles[k].bucketStart, nowMinutes: nowIst.minutes })) {
+              continue;
+            }
             if (candles[k].close > highRef) {
               const opened = await placePaperTrade({
                 side: 'LONG',
@@ -303,6 +319,7 @@ async function evaluateEntrySignal() {
                 confirmationIndex: k,
                 entrySpot: candles[k].close,
                 entryTs: candles[k].ts,
+                signalBucketStart: candles[k].bucketStart,
               });
               if (opened) return;
               break;
@@ -323,6 +340,7 @@ async function placePaperTrade({
   confirmationIndex,
   entrySpot,
   entryTs,
+  signalBucketStart,
 }) {
   try {
     const symbol = engineState.symbol;
@@ -362,6 +380,8 @@ async function placePaperTrade({
         ? entrySpot + rewardMultiple * riskPts
         : entrySpot - rewardMultiple * riskPts;
 
+    // Same mapping as backtest `runStrategyConfirmationBreakout`: modeled premiums at stop/target
+    // spot using live entry premium (ATM from chain) instead of basePremiumPct synthetic.
     const targetPremium = getOptionPremiumFromSpotMove({
       side,
       entrySpot,
@@ -415,7 +435,7 @@ async function placePaperTrade({
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
       charges: Number(perTradeCost.toFixed(2)),
-      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetSpot=${targetSpot.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; rewardMult=${rewardMultiple}; confirmCandle=${candleTsIso}`,
+      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetSpot=${targetSpot.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; rewardMult=${rewardMultiple}; confirmCandle=${candleTsIso}; signal15mBucketStartMin=${Number(signalBucketStart)} (Dhan ts = candle OPEN); entryExec=${executedAt.toISOString()}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.openStopSpot = structuralStop;
@@ -455,9 +475,12 @@ async function subscribeOpenOptionTrade(trade) {
   }
 }
 
+/**
+ * Option-leg WebSocket: secondary trigger if live LTP crosses modeled stop/target premiums
+ * (same thresholds as backtest, derived from live entry premium + getOptionPremiumFromSpotMove).
+ */
 async function onOptionTick({ ltp, ltt }) {
   if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
-  if (Number.isFinite(engineState.openTargetSpot)) return;
   const optionPremium = Number(ltp);
   if (!Number.isFinite(optionPremium) || optionPremium <= 0) return;
 
@@ -474,7 +497,7 @@ async function onOptionTick({ ltp, ltt }) {
   const stopLossPremium = Number(engineState.openStopLossPremium);
   if (Number.isFinite(stopLossPremium) && optionPremium <= stopLossPremium) {
     await closeOpenTradeAtOptionPremium({
-      reason: 'STOP_LOSS_PREMIUM_CAP',
+      reason: 'STOP_LOSS',
       optionPremium: stopLossPremium,
       ts: ltt ? new Date(ltt * 1000) : new Date(),
     });
@@ -532,11 +555,8 @@ async function onLiveTick({ ltp, ltt }) {
 async function checkPremiumExits({ spot, ts }) {
   if (engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.status === 'CLOSED') {
+  if (!trade || trade.exitTime) {
     clearOpenTrade();
-    return;
-  }
-  if (Number.isFinite(Number(trade.targetSpot)) && Number.isFinite(Number(trade.combinedStopSpot))) {
     return;
   }
   let chain = null;
@@ -570,34 +590,42 @@ async function checkPremiumExits({ spot, ts }) {
       exitPremium: trade.stopLossPremium,
       exitSpot: spotForExit,
       ts,
-      reason: 'STOP_LOSS_PREMIUM_CAP',
+      reason: 'STOP_LOSS',
     });
   }
 }
 
+/**
+ * Index spot hit structural stop or target (same levels as backtest).
+ * Exit premium uses modeled stop/target premiums — matches runStrategyConfirmationBreakout.
+ * DAY_CLOSE uses live option chain LTP (no fixed spot target).
+ */
 async function closeOpenTrade({ reason, spot, ts }) {
   if (engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.status === 'CLOSED') {
+  if (!trade || trade.exitTime) {
     clearOpenTrade();
     return;
   }
-  let exitPremium = trade.entryPremium;
-  try {
-    const chain = await getAtmPremiums({
-      symbol: trade.symbol,
-      strike: trade.strike,
-      expiry: trade.expiryDate,
-    });
-    const ltp = trade.optionType === 'CE' ? Number(chain.ceLtp) : Number(chain.peLtp);
-    if (Number.isFinite(ltp) && ltp > 0) exitPremium = ltp;
-  } catch (err) {
-    engineState.lastError = `Exit chain fetch: ${err.message}`;
-  }
-  // For STOP_LOSS via spot trigger: floor the exit at stopLossPremium to cap recorded loss
-  // (mirrors backtest's `Math.max(cappedStopPremium, structureStopPremium)` semantics).
-  if (reason === 'STOP_LOSS' && trade.stopLossPremium != null && !Number.isFinite(Number(trade.combinedStopSpot))) {
-    exitPremium = Math.max(exitPremium, trade.stopLossPremium);
+  let exitPremium = Number(trade.entryPremium) || 0;
+  if (reason === 'STOP_LOSS') {
+    const cap = Number(trade.stopLossPremium);
+    if (Number.isFinite(cap) && cap > 0) exitPremium = cap;
+  } else if (reason === 'TARGET') {
+    const tp = Number(trade.targetPremium);
+    if (Number.isFinite(tp) && tp > 0) exitPremium = tp;
+  } else {
+    try {
+      const chain = await getAtmPremiums({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+      });
+      const ltp = trade.optionType === 'CE' ? Number(chain.ceLtp) : Number(chain.peLtp);
+      if (Number.isFinite(ltp) && ltp > 0) exitPremium = ltp;
+    } catch (err) {
+      engineState.lastError = `Exit chain fetch: ${err.message}`;
+    }
   }
   await finalizeTrade(trade, { exitPremium, exitSpot: spot, ts, reason });
 }
@@ -605,7 +633,7 @@ async function closeOpenTrade({ reason, spot, ts }) {
 async function closeOpenTradeAtOptionPremium({ reason, optionPremium, ts }) {
   if (engineState.closingTrade) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.status === 'CLOSED') {
+  if (!trade || trade.exitTime) {
     clearOpenTrade();
     return;
   }
@@ -737,7 +765,8 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
 
   // Adopt any orphan OPEN trades from a previous process so they continue to be managed.
   try {
-    const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, status: 'OPEN' }).sort({ entryTime: -1 });
+    const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null })
+      .sort({ entryTime: -1 });
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.openSide = orphan.side;

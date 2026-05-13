@@ -1,4 +1,9 @@
-const { parseClockMinutes, getIstClock, getWeekdayFromDateKey } = require('../utils/dateTime');
+const {
+  parseClockMinutes,
+  getIstClock,
+  getWeekdayFromDateKey,
+  istCashSession15mBucketStart,
+} = require('../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../utils/market');
 
 function getSummaryFromTrades(trades) {
@@ -754,6 +759,11 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
   return { summary: getSummaryFromTrades(trades), trades };
 }
 
+/**
+ * Strategy 1 — two-candle ref + close confirmation. Entry/SL/TP index rules are kept in sync with
+ * `liveTradingEngine.evaluateEntrySignal` / `placePaperTrade` (live adds: drop partial bar, boot skip,
+ * wall-clock bar close, live ATM entry premium vs backtest basePremiumPct model).
+ */
 function runStrategyConfirmationBreakout({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
@@ -797,11 +807,13 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
       if (tradesToday >= maxTradesPerDay) break;
       const clockI = getIstClock(dayCandles[i][0]);
       const clockI1 = getIstClock(dayCandles[i + 1][0]);
+      const bucketI = istCashSession15mBucketStart(clockI.minutes);
+      const bucketI1 = istCashSession15mBucketStart(clockI1.minutes);
       if (
-        clockI.minutes < normalizedEntryFrom ||
-        clockI.minutes > normalizedEntryTo ||
-        clockI1.minutes < normalizedEntryFrom ||
-        clockI1.minutes > normalizedEntryTo
+        bucketI < normalizedEntryFrom ||
+        bucketI > normalizedEntryTo ||
+        bucketI1 < normalizedEntryFrom ||
+        bucketI1 > normalizedEntryTo
       ) {
         continue;
       }
@@ -827,7 +839,7 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
       let lowRef = null;
       let highRef = null;
 
-      // PUT: green candle i, red candle i+1 — low from green, high (wick) from red, SL at red high.
+      // PUT: green candle i, red candle i+1 — low from green, high (wick) from red; SL at red high.
       if (green0 && red1) {
         lowRef = lo0;
         highRef = hi1;
@@ -836,8 +848,9 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
           if (refRangePct >= minRefRangePct) {
             for (let k = i + 2; k < dayCandles.length; k += 1) {
               const confirmClock = getIstClock(dayCandles[k][0]);
-              if (confirmClock.minutes < normalizedEntryFrom) continue;
-              if (confirmClock.minutes > normalizedEntryTo) break;
+              const bucketK = istCashSession15mBucketStart(confirmClock.minutes);
+              if (bucketK < normalizedEntryFrom) continue;
+              if (bucketK > normalizedEntryTo) break;
 
               let invalidated = false;
               for (let j = i + 2; j < k; j += 1) {
@@ -858,7 +871,7 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
         }
       }
 
-      // CALL: red candle i, green candle i+1 — high from green, low from red, SL at red low.
+      // CALL: red candle i, green candle i+1 — high from green, low from red; SL at red low.
       if (!setup && red0 && green1) {
         lowRef = lo0;
         highRef = hi1;
@@ -867,8 +880,9 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
           if (refRangePct >= minRefRangePct) {
             for (let k = i + 2; k < dayCandles.length; k += 1) {
               const confirmClock = getIstClock(dayCandles[k][0]);
-              if (confirmClock.minutes < normalizedEntryFrom) continue;
-              if (confirmClock.minutes > normalizedEntryTo) break;
+              const bucketK = istCashSession15mBucketStart(confirmClock.minutes);
+              if (bucketK < normalizedEntryFrom) continue;
+              if (bucketK > normalizedEntryTo) break;
 
               let invalidated = false;
               for (let j = i + 2; j < k; j += 1) {
