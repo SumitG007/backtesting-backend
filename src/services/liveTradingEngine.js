@@ -9,7 +9,7 @@ const {
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,
 } = require('../utils/dateTime');
-const { getStrikeStep, resolveSymbolConfig, getOptionPremiumFromSpotMove } = require('../utils/market');
+const { getStrikeStep, resolveSymbolConfig } = require('../utils/market');
 const {
   readLatestAccessToken,
   isLikelyDhanAuthError,
@@ -38,11 +38,17 @@ function clampStrategyOneTargetProfitPct(raw) {
   return Math.min(500, Math.max(0.01, raw));
 }
 
-/** Drop legacy keys and fix target % default (matches backtest `runStrategyConfirmationBreakout`). */
+function clampStrategyOneStopLossPct(raw) {
+  if (!Number.isFinite(raw) || raw <= 0) return 30;
+  return Math.min(99, Math.max(0.01, raw));
+}
+
+/** Drop legacy keys; target / stop % defaults match backtest `runStrategyConfirmationBreakout`. */
 function normalizeStrategyOneEngineSettings(merged) {
   const next = { ...merged };
   delete next.rewardMultiple;
   next.targetProfitPct = clampStrategyOneTargetProfitPct(Number(next.targetProfitPct));
+  next.stopLossPct = clampStrategyOneStopLossPct(Number(next.stopLossPct));
   return next;
 }
 
@@ -50,13 +56,13 @@ const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
-  // Strategy 1 — mirrors backtest `runStrategyConfirmationBreakout`: two-candle ref, structural
-  // stop (PE=red high, CE=red low), take-profit = entry premium × (1 + targetProfitPct/100). Entry
-  // premium = live ATM from Dhan; SL premium = modeled at structural stop spot.
+  // Strategy 1 — mirrors backtest `runStrategyConfirmationBreakout`: two-candle ref, TP/SL on
+  // option premium (defaults +5% / −30%). Entry premium = live ATM from Dhan.
   settings: {
     lotCount: 1,
     minRefRangePct: 0.15,
     targetProfitPct: 5,
+    stopLossPct: 30,
     premiumLeverage: 8,
     maxTradesPerDay: 2,
     perTradeCost: 100,
@@ -377,9 +383,9 @@ async function placePaperTrade({
     const targetProfitPct = clampStrategyOneTargetProfitPct(
       Number(engineState.settings.targetProfitPct)
     );
+    const stopLossPct = clampStrategyOneStopLossPct(Number(engineState.settings.stopLossPct));
     const rawPerTradeCost = Number(engineState.settings.perTradeCost);
     const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
-    const premiumLeverage = Math.max(1, Number(engineState.settings.premiumLeverage) || 8);
 
     const structuralStop = Number(stopSpot);
     const riskPts = side === 'LONG' ? entrySpot - structuralStop : structuralStop - entrySpot;
@@ -387,18 +393,8 @@ async function placePaperTrade({
       engineState.lastError = `Skip entry: riskPts=${riskPts} entry=${entrySpot} structuralStop=${structuralStop}`;
       return false;
     }
-    const combinedStopSpot = structuralStop;
     const targetPremium = Math.max(0.05, entryPremium * (1 + targetProfitPct / 100));
-
-    const stopLossPremium = getOptionPremiumFromSpotMove({
-      side,
-      entrySpot,
-      currentSpot: combinedStopSpot,
-      entryPremium,
-      premiumLeverage,
-      strike,
-      strikeStep,
-    });
+    const stopLossPremium = Math.max(0.05, entryPremium * (1 - stopLossPct / 100));
 
     // Real broker-style execution timestamp (sub-second precision). The candle that
     // triggered the entry is preserved in `notes` for audit.
@@ -429,16 +425,16 @@ async function placePaperTrade({
       targetPremium: Number(targetPremium.toFixed(2)),
       refHigh: Number(refHigh.toFixed(2)),
       refLow: Number(refLow.toFixed(2)),
-      combinedStopSpot: Number(combinedStopSpot.toFixed(2)),
+      combinedStopSpot: null,
       targetSpot: null,
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
       charges: Number(perTradeCost.toFixed(2)),
-      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetProfitPct=${targetProfitPct}; targetPremium=${targetPremium.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; confirmCandle=${candleTsIso}; signal15mBucketStartMin=${Number(signalBucketStart)} (Dhan ts = candle OPEN); entryExec=${executedAt.toISOString()}`,
+      notes: `structuralRef=${structuralStop.toFixed(2)}; targetProfitPct=${targetProfitPct}; stopLossPct=${stopLossPct}; targetPremium=${targetPremium.toFixed(2)}; stopLossPremium=${stopLossPremium.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; confirmCandle=${candleTsIso}; signal15mBucketStartMin=${Number(signalBucketStart)} (Dhan ts = candle OPEN); entryExec=${executedAt.toISOString()}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
-    engineState.openStopSpot = structuralStop;
-    engineState.openCombinedStopSpot = Number(combinedStopSpot.toFixed(2));
+    engineState.openStopSpot = null;
+    engineState.openCombinedStopSpot = null;
     engineState.openTargetSpot = null;
     engineState.openSide = side;
     engineState.openTargetPremium = Number(tradeDoc.targetPremium);
@@ -502,7 +498,7 @@ async function onOptionTick({ ltp, ltt }) {
   }
 }
 
-// ----------------- Live tick handler (SL via spot crossing, instant) -----------------
+// ----------------- Live tick handler (index: session tracking + day close only; SL/TP = option premium) -----------------
 
 async function onLiveTick({ ltp, ltt }) {
   if (!engineState.running) return;
@@ -514,30 +510,9 @@ async function onLiveTick({ ltp, ltt }) {
 
   if (!engineState.openTradeId) return;
 
-  const stopSpot = engineState.openStopSpot;
-  const side = engineState.openSide;
-
-  // Spot-based exits: combined anchor stop vs entry−SL points (tighter side), and target at entry±TP points.
-  const combinedStop = Number.isFinite(engineState.openCombinedStopSpot)
-    ? engineState.openCombinedStopSpot
-    : stopSpot;
-
-  if (side === 'LONG') {
-    if (Number.isFinite(combinedStop) && ltp <= combinedStop) {
-      await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
-      return;
-    }
-  } else if (side === 'SHORT') {
-    if (Number.isFinite(combinedStop) && ltp >= combinedStop) {
-      await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
-      return;
-    }
-  }
-
-  // Day-close at 15:30 IST
+  // Day-close at 15:30 IST (stop/target handled via option WS + chain poll vs premium caps)
   if (clock.minutes >= 930) {
     await closeOpenTrade({ reason: 'DAY_CLOSE', spot: ltp, ts: tickDate });
-    return;
   }
 }
 
@@ -585,8 +560,7 @@ async function checkPremiumExits({ spot, ts }) {
 }
 
 /**
- * Index spot hit structural stop (TP is premium-based only: option WS / chain poll).
- * Exit premium uses modeled stop for SL; DAY_CLOSE uses live option chain LTP.
+ * Day-close exit on index tick; SL uses stored stopLossPremium cap; TP uses targetPremium.
  */
 async function closeOpenTrade({ reason, spot, ts }) {
   if (engineState.closingTrade) return;
@@ -757,10 +731,8 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.openSide = orphan.side;
-      engineState.openStopSpot = orphan.side === 'LONG' ? orphan.refLow : orphan.refHigh;
-      engineState.openCombinedStopSpot = Number.isFinite(Number(orphan.combinedStopSpot))
-        ? Number(orphan.combinedStopSpot)
-        : null;
+      engineState.openStopSpot = null;
+      engineState.openCombinedStopSpot = null;
       engineState.openTargetSpot = Number.isFinite(Number(orphan.targetSpot)) ? Number(orphan.targetSpot) : null;
       engineState.openTargetPremium = Number(orphan.targetPremium);
       engineState.openStopLossPremium = Number(orphan.stopLossPremium);
@@ -807,6 +779,7 @@ async function updateEngineSettings(partial = {}) {
   const allowed = [
     'lotCount',
     'targetProfitPct',
+    'stopLossPct',
     'premiumLeverage',
     'maxTradesPerDay',
     'perTradeCost',

@@ -760,9 +760,9 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
 }
 
 /**
- * Strategy 1 — two-candle ref + close confirmation. SL uses structural index stop; TP uses a direct
- * % gain on entry option premium (default 5%). Kept in sync with `liveTradingEngine` (live uses
- * chain LTP for entries; backtest uses basePremiumPct model).
+ * Strategy 1 — two-candle ref + close confirmation. TP and SL are % moves on entry option premium
+ * (defaults +5% / −30%), evaluated bar-by-bar with the same premium model as before. Kept in sync
+ * with `liveTradingEngine` (live uses chain LTP; backtest uses basePremiumPct model).
  */
 function runStrategyConfirmationBreakout({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
@@ -776,6 +776,11 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
     Number.isFinite(rawTargetPct) && rawTargetPct > 0
       ? Math.min(500, Math.max(0.01, rawTargetPct))
       : 5;
+  const rawStopLossPct = Number(settings.stopLossPct);
+  const stopLossPct =
+    Number.isFinite(rawStopLossPct) && rawStopLossPct > 0
+      ? Math.min(99, Math.max(0.01, rawStopLossPct))
+      : 30;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
   const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
   const rawPerTradeCost = Number(settings.perTradeCost);
@@ -916,18 +921,8 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
         setup.side === 'LONG' ? entrySpot - structuralStop : structuralStop - entrySpot;
       if (!(riskPts > 0)) continue;
 
-      const combinedStopSpot = structuralStop;
       const targetPremium = Math.max(0.05, entryPremium * (1 + targetProfitPct / 100));
-
-      const stopPremium = getOptionPremiumFromSpotMove({
-        side: setup.side,
-        entrySpot,
-        currentSpot: combinedStopSpot,
-        entryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
+      const stopPremium = Math.max(0.05, entryPremium * (1 - stopLossPct / 100));
 
       let exitIndex = dayCandles.length - 1;
       let exitSpot = closes[exitIndex];
@@ -943,11 +938,19 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
       let reason = 'DAY_CLOSE';
 
       for (let j = confirmationIndex + 1; j < dayCandles.length; j += 1) {
-        const slHit =
-          setup.side === 'LONG' ? lows[j] <= combinedStopSpot : highs[j] >= combinedStopSpot;
-        if (slHit) {
+        const adverseSpot = setup.side === 'LONG' ? lows[j] : highs[j];
+        const adversePremium = getOptionPremiumFromSpotMove({
+          side: setup.side,
+          entrySpot,
+          currentSpot: adverseSpot,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (adversePremium <= stopPremium) {
           exitIndex = j;
-          exitSpot = combinedStopSpot;
+          exitSpot = adverseSpot;
           exitPremium = stopPremium;
           reason = 'STOP_LOSS';
           break;

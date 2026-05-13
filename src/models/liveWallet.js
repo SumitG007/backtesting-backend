@@ -13,6 +13,7 @@ const liveWalletSchema = new mongoose.Schema(
     engineSettings: {
       lotCount: { type: Number, default: 1 },
       targetProfitPct: { type: Number, default: 5 },
+      stopLossPct: { type: Number, default: 30 },
       premiumLeverage: { type: Number, default: 8 },
       minRefRangePct: { type: Number, default: 0.15 },
       maxTradesPerDay: { type: Number, default: 2 },
