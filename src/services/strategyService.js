@@ -760,9 +760,9 @@ function runStrategyEmaVwapMacdHistogram({ candles, settings }) {
 }
 
 /**
- * Strategy 1 — two-candle ref + close confirmation. Entry/SL/TP index rules are kept in sync with
- * `liveTradingEngine.evaluateEntrySignal` / `placePaperTrade` (live adds: drop partial bar, boot skip,
- * wall-clock bar close, live ATM entry premium vs backtest basePremiumPct model).
+ * Strategy 1 — two-candle ref + close confirmation. SL uses structural index stop; TP uses a direct
+ * % gain on entry option premium (default 5%). Kept in sync with `liveTradingEngine` (live uses
+ * chain LTP for entries; backtest uses basePremiumPct model).
  */
 function runStrategyConfirmationBreakout({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
@@ -771,9 +771,11 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const rawRewardMult = Number(settings.rewardMultiple);
-  const rewardMultiple =
-    Number.isFinite(rawRewardMult) && rawRewardMult > 0 ? Math.max(0.5, rawRewardMult) : 1.2;
+  const rawTargetPct = Number(settings.targetProfitPct);
+  const targetProfitPct =
+    Number.isFinite(rawTargetPct) && rawTargetPct > 0
+      ? Math.min(500, Math.max(0.01, rawTargetPct))
+      : 5;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 2);
   const minRefRangePct = Math.max(0.01, Number(settings.minRefRangePct) || 0.15);
   const rawPerTradeCost = Number(settings.perTradeCost);
@@ -915,24 +917,12 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
       if (!(riskPts > 0)) continue;
 
       const combinedStopSpot = structuralStop;
-      const targetSpot =
-        setup.side === 'LONG'
-          ? entrySpot + rewardMultiple * riskPts
-          : entrySpot - rewardMultiple * riskPts;
+      const targetPremium = Math.max(0.05, entryPremium * (1 + targetProfitPct / 100));
 
       const stopPremium = getOptionPremiumFromSpotMove({
         side: setup.side,
         entrySpot,
         currentSpot: combinedStopSpot,
-        entryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
-      const targetPremium = getOptionPremiumFromSpotMove({
-        side: setup.side,
-        entrySpot,
-        currentSpot: targetSpot,
         entryPremium,
         premiumLeverage,
         strike,
@@ -963,10 +953,19 @@ function runStrategyConfirmationBreakout({ candles, settings }) {
           break;
         }
 
-        const tpHit = setup.side === 'LONG' ? highs[j] >= targetSpot : lows[j] <= targetSpot;
-        if (tpHit) {
+        const favorableSpot = setup.side === 'LONG' ? highs[j] : lows[j];
+        const favorablePremium = getOptionPremiumFromSpotMove({
+          side: setup.side,
+          entrySpot,
+          currentSpot: favorableSpot,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (favorablePremium >= targetPremium) {
           exitIndex = j;
-          exitSpot = targetSpot;
+          exitSpot = favorableSpot;
           exitPremium = targetPremium;
           reason = 'TARGET';
           break;

@@ -33,17 +33,30 @@ const CANDLE_POLL_INTERVAL_MS = 30000;
 /** How often we re-check option LTP vs target / premium-cap while a position is open (Dhan chain ~1/3s). */
 const OPTION_POSITION_POLL_MS = 3200;
 
+function clampStrategyOneTargetProfitPct(raw) {
+  if (!Number.isFinite(raw) || raw <= 0) return 5;
+  return Math.min(500, Math.max(0.01, raw));
+}
+
+/** Drop legacy keys and fix target % default (matches backtest `runStrategyConfirmationBreakout`). */
+function normalizeStrategyOneEngineSettings(merged) {
+  const next = { ...merged };
+  delete next.rewardMultiple;
+  next.targetProfitPct = clampStrategyOneTargetProfitPct(Number(next.targetProfitPct));
+  return next;
+}
+
 const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
   // Strategy 1 — mirrors backtest `runStrategyConfirmationBreakout`: two-candle ref, structural
-  // stop (PE=red high, CE=red low), target = rewardMultiple × risk (index pts). Entry premium =
-  // live ATM from Dhan; stop/target option premiums = getOptionPremiumFromSpotMove (same as backtest).
+  // stop (PE=red high, CE=red low), take-profit = entry premium × (1 + targetProfitPct/100). Entry
+  // premium = live ATM from Dhan; SL premium = modeled at structural stop spot.
   settings: {
     lotCount: 1,
     minRefRangePct: 0.15,
-    rewardMultiple: 1.2,
+    targetProfitPct: 5,
     premiumLeverage: 8,
     maxTradesPerDay: 2,
     perTradeCost: 100,
@@ -361,9 +374,9 @@ async function placePaperTrade({
     const qty = lotSize * lots;
     const invested = entryPremium * qty;
 
-    const rawRm = Number(engineState.settings.rewardMultiple);
-    const rewardMultiple =
-      Number.isFinite(rawRm) && rawRm > 0 ? Math.max(0.5, rawRm) : 1.2;
+    const targetProfitPct = clampStrategyOneTargetProfitPct(
+      Number(engineState.settings.targetProfitPct)
+    );
     const rawPerTradeCost = Number(engineState.settings.perTradeCost);
     const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
     const premiumLeverage = Math.max(1, Number(engineState.settings.premiumLeverage) || 8);
@@ -375,22 +388,8 @@ async function placePaperTrade({
       return false;
     }
     const combinedStopSpot = structuralStop;
-    const targetSpot =
-      side === 'LONG'
-        ? entrySpot + rewardMultiple * riskPts
-        : entrySpot - rewardMultiple * riskPts;
+    const targetPremium = Math.max(0.05, entryPremium * (1 + targetProfitPct / 100));
 
-    // Same mapping as backtest `runStrategyConfirmationBreakout`: modeled premiums at stop/target
-    // spot using live entry premium (ATM from chain) instead of basePremiumPct synthetic.
-    const targetPremium = getOptionPremiumFromSpotMove({
-      side,
-      entrySpot,
-      currentSpot: targetSpot,
-      entryPremium,
-      premiumLeverage,
-      strike,
-      strikeStep,
-    });
     const stopLossPremium = getOptionPremiumFromSpotMove({
       side,
       entrySpot,
@@ -431,16 +430,16 @@ async function placePaperTrade({
       refHigh: Number(refHigh.toFixed(2)),
       refLow: Number(refLow.toFixed(2)),
       combinedStopSpot: Number(combinedStopSpot.toFixed(2)),
-      targetSpot: Number(targetSpot.toFixed(2)),
+      targetSpot: null,
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
       charges: Number(perTradeCost.toFixed(2)),
-      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetSpot=${targetSpot.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; rewardMult=${rewardMultiple}; confirmCandle=${candleTsIso}; signal15mBucketStartMin=${Number(signalBucketStart)} (Dhan ts = candle OPEN); entryExec=${executedAt.toISOString()}`,
+      notes: `structuralStop=${structuralStop.toFixed(2)}; combinedStop=${combinedStopSpot.toFixed(2)}; targetProfitPct=${targetProfitPct}; targetPremium=${targetPremium.toFixed(2)}; riskPts=${riskPts.toFixed(2)}; confirmCandle=${candleTsIso}; signal15mBucketStartMin=${Number(signalBucketStart)} (Dhan ts = candle OPEN); entryExec=${executedAt.toISOString()}`,
     });
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.openStopSpot = structuralStop;
     engineState.openCombinedStopSpot = Number(combinedStopSpot.toFixed(2));
-    engineState.openTargetSpot = Number(targetSpot.toFixed(2));
+    engineState.openTargetSpot = null;
     engineState.openSide = side;
     engineState.openTargetPremium = Number(tradeDoc.targetPremium);
     engineState.openStopLossPremium = Number(tradeDoc.stopLossPremium);
@@ -476,8 +475,7 @@ async function subscribeOpenOptionTrade(trade) {
 }
 
 /**
- * Option-leg WebSocket: secondary trigger if live LTP crosses modeled stop/target premiums
- * (same thresholds as backtest, derived from live entry premium + getOptionPremiumFromSpotMove).
+ * Option-leg WebSocket: exit when LTP crosses stop-loss premium cap or target premium (+targetProfitPct on entry).
  */
 async function onOptionTick({ ltp, ltt }) {
   if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
@@ -523,24 +521,15 @@ async function onLiveTick({ ltp, ltt }) {
   const combinedStop = Number.isFinite(engineState.openCombinedStopSpot)
     ? engineState.openCombinedStopSpot
     : stopSpot;
-  const targetSpot = engineState.openTargetSpot;
 
   if (side === 'LONG') {
     if (Number.isFinite(combinedStop) && ltp <= combinedStop) {
       await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
       return;
     }
-    if (Number.isFinite(targetSpot) && ltp >= targetSpot) {
-      await closeOpenTrade({ reason: 'TARGET', spot: ltp, ts: tickDate });
-      return;
-    }
   } else if (side === 'SHORT') {
     if (Number.isFinite(combinedStop) && ltp >= combinedStop) {
       await closeOpenTrade({ reason: 'STOP_LOSS', spot: ltp, ts: tickDate });
-      return;
-    }
-    if (Number.isFinite(targetSpot) && ltp <= targetSpot) {
-      await closeOpenTrade({ reason: 'TARGET', spot: ltp, ts: tickDate });
       return;
     }
   }
@@ -596,9 +585,8 @@ async function checkPremiumExits({ spot, ts }) {
 }
 
 /**
- * Index spot hit structural stop or target (same levels as backtest).
- * Exit premium uses modeled stop/target premiums — matches runStrategyConfirmationBreakout.
- * DAY_CLOSE uses live option chain LTP (no fixed spot target).
+ * Index spot hit structural stop (TP is premium-based only: option WS / chain poll).
+ * Exit premium uses modeled stop for SL; DAY_CLOSE uses live option chain LTP.
  */
 async function closeOpenTrade({ reason, spot, ts }) {
   if (engineState.closingTrade) return;
@@ -740,12 +728,11 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
   }
   engineState.symbol = String(symbol).toUpperCase();
-  const merged = { ...engineState.settings, ...settings };
+  let merged = { ...engineState.settings, ...settings };
   delete merged.stopLossPoints;
   delete merged.takeProfitPoints;
   delete merged.breakoutBufferPct;
-  const rawRm = Number(merged.rewardMultiple);
-  merged.rewardMultiple = Number.isFinite(rawRm) && rawRm > 0 ? Math.max(0.5, rawRm) : 1.2;
+  merged = normalizeStrategyOneEngineSettings(merged);
   engineState.settings = merged;
   engineState.lastError = null;
   try {
@@ -819,7 +806,7 @@ function stopEngine() {
 async function updateEngineSettings(partial = {}) {
   const allowed = [
     'lotCount',
-    'rewardMultiple',
+    'targetProfitPct',
     'premiumLeverage',
     'maxTradesPerDay',
     'perTradeCost',
@@ -827,7 +814,7 @@ async function updateEngineSettings(partial = {}) {
     'entryToTime',
     'minRefRangePct',
   ];
-  const next = { ...engineState.settings };
+  let next = { ...engineState.settings };
   for (const key of allowed) {
     if (partial[key] !== undefined && partial[key] !== null && partial[key] !== '') {
       next[key] = partial[key];
@@ -836,8 +823,7 @@ async function updateEngineSettings(partial = {}) {
   delete next.stopLossPoints;
   delete next.takeProfitPoints;
   delete next.breakoutBufferPct;
-  const rawRmUpd = Number(next.rewardMultiple);
-  next.rewardMultiple = Number.isFinite(rawRmUpd) && rawRmUpd > 0 ? Math.max(0.5, rawRmUpd) : 1.2;
+  next = normalizeStrategyOneEngineSettings(next);
   engineState.settings = next;
   try {
     const wallet = await ensureWallet();

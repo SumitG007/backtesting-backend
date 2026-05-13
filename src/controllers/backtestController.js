@@ -80,7 +80,7 @@ async function runStrategyOne(req, res) {
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
       minRefRangePct: parseNumberInput(req.body?.minRefRangePct, 0.15),
-      rewardMultiple: parseNumberInput(req.body?.rewardMultiple, 1.2),
+      targetProfitPct: parseNumberInput(req.body?.targetProfitPct, 5),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
