@@ -4,7 +4,7 @@
  * Live option-chain OI history is not in the candle feed. The backtest uses a
  * documented proxy: each 1m index bar adds volume to a CE tally on bullish bars
  * (close > open) and to a PE tally on bearish bars (close < open). After your
- * analysis start time (default 9:20 IST), the first minute when PE tally > CE
+ * analysis start time (default 9:16 IST), the first minute when PE tally > CE
  * tally triggers a long CALL; when CE > PE, a long PUT — matching the narrative
  * “higher put OI → bullish / higher call OI → bearish” for research replay.
  *
@@ -14,7 +14,7 @@
  * dominance when volume is missing (vendor-specific; recent years often have volume).
  *
  * Take-profit: `targetProfitPoints` — absolute premium points above entry (not %).
- * Stop-loss: still `stopLossPct` on modelled premium (0 = off).
+ * Stop-loss: `stopLossPoints` — absolute premium points below entry on modelled premium (0 = off).
  */
 
 const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
@@ -61,15 +61,15 @@ function runStrategyThreeBacktest({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const strikeMode = String(settings.strikeMode || 'ATM');
-  const rawSl = Number(settings.stopLossPct);
-  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
-  const stopLossPct = hasStopLoss ? Math.min(99, Math.max(0.01, rawSl)) : 0;
+  const rawSlPts = Number(settings.stopLossPoints);
+  const hasStopLoss = Number.isFinite(rawSlPts) && rawSlPts > 0;
+  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSlPts)) : 0;
   const rawTg = Number(settings.targetProfitPoints);
   const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
   const targetPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
   const rawPerTradeCost = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
-  const analysisStartMinutes = parseClockMinutes(settings.analysisStartTime, 9 * 60 + 20);
+  const analysisStartMinutes = parseClockMinutes(settings.analysisStartTime, 9 * 60 + 16);
 
   const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
   const sortedDays = Array.from(intraByDay.keys()).sort();
@@ -127,7 +127,7 @@ function runStrategyThreeBacktest({ candles, settings }) {
     const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
     const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
     const targetPremium = hasTarget ? entryPremium + targetPoints : null;
-    const stopPremium = hasStopLoss ? entryPremium * (1 - stopLossPct / 100) : null;
+    const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
 
     let exitIdx = dayBars.length - 1;
     let exitSpot = Number(dayBars[exitIdx][4]);

@@ -21,6 +21,7 @@ function pickAccessTokenFromResponse(data) {
 }
 
 function renewTokenHeaders(token, clientId, withContentType) {
+  // RenewToken uses `dhanClientId` only (not `client-id`); extra headers can trigger DH-905 on POST.
   const h = {
     'access-token': token,
     dhanClientId: clientId,
@@ -38,12 +39,29 @@ async function fetchRenewToken(baseUrl, token, clientId) {
     });
   } catch (getErr) {
     const status = Number(getErr?.response?.status || 0);
-    if (status !== 405 && status !== 400) throw getErr;
+    // Only POST fallback on 405. POST on 400 surfaces DH-905 ("bad parameters") from Dhan.
+    if (status !== 405) throw getErr;
     return axios.post(`${root}/RenewToken`, {}, {
       headers: renewTokenHeaders(token, clientId, true),
       timeout: 20000,
     });
   }
+}
+
+function formatDhanRenewError(err) {
+  const status = err?.response?.status;
+  const data = err?.response?.data;
+  const body =
+    data && typeof data === 'object'
+      ? JSON.stringify(data)
+      : data != null
+        ? String(data)
+        : '';
+  const hint =
+    status === 400
+      ? ' (Dhan RenewToken: JWT must still be valid and from Dhan Web. If expired, create a new token at web.dhan.co and POST /api/dhan/access-token.)'
+      : '';
+  return [err?.message || String(err), body && `Response: ${body}`, hint].filter(Boolean).join(' ');
 }
 
 let renewInFlight = null;
@@ -64,7 +82,12 @@ async function renewAccessToken() {
         );
       }
 
-      const response = await fetchRenewToken(baseUrl, token, clientId);
+      let response;
+      try {
+        response = await fetchRenewToken(baseUrl, token, clientId);
+      } catch (err) {
+        throw new Error(formatDhanRenewError(err));
+      }
       const raw = response.data || {};
 
       const next = pickAccessTokenFromResponse(raw);
@@ -122,4 +145,9 @@ async function seedAccessTokenFromBody(body) {
   }
 }
 
-module.exports = { renewAccessToken, seedAccessTokenFromBody, pickAccessTokenFromResponse };
+module.exports = {
+  renewAccessToken,
+  seedAccessTokenFromBody,
+  pickAccessTokenFromResponse,
+  formatDhanRenewError,
+};

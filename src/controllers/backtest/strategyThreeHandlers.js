@@ -18,10 +18,10 @@ async function runStrategyThree(req, res) {
     const tradeViewInterval = ['1', '5', '15'].includes(rawTv) ? rawTv : '5';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      analysisStartTime: parseStringInput(req.body?.analysisStartTime, '09:20'),
+      analysisStartTime: parseStringInput(req.body?.analysisStartTime, '09:16'),
       tradeViewInterval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-      stopLossPct: parseNumberInput(req.body?.stopLossPct, 0),
+      stopLossPoints: parseNumberInput(req.body?.stopLossPoints, 20),
       targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 50),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),

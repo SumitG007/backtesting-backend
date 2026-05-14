@@ -87,12 +87,12 @@ function runStrategyOneBacktest({ dailyCandles, execCandles, settings }) {
   const retestPointsRaw = Number(settings.retestPoints);
   const retestPoints = Number.isFinite(retestPointsRaw) ? Math.max(0, retestPointsRaw) : 1;
   const strikeMode = String(settings.strikeMode || 'ATM');
-  const rawSl = Number(settings.stopLossPct);
-  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
-  const stopLossPct = hasStopLoss ? Math.min(99, Math.max(0.01, rawSl)) : 0;
-  const rawTg = Number(settings.targetProfitPct);
+  const rawSlPts = Number(settings.stopLossPoints);
+  const hasStopLoss = Number.isFinite(rawSlPts) && rawSlPts > 0;
+  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSlPts)) : 0;
+  const rawTg = Number(settings.targetProfitPoints);
   const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
-  const targetProfitPct = hasTarget ? Math.min(500, Math.max(0.01, rawTg)) : 0;
+  const targetPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
   const rawPerTradeCost = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100;
   const maxTradesPerDay = Math.max(1, Number(settings.maxTradesPerDay) || 1);
@@ -146,8 +146,8 @@ function runStrategyOneBacktest({ dailyCandles, execCandles, settings }) {
     const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
     const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
 
-    const targetPremium = hasTarget ? entryPremium * (1 + targetProfitPct / 100) : null;
-    const stopPremium = hasStopLoss ? entryPremium * (1 - stopLossPct / 100) : null;
+    const targetPremium = hasTarget ? entryPremium + targetPoints : null;
+    const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
 
     let exitIdx = dayBars.length - 1;
     let exitSpot = Number(dayBars[exitIdx][4]);

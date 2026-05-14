@@ -1,4 +1,4 @@
-const { renewAccessToken } = require('./dhanAuthService');
+const { renewAccessToken, formatDhanRenewError } = require('./dhanAuthService');
 const { getAccessToken } = require('./dhanTokenStore');
 
 const TWENTY_HOURS_MS = 20 * 60 * 60 * 1000;
@@ -15,7 +15,8 @@ function scheduleDhanTokenMaintenance() {
       await renewAccessToken();
       console.log('[DHAN TOKEN] Renewed via RenewToken API.');
     } catch (err) {
-      console.error('[DHAN TOKEN] Renew failed:', err?.message || err);
+      const detail = err?.message || formatDhanRenewError(err);
+      console.error('[DHAN TOKEN] Renew failed:', detail);
     }
   };
 

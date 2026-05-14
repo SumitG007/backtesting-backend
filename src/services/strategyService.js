@@ -116,9 +116,9 @@ function runStrategyDowTheory({ candles, settings }) {
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.50);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
-  const rawStopLossPct = Number(settings.stopLossPct);
-  const hasStopLoss = Number.isFinite(rawStopLossPct) && rawStopLossPct > 0;
-  const stopLossPct = hasStopLoss ? Math.max(0.5, rawStopLossPct) : null;
+  const rawStopLossPts = Number(settings.stopLossPoints);
+  const hasStopLoss = Number.isFinite(rawStopLossPts) && rawStopLossPts > 0;
+  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawStopLossPts)) : 0;
   const rawTargetPct = Number(settings.targetPct);
   const hasTarget = Number.isFinite(rawTargetPct) && rawTargetPct > 0;
   const targetPct = hasTarget ? Math.max(0.5, rawTargetPct) : null;
@@ -191,7 +191,7 @@ function runStrategyDowTheory({ candles, settings }) {
       const entrySpot = close;
       const strike = Math.round(entrySpot / strikeStep) * strikeStep;
       const entryPremium = Math.max(1, (entrySpot * basePremiumPct) / 100);
-      const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium * (1 - stopLossPct / 100)) : null;
+      const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
       const targetPremium = hasTarget ? entryPremium * (1 + targetPct / 100) : null;
       let exitIndex = dayCandles.length - 1;
       let exitSpot = closes[exitIndex];

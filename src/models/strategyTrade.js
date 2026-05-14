@@ -18,6 +18,8 @@ const strategyTradeSchema = new mongoose.Schema(
     exitTime: Date,
     entryPrice: Number,
     exitPrice: Number,
+    /** Underlying index level at which SL arms (CE: entry − pts; PE: entry + pts). */
+    stopLossIndex: Number,
     stopLoss: Number,
     target: Number,
     qty: Number,
