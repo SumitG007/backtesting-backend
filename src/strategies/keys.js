@@ -5,8 +5,8 @@
  * Strategy 2 — short straddle BTST. Logic lives under `strategies/strategy2/`.
  */
 
-/** @type {string} New Strategy 1 backtests + trades (implement logic in strategy1/) */
-const STRATEGY_ONE_KEY = 'strategy1_user_defined';
+/** @type {string} Strategy 1 — previous day close retest (see `strategy1/backtest.js`) */
+const STRATEGY_ONE_KEY = 'strategy1_prev_day_close_retest';
 
 /** @type {string} Short straddle overnight hold (see strategy2/) */
 const STRATEGY_TWO_KEY = 'strategy3_short_straddle';

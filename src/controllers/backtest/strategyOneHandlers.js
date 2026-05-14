@@ -1,17 +1,104 @@
 /**
- * Strategy 1 — HTTP handlers. Implement backtest in `strategies/strategy1/backtest.js`, then wire `runStrategyOne`.
+ * Strategy 1 — Previous day close retest (backtest only; no live/paper).
  */
 
+const StrategyRun = require('../../models/strategyRun');
+const StrategyTrade = require('../../models/strategyTrade');
+const { getLotSize, getStrikeStep } = require('../../utils/market');
+const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_ONE_KEY } = require('../../strategies/keys');
+const { runStrategyOneBacktest } = require('../../strategies/strategy1/backtest');
+const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
-async function runStrategyOne(_req, res) {
-  return res.status(501).json({
-    ok: false,
-    code: 'STRATEGY_ONE_NOT_IMPLEMENTED',
-    error:
-      'Strategy 1 backtest is not wired yet. Add your rules in backend/src/strategies/strategy1/backtest.js and call them from runStrategyOne here.',
-  });
+async function runStrategyOne(req, res) {
+  try {
+    const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
+    const settings = {
+      symbol: String(symbol).toUpperCase(),
+      interval: String(interval),
+      retestPoints: parseNumberInput(req.body?.retestPoints, 1),
+      strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
+      stopLossPct: parseNumberInput(req.body?.stopLossPct, 30),
+      targetProfitPct: parseNumberInput(req.body?.targetProfitPct, 100),
+      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
+      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
+      perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 1),
+    };
+
+    const yearNum = parseNumberInput(year, 2026);
+    const [dailyPayload, execPayload] = await Promise.all([
+      fetchWithRateLimitRetry({
+        symbol: settings.symbol,
+        interval: '1',
+        year: yearNum,
+      }),
+      fetchWithRateLimitRetry({
+        symbol: settings.symbol,
+        interval: String(interval),
+        year: yearNum,
+      }),
+    ]);
+
+    const result = runStrategyOneBacktest({
+      dailyCandles: dailyPayload.rows,
+      execCandles: execPayload.rows,
+      settings,
+    });
+
+    const runDoc = await StrategyRun.create({
+      strategyKey: STRATEGY_ONE_KEY,
+      symbol: settings.symbol,
+      interval: String(interval),
+      year: yearNum,
+      settings,
+      summary: result.summary,
+      status: 'completed',
+    });
+
+    if (result.trades.length > 0) {
+      await StrategyTrade.insertMany(
+        result.trades.map((t) => ({
+          ...t,
+          runId: runDoc._id,
+          strategyKey: STRATEGY_ONE_KEY,
+          entryTime: new Date(t.entryTime),
+          exitTime: new Date(t.exitTime),
+        }))
+      );
+    }
+
+    const pageSize = 25;
+    return res.json({
+      ok: true,
+      runId: runDoc._id,
+      strategy: 'Strategy 1 - Previous Day Close Retest',
+      year: yearNum,
+      symbol: settings.symbol,
+      interval: String(interval),
+      summary: result.summary,
+      trades: result.trades.slice(0, pageSize),
+      pagination: {
+        page: 1,
+        pageSize,
+        totalRows: result.trades.length,
+        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+      },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 }
 
 async function getStrategyOneRunTrades(req, res) {
