@@ -5,6 +5,11 @@
 const { health, getCandles, runBacktestStub } = require('./candlesAndHealth');
 const { runStrategyOne, getStrategyOneRunTrades, getStrategyOneValidation } = require('./strategyOneHandlers');
 const { runStrategyTwo, getStrategyTwoRunTrades, getStrategyTwoValidation } = require('./strategyTwoHandlers');
+const {
+  runStrategyThree,
+  getStrategyThreeRunTrades,
+  getStrategyThreeValidation,
+} = require('./strategyThreeHandlers');
 
 module.exports = {
   health,
@@ -15,5 +20,8 @@ module.exports = {
   runStrategyTwo,
   getStrategyTwoRunTrades,
   getStrategyTwoValidation,
+  runStrategyThree,
+  getStrategyThreeRunTrades,
+  getStrategyThreeValidation,
   runBacktestStub,
 };
