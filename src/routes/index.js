@@ -29,11 +29,11 @@ router.get('/health', health);
 router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
-// Strategy 1 — Two-candle range (green+red / red+green), close confirmation
+// Strategy 1 — implement in `strategies/strategy1/` (run currently returns 501 until wired).
 router.post('/strategy1/run', runStrategyOne);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);
 router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);
-// Strategy 2 — Short Straddle (Overnight Hold, Avoid Same-Day Expiry)
+// Strategy 2 — Short straddle (`strategies/strategy2/`)
 router.post('/strategy2/run', runStrategyTwo);
 router.get('/strategy2/runs/:runId/trades', getStrategyTwoRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyTwoValidation);

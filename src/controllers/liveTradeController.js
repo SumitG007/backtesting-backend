@@ -1,48 +1,33 @@
 const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
-const {
-  startEngine,
-  stopEngine,
-  updateEngineSettings,
-  getEngineSnapshot,
-  ensureWallet,
-} = require('../services/liveTradingEngine');
 const strategyTwoEngine = require('../services/liveShortStraddleEngine');
+const { ensureWallet } = strategyTwoEngine;
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
   getAtmPremiums,
 } = require('../services/dhanLiveService');
 
-const STRATEGY_ONE_KEY = 'strategy2_confirmation_breakout';
 const STRATEGY_TWO_KEY = 'strategy3_short_straddle';
 
 function getLiveContext(req) {
-  const strategyId = String(req.params?.strategyId || 'strategy-1').toLowerCase();
-  if (strategyId === 'strategy-2') {
-    return {
-      strategyId,
-      strategyKey: STRATEGY_TWO_KEY,
-      startEngine: strategyTwoEngine.startEngine,
-      stopEngine: strategyTwoEngine.stopEngine,
-      updateEngineSettings: strategyTwoEngine.updateEngineSettings,
-      getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
-    };
-  }
+  const strategyId = String(req.params?.strategyId || 'strategy-2').toLowerCase();
+  if (strategyId !== 'strategy-2') return null;
   return {
-    strategyId: 'strategy-1',
-    strategyKey: STRATEGY_ONE_KEY,
-    startEngine,
-    stopEngine,
-    updateEngineSettings,
-    getEngineSnapshot,
+    strategyId,
+    strategyKey: STRATEGY_TWO_KEY,
+    startEngine: strategyTwoEngine.startEngine,
+    stopEngine: strategyTwoEngine.stopEngine,
+    updateEngineSettings: strategyTwoEngine.updateEngineSettings,
+    getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
   };
 }
 
 async function getStatus(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const wallet = await ensureWallet();
     const openTrade = await LivePaperTrade.findOne({
       strategyKey: ctx.strategyKey,
@@ -79,6 +64,7 @@ async function getStatus(req, res) {
 async function startLive(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const { symbol = 'NIFTY', settings = {} } = req.body || {};
     const result = await ctx.startEngine({ symbol, settings });
     return res.json(result);
@@ -90,6 +76,7 @@ async function startLive(req, res) {
 function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     return res.json(ctx.stopEngine());
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -99,6 +86,7 @@ function stopLive(req, res) {
 async function saveLiveSettings(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const settings = req.body?.settings || {};
     const numeric = {};
     for (const [key, value] of Object.entries(settings)) {
@@ -142,6 +130,7 @@ async function resetWallet(_req, res) {
 async function listTrades(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize) || 25));
     const statusQ = String(req.query.status || '').toUpperCase();
@@ -178,6 +167,7 @@ async function listTrades(req, res) {
 async function exportTradesExcel(req, res) {
   try {
     const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const trades = await LivePaperTrade.find({ strategyKey: ctx.strategyKey }).sort({ entryTime: -1 }).lean();
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Live Paper Trades');

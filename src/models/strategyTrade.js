@@ -29,6 +29,8 @@ const strategyTradeSchema = new mongoose.Schema(
     targetAmount: Number,
     pnl: Number,
     pnlPct: Number,
+    grossPnl: Number,
+    charges: { type: Number, default: 0 },
     reason: String,
   },
   { timestamps: true }

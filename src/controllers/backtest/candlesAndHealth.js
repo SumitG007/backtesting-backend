@@ -1,0 +1,61 @@
+const { getCandlesWithCache } = require('../../services/dhanDataService');
+
+function health(_req, res) {
+  res.json({ ok: true, service: 'backtesting-api' });
+}
+
+async function getCandles(req, res) {
+  try {
+    const symbol = String(req.query.symbol || 'BANKNIFTY').toUpperCase();
+    const interval = String(req.query.interval || '1');
+    const year = Number(req.query.year || 2025);
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(1000, Math.max(50, Number(req.query.pageSize) || 200));
+    const refresh = String(req.query.refresh || 'false') === 'true';
+
+    const payload = await getCandlesWithCache({ symbol, interval, year, refresh });
+    const totalRows = payload.rows.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    const currentPage = Math.min(page, totalPages);
+    const start = (currentPage - 1) * pageSize;
+    const candles = payload.rows.slice(start, start + pageSize);
+
+    res.json({
+      ok: true,
+      source: refresh ? 'live-dhan' : 'live/cache',
+      symbol,
+      interval,
+      year,
+      fromDate: payload.fromDate,
+      toDate: payload.toDate,
+      pagination: { page: currentPage, pageSize, totalRows, totalPages },
+      data: { candles },
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+function runBacktestStub(req, res) {
+  const { symbol, from, to } = req.body || {};
+  if (!symbol || !from || !to) {
+    return res.status(400).json({ error: 'symbol, from, and to (ISO dates) are required' });
+  }
+  return res.json({
+    message: 'Backtest runner not implemented yet — add strategy logic next.',
+    received: { symbol, from, to },
+  });
+}
+
+module.exports = {
+  health,
+  getCandles,
+  runBacktestStub,
+};

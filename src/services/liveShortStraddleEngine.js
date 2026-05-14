@@ -1,4 +1,5 @@
 const LivePaperTrade = require('../models/livePaperTrade');
+/** Strategy 2 live paper engine. Backtest twin: `strategies/strategy2/shortStraddleBacktest.js`. */
 const LiveWallet = require('../models/liveWallet');
 const { getIstClock, parseClockMinutes } = require('../utils/dateTime');
 const { getStrikeStep } = require('../utils/market');
