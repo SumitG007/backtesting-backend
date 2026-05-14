@@ -2,6 +2,7 @@ const express = require('express');
 const {
   health,
   getCandles,
+  getCandlesDay,
   runStrategyOne,
   runStrategyTwo,
   runStrategyThree,
@@ -32,6 +33,7 @@ router.get('/health', health);
 router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
+router.get('/data/candles/day', getCandlesDay);
 // Strategy 1 — implement in `strategies/strategy1/` (run currently returns 501 until wired).
 router.post('/strategy1/run', runStrategyOne);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);

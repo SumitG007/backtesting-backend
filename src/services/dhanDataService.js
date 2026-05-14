@@ -112,6 +112,39 @@ async function fetchYearCandles({ symbol, interval, year }) {
   return { rows: allRows, fromDate, toDate };
 }
 
+/** Single cash-session calendar day (IST date string YYYY-MM-DD). */
+async function fetchTradingDayCandles({ symbol, interval, dateKey }) {
+  const resolved = resolveSymbolConfig(symbol);
+  if (!resolved.securityId || !resolved.exchangeSegment) {
+    throw new Error('Unsupported symbol selected');
+  }
+  const raw = await fetchDhanIntradayChunk({
+    fromDate: dateKey,
+    toDate: dateKey,
+    interval: String(interval),
+    securityId: resolved.securityId,
+    exchangeSegment: resolved.exchangeSegment,
+    instrument: resolved.instrument,
+  });
+  await sleep(150);
+
+  const allRows = [];
+  const timestamps = raw.timestamp || [];
+  const opens = raw.open || [];
+  const highs = raw.high || [];
+  const lows = raw.low || [];
+  const closes = raw.close || [];
+  const volumes = raw.volume || [];
+
+  for (let j = 0; j < timestamps.length; j += 1) {
+    const ts = normalizeTimestamp(timestamps[j]);
+    if (Number.isNaN(ts.getTime())) continue;
+    allRows.push([ts.toISOString(), opens[j], highs[j], lows[j], closes[j], volumes[j]]);
+  }
+  allRows.sort((a, b) => new Date(a[0]) - new Date(b[0]));
+  return { rows: allRows, dateKey };
+}
+
 async function fetchWithRateLimitRetry(args) {
   let lastError = null;
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -153,5 +186,6 @@ async function getCandlesWithCache({ symbol, interval, year, refresh = false }) 
 
 module.exports = {
   fetchWithRateLimitRetry,
+  fetchTradingDayCandles,
   getCandlesWithCache,
 };

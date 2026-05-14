@@ -1,4 +1,4 @@
-const { getCandlesWithCache } = require('../../services/dhanDataService');
+const { getCandlesWithCache, fetchTradingDayCandles } = require('../../services/dhanDataService');
 
 function health(_req, res) {
   res.json({ ok: true, service: 'backtesting-api' });
@@ -43,6 +43,38 @@ async function getCandles(req, res) {
   }
 }
 
+async function getCandlesDay(req, res) {
+  try {
+    const symbol = String(req.query.symbol || 'NIFTY').toUpperCase();
+    const interval = String(req.query.interval || '5');
+    const date = String(req.query.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ ok: false, error: 'Query "date" is required as YYYY-MM-DD (IST calendar day).' });
+    }
+    if (!['1', '5', '15'].includes(interval)) {
+      return res.status(400).json({ ok: false, error: 'Query "interval" must be 1, 5, or 15.' });
+    }
+    const payload = await fetchTradingDayCandles({ symbol, interval, dateKey: date });
+    return res.json({
+      ok: true,
+      symbol,
+      interval,
+      date,
+      count: payload.rows.length,
+      candles: payload.rows,
+    });
+  } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 function runBacktestStub(req, res) {
   const { symbol, from, to } = req.body || {};
   if (!symbol || !from || !to) {
@@ -57,5 +89,6 @@ function runBacktestStub(req, res) {
 module.exports = {
   health,
   getCandles,
+  getCandlesDay,
   runBacktestStub,
 };

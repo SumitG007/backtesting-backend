@@ -14,12 +14,15 @@ const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQ
 async function runStrategyThree(req, res) {
   try {
     const { symbol = 'NIFTY', year = 2026 } = req.body || {};
+    const rawTv = String(parseStringInput(req.body?.tradeViewInterval, '5'));
+    const tradeViewInterval = ['1', '5', '15'].includes(rawTv) ? rawTv : '5';
     const settings = {
       symbol: String(symbol).toUpperCase(),
-      analysisStartTime: parseStringInput(req.body?.analysisStartTime, '09:15'),
+      analysisStartTime: parseStringInput(req.body?.analysisStartTime, '09:20'),
+      tradeViewInterval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPct: parseNumberInput(req.body?.stopLossPct, 0),
-      targetProfitPct: parseNumberInput(req.body?.targetProfitPct, 12),
+      targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 50),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
@@ -78,6 +81,7 @@ async function runStrategyThree(req, res) {
         totalRows: result.trades.length,
         totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
       },
+      settings,
     });
   } catch (error) {
     if (error.response) {
