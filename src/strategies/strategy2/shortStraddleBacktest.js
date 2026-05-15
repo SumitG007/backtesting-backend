@@ -34,10 +34,7 @@ function runStrategyShortStraddle({ candles, settings }) {
   const rawStopLossPct = Number(settings.stopLossPct);
   const hasStopLoss = Number.isFinite(rawStopLossPct) && rawStopLossPct > 0;
   const stopLossPct = hasStopLoss ? Math.max(1, rawStopLossPct) : null;
-  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
-  const entryToMinutes = parseClockMinutes(settings.entryToTime, 840);
-  const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
-  const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
+  const entryMinutes = parseClockMinutes(settings.entryTime || settings.entryFromTime, 570);
   const nextDayExitMinutes = parseClockMinutes(settings.dayCloseTime, 560);
 
   const skipExpiryDay = settings.skipExpiryDay !== false && settings.skipExpiryDay !== 'false';
@@ -74,7 +71,7 @@ function runStrategyShortStraddle({ candles, settings }) {
     let entryIdx = -1;
     for (let i = 0; i < entryDayCandles.length; i += 1) {
       const clock = getIstClock(entryDayCandles[i][0]);
-      if (clock.minutes >= normalizedEntryFrom && clock.minutes <= normalizedEntryTo) {
+      if (clock.minutes >= entryMinutes) {
         entryIdx = i;
         break;
       }
