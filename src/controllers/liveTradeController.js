@@ -83,6 +83,24 @@ function stopLive(req, res) {
   }
 }
 
+const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct']);
+
+function coerceLiveEngineSetting(key, value) {
+  if (typeof value === 'string' && /Time$/.test(key)) {
+    return value.trim();
+  }
+  if (OPTIONAL_PCT_KEYS.has(key)) {
+    if (value === '' || value === null || value === undefined) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if (key === 'skipExpiryDay') {
+    return value !== false && value !== 'false' && value !== 0 && value !== '0';
+  }
+  const n = Number(value);
+  return Number.isFinite(n) ? n : value;
+}
+
 async function saveLiveSettings(req, res) {
   try {
     const ctx = getLiveContext(req);
@@ -90,12 +108,7 @@ async function saveLiveSettings(req, res) {
     const settings = req.body?.settings || {};
     const numeric = {};
     for (const [key, value] of Object.entries(settings)) {
-      if (typeof value === 'string' && /Time$/.test(key)) {
-        numeric[key] = value;
-      } else {
-        const n = Number(value);
-        numeric[key] = Number.isFinite(n) ? n : value;
-      }
+      numeric[key] = coerceLiveEngineSetting(key, value);
     }
     const result = await ctx.updateEngineSettings(numeric);
     return res.json(result);
