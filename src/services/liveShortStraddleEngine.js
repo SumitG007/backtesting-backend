@@ -165,10 +165,56 @@ function isNearEntryWindow(clock) {
   return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + entryWindowMinutes + 10;
 }
 
+/** Keep in-memory state aligned with Mongo (e.g. after manual DB deletes). */
+async function syncEngineTradeStateFromDb(clock) {
+  const openInDb = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    exitTime: null,
+  })
+    .sort({ entryTime: -1 });
+
+  if (openInDb) {
+    const openId = openInDb._id.toString();
+    if (engineState.openTradeId !== openId) {
+      engineState.openTradeId = openId;
+      engineState.tradeDateKey = openInDb.entryDateKey;
+      logEntry('ENGINE_SYNC_ADOPTED_OPEN_TRADE', {
+        ist: istClockLabel(clock),
+        tradeId: openId,
+        entryDateKey: openInDb.entryDateKey,
+      });
+      await subscribeOpenStraddle(openInDb);
+      startPositionPoll();
+    }
+    return;
+  }
+
+  if (engineState.openTradeId) {
+    clearOpenTrade();
+    logEntry('ENGINE_SYNC_CLEARED_STALE_OPEN_TRADE', { ist: istClockLabel(clock) });
+  }
+
+  const tradedToday = await LivePaperTrade.exists({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+  });
+
+  if (tradedToday) {
+    engineState.tradeDateKey = clock.dateKey;
+  } else if (engineState.tradeDateKey === clock.dateKey) {
+    engineState.tradeDateKey = null;
+    logEntry('ENGINE_SYNC_CLEARED_TRADE_DATE', {
+      ist: istClockLabel(clock),
+      reason: 'NO_TRADE_IN_DB_FOR_TODAY',
+    });
+  }
+}
+
 async function getEntryGate(clock) {
   if (!engineState.running) {
     return { ok: false, reason: 'ENGINE_OFFLINE' };
   }
+  await syncEngineTradeStateFromDb(clock);
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
   const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
   const windowEnd = entryMinutes + entryWindowMinutes;
@@ -333,14 +379,17 @@ async function onOptionTick(optionType, { ltp }) {
 }
 
 async function checkOpenTrade({ preferTicks = false } = {}) {
-  if (!engineState.running || !engineState.openTradeId || engineState.closingTrade) return;
+  if (!engineState.running || engineState.closingTrade) return;
+  const clock = getIstClock(new Date());
+  await syncEngineTradeStateFromDb(clock);
+  if (!engineState.openTradeId) return;
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
   if (!trade || trade.exitTime) {
     clearOpenTrade();
+    await syncEngineTradeStateFromDb(clock);
     return;
   }
 
-  const clock = getIstClock(new Date());
   if (clock.dateKey === trade.entryDateKey) return;
   const exitMinutes = parseClockMinutes(engineState.settings.dayCloseTime, 560);
 
