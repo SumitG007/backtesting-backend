@@ -23,8 +23,8 @@ const liveWalletSchema = new mongoose.Schema(
     },
     strategy2EngineSettings: {
       lotCount: { type: Number, default: 1 },
-      targetPct: { type: Number, default: 50 },
-      stopLossPct: { type: Number, default: 30 },
+      targetPct: { type: Number, default: null },
+      stopLossPct: { type: Number, default: null },
       entryTime: { type: String, default: '09:30' },
       entryWindowMinutes: { type: Number, default: 5 },
       dayCloseTime: { type: String, default: '09:20' },

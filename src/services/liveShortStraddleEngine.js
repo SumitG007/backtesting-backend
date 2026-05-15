@@ -25,8 +25,8 @@ const engineState = {
   startedAt: null,
   settings: {
     lotCount: 1,
-    targetPct: 50,
-    stopLossPct: 30,
+    targetPct: null,
+    stopLossPct: null,
     entryTime: '09:30',
     entryWindowMinutes: 5,
     dayCloseTime: '09:20',
@@ -46,13 +46,20 @@ const engineState = {
   lastError: null,
 };
 
+function parseOptionalPct(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.max(1, parsed);
+}
+
 function normalizeSettings(settings = {}) {
   const rawPerTradeCost = Number(settings.perTradeCost);
   const skipExpiryDay = settings.skipExpiryDay !== false && settings.skipExpiryDay !== 'false';
   return {
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
-    targetPct: Math.max(1, Number(settings.targetPct) || 50),
-    stopLossPct: Math.max(1, Number(settings.stopLossPct) || 30),
+    targetPct: parseOptionalPct(settings.targetPct),
+    stopLossPct: parseOptionalPct(settings.stopLossPct),
     entryTime: String(settings.entryTime || settings.entryFromTime || '09:30'),
     entryWindowMinutes: Math.max(0, Math.min(30, Number(settings.entryWindowMinutes) || 5)),
     dayCloseTime: String(settings.dayCloseTime || '09:20'),
@@ -177,8 +184,14 @@ async function placeShortStraddle(clock) {
     const lots = Math.max(1, Number(engineState.settings.lotCount) || 1);
     const qty = lotSize * lots;
     const entryCredit = ceEntry + peEntry;
-    const targetPremium = entryCredit * (1 - engineState.settings.targetPct / 100);
-    const stopLossPremium = entryCredit * (1 + engineState.settings.stopLossPct / 100);
+    const targetPct = engineState.settings.targetPct;
+    const stopLossPct = engineState.settings.stopLossPct;
+    const targetPremium = targetPct != null
+      ? entryCredit * (1 - targetPct / 100)
+      : null;
+    const stopLossPremium = stopLossPct != null
+      ? entryCredit * (1 + stopLossPct / 100)
+      : null;
     const rawCharges = Number(engineState.settings.perTradeCost);
     const charges = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
 
@@ -197,8 +210,8 @@ async function placeShortStraddle(clock) {
       entrySpot: Number(spot.toFixed(2)),
       entryTime: new Date(),
       entryDateKey: clock.dateKey,
-      stopLossPremium: Number(stopLossPremium.toFixed(2)),
-      targetPremium: Number(targetPremium.toFixed(2)),
+      stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
+      targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
       status: 'OPEN',
       investedAmount: Number((entryCredit * qty).toFixed(2)),
       charges: Number(charges.toFixed(2)),
@@ -206,7 +219,7 @@ async function placeShortStraddle(clock) {
         { optionType: 'CE', entryPremium: Number(ceEntry.toFixed(2)) },
         { optionType: 'PE', entryPremium: Number(peEntry.toFixed(2)) },
       ],
-      notes: `btstEntry=${clock.dateKey}; targetPct=${engineState.settings.targetPct}; stopLossPct=${engineState.settings.stopLossPct}`,
+      notes: `btstEntry=${clock.dateKey}; targetPct=${targetPct ?? 'off'}; stopLossPct=${stopLossPct ?? 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -249,11 +262,19 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
   }
   if (!mark) mark = getCombinedFromTrade(trade);
 
-  if (Number.isFinite(mark.combined) && mark.combined <= trade.targetPremium) {
+  if (
+    trade.targetPremium != null
+    && Number.isFinite(mark.combined)
+    && mark.combined <= trade.targetPremium
+  ) {
     await finalizeTrade(trade, { exitCombined: trade.targetPremium, mark, reason: 'TARGET' });
     return;
   }
-  if (Number.isFinite(mark.combined) && mark.combined >= trade.stopLossPremium) {
+  if (
+    trade.stopLossPremium != null
+    && Number.isFinite(mark.combined)
+    && mark.combined >= trade.stopLossPremium
+  ) {
     await finalizeTrade(trade, { exitCombined: trade.stopLossPremium, mark, reason: 'STOP_LOSS' });
     return;
   }

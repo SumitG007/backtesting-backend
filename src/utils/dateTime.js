@@ -101,6 +101,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Wall-clock IST instant for YYYY-MM-DD + minutes from midnight (e.g. 560 → 09:20). */
+function buildIstWallClockTimestamp(dateKey, minutesFromMidnight) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
+  if (!match) return NaN;
+  const hh = Math.floor(minutesFromMidnight / 60);
+  const mm = minutesFromMidnight % 60;
+  return new Date(
+    `${match[1]}-${match[2]}-${match[3]}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00+05:30`,
+  ).getTime();
+}
+
 module.exports = {
   toIntradayDateTime,
   parseDateOnly,
@@ -113,5 +124,6 @@ module.exports = {
   parseClockMinutes,
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,
+  buildIstWallClockTimestamp,
   sleep,
 };

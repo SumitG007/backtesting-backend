@@ -9,7 +9,7 @@ const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { runStrategyShortStraddle } = require('../../strategies/strategy2/shortStraddleBacktest');
 const { STRATEGY_TWO_KEY } = require('../../strategies/keys');
-const { parseNumberInput, parseStringInput } = require('./parsers');
+const { parseNumberInput, parseStringInput, parseOptionalPositiveNumber } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
 async function runStrategyTwo(req, res) {
@@ -25,13 +25,13 @@ async function runStrategyTwo(req, res) {
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
-      targetPct: parseNumberInput(req.body?.targetPct, 50),
-      stopLossPct: parseNumberInput(req.body?.stopLossPct, 30),
+      targetPct: parseOptionalPositiveNumber(req.body?.targetPct),
+      stopLossPct: parseOptionalPositiveNumber(req.body?.stopLossPct),
       entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '14:00'),
       dayCloseTime: parseStringInput(req.body?.dayCloseTime, '09:20'),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
-      expiryWeekday: parseNumberInput(req.body?.expiryWeekday, 4),
+      expiryWeekday: parseNumberInput(req.body?.expiryWeekday, 2),
       skipExpiryDay,
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
     };
