@@ -16,13 +16,14 @@ const {
 const STRATEGY_KEY = 'strategy3_short_straddle';
 const CE_SUBSCRIPTION_KEY = 'engine:strategy2:ce';
 const PE_SUBSCRIPTION_KEY = 'engine:strategy2:pe';
-const POLL_INTERVAL_MS = 15000;
+const POLL_INTERVAL_MS = 5000;
 const POSITION_POLL_MS = 3200;
 
 const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
+  lastEntryDebug: null,
   settings: {
     lotCount: 1,
     targetPct: null,
@@ -51,6 +52,22 @@ function parseOptionalPct(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return null;
   return Math.max(1, parsed);
+}
+
+function istClockLabel(clock) {
+  const h = Math.floor(clock.minutes / 60);
+  const m = clock.minutes % 60;
+  return `${clock.dateKey} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} IST`;
+}
+
+function logEntry(line, payload = {}) {
+  const entry = {
+    at: new Date().toISOString(),
+    line,
+    ...payload,
+  };
+  engineState.lastEntryDebug = entry;
+  console.log(`[Strategy2Live] ${line}`, JSON.stringify(entry));
 }
 
 function normalizeSettings(settings = {}) {
@@ -142,19 +159,78 @@ async function getCurrentExpiry(symbol, dateKey) {
   return engineState.expiry;
 }
 
-async function shouldEnterNow(clock) {
+function isNearEntryWindow(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
   const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
-  if (clock.minutes < entryMinutes || clock.minutes > entryMinutes + entryWindowMinutes) return false;
-  if (engineState.tradeDateKey === clock.dateKey) return false;
-  if (engineState.openTradeId) return false;
-  await getCurrentExpiry(engineState.symbol, clock.dateKey);
-  return true;
+  return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + entryWindowMinutes + 10;
+}
+
+async function getEntryGate(clock) {
+  if (!engineState.running) {
+    return { ok: false, reason: 'ENGINE_OFFLINE' };
+  }
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
+  const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+  const windowEnd = entryMinutes + entryWindowMinutes;
+  if (clock.minutes < entryMinutes) {
+    return {
+      ok: false,
+      reason: 'BEFORE_ENTRY_WINDOW',
+      entryTime: engineState.settings.entryTime,
+      entryMinutes,
+      nowMinutes: clock.minutes,
+    };
+  }
+  if (clock.minutes > windowEnd) {
+    return {
+      ok: false,
+      reason: 'AFTER_ENTRY_WINDOW',
+      entryTime: engineState.settings.entryTime,
+      entryWindowMinutes,
+      windowEndMinutes: windowEnd,
+      nowMinutes: clock.minutes,
+    };
+  }
+  if (engineState.tradeDateKey === clock.dateKey) {
+    return {
+      ok: false,
+      reason: 'ALREADY_TRADED_TODAY',
+      tradeDateKey: engineState.tradeDateKey,
+    };
+  }
+  if (engineState.openTradeId) {
+    return {
+      ok: false,
+      reason: 'OPEN_TRADE_EXISTS',
+      openTradeId: engineState.openTradeId,
+    };
+  }
+  try {
+    const expiry = await getCurrentExpiry(engineState.symbol, clock.dateKey);
+    if (!expiry) {
+      return { ok: false, reason: 'NO_EXPIRY_FROM_DHAN' };
+    }
+  } catch (err) {
+    return { ok: false, reason: 'EXPIRY_FETCH_FAILED', error: err.message };
+  }
+  return {
+    ok: true,
+    reason: 'READY_TO_ENTER',
+    entryTime: engineState.settings.entryTime,
+    entryWindowMinutes,
+  };
 }
 
 async function evaluateEntry() {
   const clock = getIstClock(new Date());
-  if (!(await shouldEnterNow(clock))) return;
+  const gate = await getEntryGate(clock);
+  if (!gate.ok) {
+    if (isNearEntryWindow(clock)) {
+      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), ...gate });
+    }
+    return;
+  }
+  logEntry('ENTRY_TRIGGER', { ist: istClockLabel(clock), ...gate });
   await placeShortStraddle(clock);
 }
 
@@ -163,10 +239,12 @@ async function placeShortStraddle(clock) {
     const symbol = engineState.symbol;
     const expiry = await getCurrentExpiry(symbol, clock.dateKey);
     engineState.expiry = expiry;
+    logEntry('ENTRY_FETCH_CHAIN', { ist: istClockLabel(clock), expiry });
     const chainForSpot = await getAtmPremiums({ symbol, strike: 0, expiry });
     const spot = Number(chainForSpot.chainSpot || chainForSpot.spot);
     if (!Number.isFinite(spot) || spot <= 0) {
       engineState.lastError = 'Strategy 2 entry skipped: live spot unavailable';
+      logEntry('ENTRY_FAILED', { ist: istClockLabel(clock), reason: 'NO_SPOT' });
       return;
     }
     const strikeStep = getStrikeStep(symbol);
@@ -176,6 +254,13 @@ async function placeShortStraddle(clock) {
     const peEntry = Number(premiums.peLtp);
     if (!Number.isFinite(ceEntry) || ceEntry <= 0 || !Number.isFinite(peEntry) || peEntry <= 0) {
       engineState.lastError = `Strategy 2 entry skipped: missing CE/PE premium for ${strike}`;
+      logEntry('ENTRY_FAILED', {
+        ist: istClockLabel(clock),
+        reason: 'MISSING_CE_PE',
+        strike,
+        ceEntry,
+        peEntry,
+      });
       return;
     }
 
@@ -226,10 +311,19 @@ async function placeShortStraddle(clock) {
     engineState.tradeDateKey = clock.dateKey;
     engineState.lastSpot = spot;
     engineState.lastSignalAt = new Date();
+    logEntry('ENTRY_SUCCESS', {
+      ist: istClockLabel(clock),
+      tradeId: tradeDoc._id.toString(),
+      strike,
+      expiry,
+      entryCredit: Number(entryCredit.toFixed(2)),
+      spot: Number(spot.toFixed(2)),
+    });
     await subscribeOpenStraddle(tradeDoc);
     startPositionPoll();
   } catch (err) {
     engineState.lastError = err.message;
+    logEntry('ENTRY_FAILED', { ist: istClockLabel(clock), reason: 'EXCEPTION', error: err.message });
   }
 }
 
@@ -363,10 +457,17 @@ function startPoll() {
 }
 
 async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
-  if (engineState.running) return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  if (engineState.running) {
+    if (settings && Object.keys(settings).length > 0) {
+      engineState.settings = normalizeSettings({ ...engineState.settings, ...settings });
+      logEntry('ENGINE_ALREADY_RUNNING_SETTINGS_MERGED', { settings: engineState.settings });
+    }
+    return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  }
   engineState.symbol = String(symbol).toUpperCase();
   engineState.settings = normalizeSettings({ ...engineState.settings, ...settings });
   engineState.lastError = null;
+  logEntry('ENGINE_START', { symbol: engineState.symbol, settings: engineState.settings });
   try {
     engineState.lotSize = await getCurrentLotSize(engineState.symbol);
     const clock = getIstClock(new Date());
@@ -382,6 +483,10 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.tradeDateKey = orphan.entryDateKey;
+      logEntry('ENGINE_ADOPTED_OPEN_TRADE', {
+        tradeId: orphan._id.toString(),
+        entryDateKey: orphan.entryDateKey,
+      });
       await subscribeOpenStraddle(orphan);
       startPositionPoll();
     }
@@ -408,6 +513,7 @@ function stopEngine() {
 async function updateEngineSettings(partial = {}) {
   const next = normalizeSettings({ ...engineState.settings, ...partial });
   engineState.settings = next;
+  logEntry('SETTINGS_UPDATED', { settings: next, running: engineState.running });
   try {
     const wallet = await ensureWallet();
     wallet.strategy2EngineSettings = next;
@@ -445,6 +551,7 @@ function getEngineSnapshot() {
     openTradeId: engineState.openTradeId,
     lastSignalAt: engineState.lastSignalAt,
     lastError: engineState.lastError,
+    lastEntryDebug: engineState.lastEntryDebug,
   };
 }
 
