@@ -39,11 +39,13 @@ async function getStatus(req, res) {
       { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
       { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
     ]);
+    const snapshot = ctx.getEngineSnapshot();
     return res.json({
       ok: true,
       strategyId: ctx.strategyId,
       strategyKey: ctx.strategyKey,
-      engine: ctx.getEngineSnapshot(),
+      engine: snapshot,
+      openPositionMark: snapshot.openPositionMark || null,
       wallet: {
         startingBalance: wallet.startingBalance,
         balance: wallet.balance,

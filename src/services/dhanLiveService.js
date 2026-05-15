@@ -126,8 +126,19 @@ async function fetchExpiryList(symbol) {
   }
 }
 
-const OPTION_CHAIN_MIN_INTERVAL_MS = 3100;
+const OPTION_CHAIN_MIN_INTERVAL_MS = 6000;
+const OPTION_CHAIN_STALE_MAX_AGE_MS = 3 * 60 * 1000;
+const OPTION_CHAIN_429_COOLDOWN_MS = 90 * 1000;
 const optionChainCache = new Map();
+const optionChainInflight = new Map();
+let optionChainRateLimitedUntil = 0;
+
+function isHttpRateLimitError(error) {
+  const status = Number(error?.response?.status);
+  if (status === 429) return true;
+  const msg = String(error?.message || error?.response?.data?.errorMessage || '');
+  return msg.includes('429') || /rate\s*limit/i.test(msg);
+}
 
 async function fetchOptionChain({ symbol, expiry }) {
   const resolved = resolveSymbolConfig(symbol);
@@ -165,17 +176,54 @@ async function fetchOptionChain({ symbol, expiry }) {
   }
 }
 
-/** Dhan rate limit: ~1 option-chain per 3s per underlying+expiry — coalesce all callers. */
-async function fetchOptionChainCached({ symbol, expiry }) {
+/** Dhan option chain is heavily rate-limited — coalesce callers and reuse stale data on 429. */
+async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}) {
   const key = `${String(symbol).toUpperCase()}|${String(expiry)}`;
   const now = Date.now();
   const cached = optionChainCache.get(key);
+
+  if (optionChainRateLimitedUntil && now < optionChainRateLimitedUntil) {
+    if (cached && allowStale) return cached.data;
+    const waitSec = Math.ceil((optionChainRateLimitedUntil - now) / 1000);
+    throw new Error(`Dhan option chain rate limited — retry in ~${waitSec}s`);
+  }
+
   if (cached && now - cached.at < OPTION_CHAIN_MIN_INTERVAL_MS) {
     return cached.data;
   }
-  const data = await fetchOptionChain({ symbol, expiry });
-  optionChainCache.set(key, { at: now, data });
-  return data;
+
+  if (optionChainInflight.has(key)) {
+    return optionChainInflight.get(key);
+  }
+
+  const task = (async () => {
+    try {
+      const data = await fetchOptionChain({ symbol, expiry });
+      optionChainCache.set(key, { at: Date.now(), data });
+      return data;
+    } catch (error) {
+      if (isHttpRateLimitError(error)) {
+        optionChainRateLimitedUntil = Date.now() + OPTION_CHAIN_429_COOLDOWN_MS;
+        if (cached && allowStale && now - cached.at < OPTION_CHAIN_STALE_MAX_AGE_MS) {
+          return cached.data;
+        }
+      }
+      throw error;
+    } finally {
+      optionChainInflight.delete(key);
+    }
+  })();
+
+  optionChainInflight.set(key, task);
+  return task;
+}
+
+function getOptionChainRateLimitStatus() {
+  const now = Date.now();
+  return {
+    coolingDown: Boolean(optionChainRateLimitedUntil && now < optionChainRateLimitedUntil),
+    until: optionChainRateLimitedUntil || null,
+  };
 }
 
 async function getNearestWeeklyExpiry(symbol) {
@@ -535,4 +583,5 @@ module.exports = {
   subscribeLiveSymbol,
   unsubscribeLiveSymbol,
   getLastPrice,
+  getOptionChainRateLimitStatus,
 };

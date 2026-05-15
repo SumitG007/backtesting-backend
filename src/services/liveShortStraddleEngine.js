@@ -16,14 +16,18 @@ const {
 const STRATEGY_KEY = 'strategy3_short_straddle';
 const CE_SUBSCRIPTION_KEY = 'engine:strategy2:ce';
 const PE_SUBSCRIPTION_KEY = 'engine:strategy2:pe';
-const POLL_INTERVAL_MS = 5000;
-const POSITION_POLL_MS = 3200;
+const POLL_INTERVAL_MS = 8000;
+const POSITION_POLL_MS = 6000;
+const OPEN_MARK_CHAIN_MIN_GAP_MS = 10000;
+const TICK_FRESH_MAX_AGE_MS = 45000;
 
 const engineState = {
   running: false,
   symbol: 'NIFTY',
   startedAt: null,
   lastEntryDebug: null,
+  openPositionMark: null,
+  lastChainFetchAt: 0,
   settings: {
     lotCount: 1,
     targetPct: null,
@@ -89,13 +93,19 @@ function getCombinedFromTrade(trade, chain = null) {
   const ce = Number(chain?.ceLtp);
   const pe = Number(chain?.peLtp);
   if (Number.isFinite(ce) && ce > 0 && Number.isFinite(pe) && pe > 0) {
-    return { combined: ce + pe, ce, pe, spot: Number(chain.chainSpot) || null };
+    return { combined: ce + pe, ce, pe, spot: Number(chain.chainSpot) || null, source: 'chain' };
   }
 
   const ceTick = Number(engineState.lastOptionTicks.CE?.ltp);
   const peTick = Number(engineState.lastOptionTicks.PE?.ltp);
   if (Number.isFinite(ceTick) && ceTick > 0 && Number.isFinite(peTick) && peTick > 0) {
-    return { combined: ceTick + peTick, ce: ceTick, pe: peTick, spot: engineState.lastSpot };
+    return {
+      combined: ceTick + peTick,
+      ce: ceTick,
+      pe: peTick,
+      spot: engineState.lastSpot,
+      source: 'websocket',
+    };
   }
 
   const ceEntry = Number(trade.legs?.find((l) => l.optionType === 'CE')?.entryPremium);
@@ -105,7 +115,107 @@ function getCombinedFromTrade(trade, chain = null) {
     ce: ceEntry,
     pe: peEntry,
     spot: engineState.lastSpot || trade.entrySpot,
+    source: 'entry',
   };
+}
+
+function buildOpenPositionMark(trade, mark, clock) {
+  const entryCredit = Number(trade.entryCredit ?? trade.entryPremium) || 0;
+  const combined = Number(mark?.combined) || 0;
+  const qty = Number(trade.qty) || 0;
+  const charges = Math.max(0, Number(trade.charges) || 0);
+  const credit = entryCredit * qty;
+  const buyback = combined * qty;
+  const grossPnl = credit - buyback;
+  const unrealizedPnl = grossPnl - charges;
+  const entrySpot = Number(trade.entrySpot);
+  const spot = Number(mark?.spot);
+  const targetPremium = trade.targetPremium != null ? Number(trade.targetPremium) : null;
+  const stopLossPremium = trade.stopLossPremium != null ? Number(trade.stopLossPremium) : null;
+
+  return {
+    at: new Date().toISOString(),
+    source: mark?.source || 'entry',
+    ceLtp: Number.isFinite(mark?.ce) ? Number(mark.ce.toFixed(2)) : null,
+    peLtp: Number.isFinite(mark?.pe) ? Number(mark.pe.toFixed(2)) : null,
+    combinedPremium: Number(combined.toFixed(2)),
+    entryCredit: Number(entryCredit.toFixed(2)),
+    creditReceived: Number(credit.toFixed(2)),
+    currentBuyback: Number(buyback.toFixed(2)),
+    grossPnl: Number(grossPnl.toFixed(2)),
+    unrealizedPnl: Number(unrealizedPnl.toFixed(2)),
+    unrealizedPnlPct: credit > 0 ? Number(((unrealizedPnl / credit) * 100).toFixed(2)) : 0,
+    spot: Number.isFinite(spot) ? Number(spot.toFixed(2)) : null,
+    spotChange: Number.isFinite(spot) && Number.isFinite(entrySpot)
+      ? Number((spot - entrySpot).toFixed(2))
+      : null,
+    targetPremium,
+    stopLossPremium,
+    premiumAboveTarget: targetPremium != null ? Number((combined - targetPremium).toFixed(2)) : null,
+    premiumBelowStop: stopLossPremium != null ? Number((stopLossPremium - combined).toFixed(2)) : null,
+    isProfitable: unrealizedPnl > 0,
+    phase: clock.dateKey === trade.entryDateKey ? 'ENTRY_DAY_HOLD' : 'EXIT_DAY_MONITOR',
+    nextDayExitTime: engineState.settings.dayCloseTime,
+  };
+}
+
+function optionTicksAreFresh() {
+  const ce = engineState.lastOptionTicks.CE;
+  const pe = engineState.lastOptionTicks.PE;
+  if (!Number.isFinite(ce?.ltp) || !Number.isFinite(pe?.ltp)) return false;
+  const now = Date.now();
+  return now - (ce.ts || 0) < TICK_FRESH_MAX_AGE_MS && now - (pe.ts || 0) < TICK_FRESH_MAX_AGE_MS;
+}
+
+async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain = true } = {}) {
+  if (preferTicks || optionTicksAreFresh()) {
+    const tickMark = getCombinedFromTrade(trade, null);
+    if (tickMark.source === 'websocket') return tickMark;
+  }
+
+  const now = Date.now();
+  const chainGapOk = now - engineState.lastChainFetchAt >= OPEN_MARK_CHAIN_MIN_GAP_MS;
+  if (!allowChain || !chainGapOk) {
+    return getCombinedFromTrade(trade, null);
+  }
+
+  try {
+    engineState.lastChainFetchAt = now;
+    const chain = await getAtmPremiums({
+      symbol: trade.symbol,
+      strike: trade.strike,
+      expiry: trade.expiryDate,
+    });
+    const mark = getCombinedFromTrade(trade, chain);
+    if (Number.isFinite(mark.spot)) engineState.lastSpot = mark.spot;
+    return mark;
+  } catch (err) {
+    const msg = String(err.message || '');
+    if (msg.includes('429') || /rate\s*limit/i.test(msg)) {
+      engineState.lastError = 'Dhan rate limit — using websocket / last cached premiums';
+    } else {
+      engineState.lastError = `Strategy 2 mark refresh: ${msg}`;
+    }
+    return getCombinedFromTrade(trade, null);
+  }
+}
+
+async function refreshOpenPositionMark({ preferTicks = false, tradeDoc = null } = {}) {
+  const trade = tradeDoc
+    || (engineState.openTradeId
+      ? await LivePaperTrade.findById(engineState.openTradeId).lean()
+      : null);
+  if (!trade || trade.exitTime) {
+    engineState.openPositionMark = null;
+    return null;
+  }
+  const clock = getIstClock(new Date());
+  const mark = await resolveMarkForOpenTrade(trade, {
+    preferTicks,
+    allowChain: !preferTicks,
+  });
+  engineState.openPositionMark = buildOpenPositionMark(trade, mark, clock);
+  return engineState.openPositionMark;
 }
 
 async function ensureWallet() {
@@ -390,20 +500,14 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     return;
   }
 
+  const mark = await resolveMarkForOpenTrade(trade, {
+    preferTicks,
+    allowChain: !preferTicks && !optionTicksAreFresh(),
+  });
+  engineState.openPositionMark = buildOpenPositionMark(trade, mark, clock);
+
   if (clock.dateKey === trade.entryDateKey) return;
   const exitMinutes = parseClockMinutes(engineState.settings.dayCloseTime, 560);
-
-  let mark = null;
-  if (!preferTicks) {
-    try {
-      const chain = await getAtmPremiums({ symbol: trade.symbol, strike: trade.strike, expiry: trade.expiryDate });
-      mark = getCombinedFromTrade(trade, chain);
-      if (Number.isFinite(mark.spot)) engineState.lastSpot = mark.spot;
-    } catch (err) {
-      engineState.lastError = `Strategy 2 option chain refresh: ${err.message}`;
-    }
-  }
-  if (!mark) mark = getCombinedFromTrade(trade);
 
   if (
     trade.targetPremium != null
@@ -470,6 +574,7 @@ function clearOpenTrade() {
   unsubscribeLiveSymbol(PE_SUBSCRIPTION_KEY);
   engineState.openTradeId = null;
   engineState.lastOptionTicks = { CE: null, PE: null };
+  engineState.openPositionMark = null;
 }
 
 function stopPositionPoll() {
@@ -601,6 +706,7 @@ function getEngineSnapshot() {
     lastSignalAt: engineState.lastSignalAt,
     lastError: engineState.lastError,
     lastEntryDebug: engineState.lastEntryDebug,
+    openPositionMark: engineState.openPositionMark,
   };
 }
 
@@ -611,5 +717,6 @@ module.exports = {
   updateEngineSettings,
   bootEngineFromDb,
   getEngineSnapshot,
+  refreshOpenPositionMark,
   ensureWallet,
 };
