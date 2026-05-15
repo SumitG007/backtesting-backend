@@ -7,7 +7,7 @@ const StrategyTrade = require('../../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_THREE_KEY } = require('../../strategies/keys');
-const { runStrategyThreeBacktest } = require('../../strategies/strategy3/backtest');
+const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
@@ -38,7 +38,7 @@ async function runStrategyThree(req, res) {
       year: yearNum,
     });
 
-    const result = runStrategyThreeBacktest({
+    const result = await runBacktestInWorker(STRATEGY_THREE_KEY, {
       candles: payload.rows,
       settings,
     });

@@ -12,6 +12,9 @@ const {
   getStrategyTwoValidation,
   getStrategyThreeRunTrades,
   getStrategyThreeValidation,
+  runStrategyFour,
+  getStrategyFourRunTrades,
+  getStrategyFourValidation,
   runBacktestStub,
 } = require('../controllers/backtestController');
 const {
@@ -45,6 +48,9 @@ router.get('/strategy2/runs/:runId/validation', getStrategyTwoValidation);
 router.post('/strategy3/run', runStrategyThree);
 router.get('/strategy3/runs/:runId/trades', getStrategyThreeRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyThreeValidation);
+router.post('/strategy4/run', runStrategyFour);
+router.get('/strategy4/runs/:runId/trades', getStrategyFourRunTrades);
+router.get('/strategy4/runs/:runId/validation', getStrategyFourValidation);
 router.post('/backtest/run', runBacktestStub);
 
 // Live paper trading

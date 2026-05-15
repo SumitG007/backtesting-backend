@@ -7,8 +7,8 @@ const StrategyRun = require('../../models/strategyRun');
 const StrategyTrade = require('../../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
-const { runStrategyShortStraddle } = require('../../strategies/strategy2/shortStraddleBacktest');
 const { STRATEGY_TWO_KEY } = require('../../strategies/keys');
+const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseOptionalPositiveNumber } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
@@ -42,7 +42,7 @@ async function runStrategyTwo(req, res) {
       year: parseNumberInput(year, 2026),
     });
 
-    const result = runStrategyShortStraddle({ candles: payload.rows, settings });
+    const result = await runBacktestInWorker(STRATEGY_TWO_KEY, { candles: payload.rows, settings });
     const runDoc = await StrategyRun.create({
       strategyKey: STRATEGY_TWO_KEY,
       symbol: settings.symbol,

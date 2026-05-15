@@ -7,7 +7,7 @@ const StrategyTrade = require('../../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_ONE_KEY } = require('../../strategies/keys');
-const { runStrategyOneBacktest } = require('../../strategies/strategy1/backtest');
+const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
@@ -44,7 +44,7 @@ async function runStrategyOne(req, res) {
       }),
     ]);
 
-    const result = runStrategyOneBacktest({
+    const result = await runBacktestInWorker(STRATEGY_ONE_KEY, {
       dailyCandles: dailyPayload.rows,
       execCandles: execPayload.rows,
       settings,
