@@ -1,7 +1,12 @@
 const LivePaperTrade = require('../models/livePaperTrade');
 /** Strategy 2 live paper engine. Backtest twin: `strategies/strategy2/shortStraddleBacktest.js`. */
 const LiveWallet = require('../models/liveWallet');
-const { getIstClock, parseClockMinutes } = require('../utils/dateTime');
+const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../utils/dateTime');
+const {
+  ensureNseHolidaysLoaded,
+  isNseCashTradingDay,
+  getNseHolidayDescription,
+} = require('./nseHolidayService');
 const { getStrikeStep } = require('../utils/market');
 const {
   getAtmPremiums,
@@ -154,7 +159,11 @@ function buildOpenPositionMark(trade, mark, clock) {
     premiumAboveTarget: targetPremium != null ? Number((combined - targetPremium).toFixed(2)) : null,
     premiumBelowStop: stopLossPremium != null ? Number((stopLossPremium - combined).toFixed(2)) : null,
     isProfitable: unrealizedPnl > 0,
-    phase: clock.dateKey === trade.entryDateKey ? 'ENTRY_DAY_HOLD' : 'EXIT_DAY_MONITOR',
+    phase: clock.dateKey === trade.entryDateKey
+      ? 'ENTRY_DAY_HOLD'
+      : (isNseCashTradingDay(clock.dateKey)
+        ? 'EXIT_DAY_MONITOR'
+        : (isWeekendDateKey(clock.dateKey) ? 'WEEKEND_HOLD' : 'HOLIDAY_HOLD')),
     nextDayExitTime: engineState.settings.dayCloseTime,
   };
 }
@@ -323,6 +332,18 @@ async function syncEngineTradeStateFromDb(clock) {
 async function getEntryGate(clock) {
   if (!engineState.running) {
     return { ok: false, reason: 'ENGINE_OFFLINE' };
+  }
+  await ensureNseHolidaysLoaded();
+  if (!isNseCashTradingDay(clock.dateKey)) {
+    if (isWeekendDateKey(clock.dateKey)) {
+      return { ok: false, reason: 'MARKET_CLOSED_WEEKEND', dateKey: clock.dateKey };
+    }
+    return {
+      ok: false,
+      reason: 'MARKET_CLOSED_HOLIDAY',
+      dateKey: clock.dateKey,
+      holiday: getNseHolidayDescription(clock.dateKey),
+    };
   }
   await syncEngineTradeStateFromDb(clock);
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
@@ -507,6 +528,8 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
   engineState.openPositionMark = buildOpenPositionMark(trade, mark, clock);
 
   if (clock.dateKey === trade.entryDateKey) return;
+  await ensureNseHolidaysLoaded();
+  if (!isNseCashTradingDay(clock.dateKey)) return;
   const exitMinutes = parseClockMinutes(engineState.settings.dayCloseTime, 560);
 
   if (

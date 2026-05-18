@@ -1,30 +1,39 @@
 const { getAccessToken } = require('./dhanTokenStore');
 const { renewAccessToken } = require('./dhanAuthService');
+const {
+  reloadDhanCredentialsFromMongo,
+  sanitizeAccessToken,
+  tokenLooksValid,
+} = require('./dhanTokenPersistence');
 
 function readLatestAccessToken() {
-  return String(getAccessToken() || '').trim();
+  return sanitizeAccessToken(getAccessToken());
 }
 
 function isLikelyDhanAuthError(error) {
   const status = Number(error?.response?.status || 0);
   if (status === 401 || status === 403) return true;
   const details = error?.response?.data || {};
+  const code = String(details.errorCode || details.error_code || '').toUpperCase();
+  if (code === 'DH-906' || code === 'DH-905') return true;
   const asText = JSON.stringify(details).toLowerCase();
-  return (
-    asText.includes('token') ||
-    asText.includes('unauthor') ||
-    asText.includes('invalid credentials') ||
-    asText.includes('session')
-  );
+  return asText.includes('unauthor') || asText.includes('invalid credentials');
 }
 
 /**
  * Used after Dhan returns auth errors: exchange JWT via RenewToken and persist to Mongo (same as automate-trade).
  */
 async function ensureValidDhanAccessToken(reason = 'ensure-valid') {
-  if (!readLatestAccessToken()) {
+  await reloadDhanCredentialsFromMongo();
+  const token = readLatestAccessToken();
+  if (!token) {
     throw new Error(
-      `Cannot ensure Dhan token (${reason}): no JWT in memory — seed Mongo via POST /api/dhan/access-token`
+      `Cannot ensure Dhan token (${reason}): no JWT in memory — seed Mongo via POST /api/dhan/access-token`,
+    );
+  }
+  if (!tokenLooksValid(token)) {
+    throw new Error(
+      `Cannot ensure Dhan token (${reason}): JWT expired — generate a new token at web.dhan.co and POST /api/dhan/access-token`,
     );
   }
   await renewAccessToken();

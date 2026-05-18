@@ -1,5 +1,19 @@
 const DhanTokenCache = require('../models/DhanTokenCache');
-const { setAccessToken, setDhanClientId } = require('./dhanTokenStore');
+const { setAccessToken, setDhanClientId, getAccessToken, getDhanClientId } = require('./dhanTokenStore');
+
+/** Strip common copy-paste noise from web.dhan.co tokens. */
+function sanitizeAccessToken(raw) {
+  let t = String(raw || '').trim();
+  if (!t) return '';
+  if (/^bearer\s+/i.test(t)) t = t.replace(/^bearer\s+/i, '').trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"'))
+    || (t.startsWith("'") && t.endsWith("'"))
+  ) {
+    t = t.slice(1, -1).trim();
+  }
+  return t;
+}
 
 /** Best-effort JWT exp check without verifying signature. */
 function tokenLooksValid(token) {
@@ -18,6 +32,23 @@ function tokenLooksValid(token) {
   }
 }
 
+function decodeJwtMeta(token) {
+  const t = sanitizeAccessToken(token);
+  const parts = t.split('.');
+  if (parts.length < 2) return { exp: null, expIso: null };
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 ? '='.repeat(4 - (b64.length % 4)) : '';
+    const payload = JSON.parse(Buffer.from(b64 + pad, 'base64').toString('utf8'));
+    const expSec = Number(payload.exp);
+    if (!Number.isFinite(expSec)) return { exp: null, expIso: null };
+    const expMs = expSec * 1000;
+    return { exp: expMs, expIso: new Date(expMs).toISOString() };
+  } catch {
+    return { exp: null, expIso: null };
+  }
+}
+
 function parseDhanApiDate(value) {
   if (value == null || value === '') return null;
   const d = new Date(value);
@@ -32,10 +63,19 @@ async function hydrateDhanTokenFromMongo() {
   const envCid = String(process.env.DHAN_CLIENT_ID || '').trim();
   try {
     const doc = await DhanTokenCache.findOne({ key: 'singleton' }).lean();
-    const dbTok = String(doc?.accessToken || '').trim();
+    const dbTok = sanitizeAccessToken(doc?.accessToken);
     if (dbTok) {
       setAccessToken(dbTok);
-      console.log('[DHAN TOKEN] Restored JWT from MongoDB.');
+      const meta = decodeJwtMeta(dbTok);
+      const valid = tokenLooksValid(dbTok);
+      console.log(
+        `[DHAN TOKEN] Restored JWT from MongoDB (${valid ? 'active' : 'expired'}${meta.expIso ? `, exp ${meta.expIso}` : ''}).`,
+      );
+      if (!valid) {
+        console.warn(
+          '[DHAN TOKEN] Stored JWT is expired. RenewToken cannot fix this — generate a new token at web.dhan.co and POST /api/dhan/access-token.',
+        );
+      }
     }
     const dbClient = String(doc?.dhanClientId || '').trim();
     if (dbClient) {
@@ -64,8 +104,45 @@ async function hydrateDhanTokenFromMongo() {
  *   renewExpiryTime?: Date | string | null,
  * }} [options]
  */
+/** Reload JWT + client id from Mongo into memory (use after manual DB edits). */
+async function reloadDhanCredentialsFromMongo() {
+  try {
+    const doc = await DhanTokenCache.findOne({ key: 'singleton' }).lean();
+    const dbTok = sanitizeAccessToken(doc?.accessToken);
+    if (dbTok) setAccessToken(dbTok);
+    const dbClient = String(doc?.dhanClientId || '').trim();
+    if (dbClient) setDhanClientId(dbClient);
+    return doc;
+  } catch (err) {
+    console.error('[DHAN TOKEN] Mongo reload failed:', err?.message || err);
+    return null;
+  }
+}
+
+/**
+ * RenewToken only works while the current JWT is still valid (Dhan docs).
+ * Skip scheduled renew when JWT is dead or Dhan expiry is still far out.
+ */
+function shouldAttemptDhanRenew(doc) {
+  const token = sanitizeAccessToken(getAccessToken());
+  if (!token || !getDhanClientId()) return false;
+  if (!tokenLooksValid(token)) return false;
+
+  const renewExpiry = parseDhanApiDate(doc?.renewExpiryTime);
+  if (renewExpiry && renewExpiry.getTime() > Date.now() + 3 * 60 * 60 * 1000) {
+    return false;
+  }
+
+  const jwtExp = decodeJwtMeta(token).exp;
+  if (jwtExp && jwtExp > Date.now() + 3 * 60 * 60 * 1000) {
+    return false;
+  }
+
+  return true;
+}
+
 async function persistDhanTokenToMongo(token, options = {}) {
-  const t = String(token || '').trim();
+  const t = sanitizeAccessToken(token);
   if (!t) return;
   if (!options.force && !tokenLooksValid(t)) return;
 
@@ -97,7 +174,11 @@ async function getDhanTokenDoc() {
 
 module.exports = {
   hydrateDhanTokenFromMongo,
+  reloadDhanCredentialsFromMongo,
   persistDhanTokenToMongo,
   getDhanTokenDoc,
   tokenLooksValid,
+  sanitizeAccessToken,
+  decodeJwtMeta,
+  shouldAttemptDhanRenew,
 };

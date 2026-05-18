@@ -73,6 +73,12 @@ function getWeekdayFromDateKey(dateKey) {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
+/** NSE cash session is closed on Saturday and Sunday (IST calendar date). */
+function isWeekendDateKey(dateKey) {
+  const weekday = getWeekdayFromDateKey(dateKey);
+  return weekday === 0 || weekday === 6;
+}
+
 function parseClockMinutes(value, fallbackMinutes) {
   const raw = String(value || '').trim();
   const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
@@ -121,6 +127,7 @@ module.exports = {
   normalizeTimestamp,
   getIstClock,
   getWeekdayFromDateKey,
+  isWeekendDateKey,
   parseClockMinutes,
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,

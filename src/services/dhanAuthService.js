@@ -1,6 +1,12 @@
 const axios = require('axios');
 const { getAccessToken, setAccessToken, getDhanClientId, setDhanClientId } = require('./dhanTokenStore');
-const { persistDhanTokenToMongo, getDhanTokenDoc } = require('./dhanTokenPersistence');
+const {
+  persistDhanTokenToMongo,
+  getDhanTokenDoc,
+  reloadDhanCredentialsFromMongo,
+  sanitizeAccessToken,
+  tokenLooksValid,
+} = require('./dhanTokenPersistence');
 
 function pickAccessTokenFromResponse(data) {
   if (!data || typeof data !== 'object') return '';
@@ -70,15 +76,21 @@ let renewInFlight = null;
  * RenewToken — current JWT + dhanClientId in headers; response includes new token + expiry.
  * @see https://dhanhq.co/docs/v2/authentication/
  */
-async function renewAccessToken() {
+async function renewAccessToken({ force = false } = {}) {
   if (!renewInFlight) {
     renewInFlight = (async () => {
+      await reloadDhanCredentialsFromMongo();
       const baseUrl = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
-      const token = getAccessToken();
+      const token = sanitizeAccessToken(getAccessToken());
       const clientId = getDhanClientId();
       if (!token || !clientId) {
         throw new Error(
           'renewAccessToken: missing token or dhanClientId. Seed via POST /api/dhan/access-token (and set DHAN_CLIENT_ID in .env if not stored in Mongo).'
+        );
+      }
+      if (!force && !tokenLooksValid(token)) {
+        throw new Error(
+          'renewAccessToken: JWT is already expired. RenewToken only works on an active token — generate a new one at web.dhan.co and POST /api/dhan/access-token.'
         );
       }
 
@@ -113,9 +125,9 @@ async function renewAccessToken() {
  * First-time seed: store JWT + client id from body, then RenewToken so the active token is Dhan’s.
  */
 async function seedAccessTokenFromBody(body) {
-  const initialJwt = String(
-    body?.accessToken ?? body?.token ?? body?.access_token ?? body?.accessTokenJwt ?? ''
-  ).trim();
+  const initialJwt = sanitizeAccessToken(
+    body?.accessToken ?? body?.token ?? body?.access_token ?? body?.accessTokenJwt ?? '',
+  );
   const clientId = String(
     body?.dhanClientId ??
       body?.clientId ??
@@ -136,12 +148,25 @@ async function seedAccessTokenFromBody(body) {
     throw new Error('Mongo persist verification failed: token not found after seed');
   }
 
+  if (!tokenLooksValid(initialJwt)) {
+    return {
+      ok: true,
+      exchanged: false,
+      warning:
+        'Token saved but JWT is already expired. Generate a fresh token at web.dhan.co (valid 24h) and POST again.',
+    };
+  }
+
   try {
     await renewAccessToken();
     return { ok: true, exchanged: true };
   } catch (err) {
     const msg = err?.message || String(err);
-    return { ok: true, exchanged: false, warning: msg };
+    return {
+      ok: true,
+      exchanged: false,
+      warning: `${msg} Token is stored and may still work until expiry; fix dhanClientId if mismatched.`,
+    };
   }
 }
 
