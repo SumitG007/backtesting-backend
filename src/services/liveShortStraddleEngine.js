@@ -128,11 +128,10 @@ function buildOpenPositionMark(trade, mark, clock) {
   const entryCredit = Number(trade.entryCredit ?? trade.entryPremium) || 0;
   const combined = Number(mark?.combined) || 0;
   const qty = Number(trade.qty) || 0;
-  const charges = Math.max(0, Number(trade.charges) || 0);
   const credit = entryCredit * qty;
   const buyback = combined * qty;
   const grossPnl = credit - buyback;
-  const unrealizedPnl = grossPnl - charges;
+  const unrealizedPnl = grossPnl;
   const entrySpot = Number(trade.entrySpot);
   const spot = Number(mark?.spot);
   const targetPremium = trade.targetPremium != null ? Number(trade.targetPremium) : null;
