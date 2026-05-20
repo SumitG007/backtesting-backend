@@ -10,6 +10,16 @@ const {
   getStrategyThreeRunTrades,
   getStrategyThreeValidation,
 } = require('./strategyThreeHandlers');
+const {
+  runStrategyFour,
+  getStrategyFourRunTrades,
+  getStrategyFourValidation,
+} = require('./intradayTierHandlers');
+const {
+  runStrategyFive,
+  getStrategyFiveRunTrades,
+  getStrategyFiveValidation,
+} = require('./strategyFiveHandlers');
 
 module.exports = {
   health,
@@ -24,5 +34,11 @@ module.exports = {
   runStrategyThree,
   getStrategyThreeRunTrades,
   getStrategyThreeValidation,
+  runStrategyFour,
+  getStrategyFourRunTrades,
+  getStrategyFourValidation,
+  runStrategyFive,
+  getStrategyFiveRunTrades,
+  getStrategyFiveValidation,
   runBacktestStub,
 };

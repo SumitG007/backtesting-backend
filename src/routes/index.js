@@ -12,6 +12,12 @@ const {
   getStrategyTwoValidation,
   getStrategyThreeRunTrades,
   getStrategyThreeValidation,
+  runStrategyFour,
+  getStrategyFourRunTrades,
+  getStrategyFourValidation,
+  runStrategyFive,
+  getStrategyFiveRunTrades,
+  getStrategyFiveValidation,
   runBacktestStub,
 } = require('../controllers/backtestController');
 const {
@@ -27,6 +33,7 @@ const {
 } = require('../controllers/liveTradeController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
+const { runStrategyFourAnalysis } = require('../controllers/strategyFourAnalysisController');
 
 const router = express.Router();
 
@@ -48,6 +55,13 @@ router.get('/strategy2/runs/:runId/validation', getStrategyTwoValidation);
 router.post('/strategy3/run', runStrategyThree);
 router.get('/strategy3/runs/:runId/trades', getStrategyThreeRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyThreeValidation);
+router.post('/strategy4/run', runStrategyFour);
+router.get('/strategy4/runs/:runId/trades', getStrategyFourRunTrades);
+router.get('/strategy4/runs/:runId/validation', getStrategyFourValidation);
+router.post('/strategy4/analysis', runStrategyFourAnalysis);
+router.post('/strategy5/run', runStrategyFive);
+router.get('/strategy5/runs/:runId/trades', getStrategyFiveRunTrades);
+router.get('/strategy5/runs/:runId/validation', getStrategyFiveValidation);
 router.post('/backtest/run', runBacktestStub);
 
 // Live paper trading

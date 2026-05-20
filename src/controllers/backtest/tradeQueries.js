@@ -182,4 +182,5 @@ module.exports = {
   getRunTrades,
   getRunTradesByStrategy,
   getRunValidationByStrategy,
+  buildValidationReport,
 };

@@ -17,6 +17,18 @@ function run() {
     const { runStrategyThreeBacktest } = require('../strategies/strategy3/backtest');
     return runStrategyThreeBacktest(payload);
   }
+  const { runIntradayTierBacktest } = require('../strategies/intradayTier/backtest');
+  const INTRADAY_TIER_VARIANT = {
+    strategy4_first_hour_pe_ce: 'first_hour_pe_ce',
+  };
+  const variant = INTRADAY_TIER_VARIANT[strategyKey];
+  if (variant) {
+    return runIntradayTierBacktest({ ...payload, variant });
+  }
+  if (strategyKey === 'strategy5_iv_mean_reversion') {
+    const { runIvMeanReversionBacktest } = require('../strategies/strategy5/ivMeanReversionBacktest');
+    return runIvMeanReversionBacktest(payload);
+  }
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
 

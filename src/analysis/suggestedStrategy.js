@@ -52,6 +52,18 @@ const PATTERN_RULES = {
     matches: (d) => d.brokePDLBefore1030,
     entryMinutes: 630,
   },
+  first_hour_green_long: {
+    direction: 'LONG',
+    optionType: 'CE',
+    matches: (d) => d.firstHourGreen,
+    entryMinutes: 600,
+  },
+  first_hour_red_short: {
+    direction: 'SHORT',
+    optionType: 'PE',
+    matches: (d) => d.firstHourRed,
+    entryMinutes: 600,
+  },
 };
 
 function pickTopPatterns(patterns, minWinRate = 52) {

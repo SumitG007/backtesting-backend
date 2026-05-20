@@ -34,11 +34,24 @@ function buildStrategyRunSummary(trades) {
       ? Number(((totalCharges / grossBracket) * 100).toFixed(2))
       : null;
   const reason = (r) => rows.filter((t) => String(t.reason || '') === r).length;
+  const knownReasons = [
+    'TARGET',
+    'STOP_LOSS',
+    'TRAIL_STOP',
+    'PARTIAL_TARGET',
+    'EMA_EXIT',
+    'TIME_EXIT',
+    'DAY_CLOSE',
+  ];
   const exitsByReason = {
     TARGET: reason('TARGET'),
     STOP_LOSS: reason('STOP_LOSS'),
+    TRAIL_STOP: reason('TRAIL_STOP'),
+    PARTIAL_TARGET: reason('PARTIAL_TARGET'),
+    EMA_EXIT: reason('EMA_EXIT'),
+    TIME_EXIT: reason('TIME_EXIT'),
     DAY_CLOSE: reason('DAY_CLOSE'),
-    OTHER: rows.filter((t) => !['TARGET', 'STOP_LOSS', 'DAY_CLOSE'].includes(String(t.reason || ''))).length,
+    OTHER: rows.filter((t) => !knownReasons.includes(String(t.reason || ''))).length,
   };
 
   return {

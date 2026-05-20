@@ -50,6 +50,10 @@ function evalPattern(days, predicate, outcomeFn) {
 function computePatternStats(days) {
   const first30Median = median(days.map((d) => d.first30Range));
   const narrowOr30 = (d) => d.first30Range <= first30Median;
+  const prevRangeMedian = median(
+    days.map((d) => d.prevDayRangeChained).filter((x) => x != null && Number.isFinite(x) && x >= 0)
+  );
+  const dayRangeMedian = median(days.map((d) => d.dayRange));
 
   const patterns = [
     {
@@ -127,6 +131,93 @@ function computePatternStats(days) {
       ),
     },
     {
+      id: 'first_hour_green_long',
+      tradeable: true,
+      label: 'First hour bullish (close before 10:00 > open) → green day',
+      description: 'Early session strength vs full-day close colour.',
+      ...evalPattern(days, (d) => d.firstHourGreen, (d) => (d.isGreenDay ? 1 : -1)),
+    },
+    {
+      id: 'first_hour_red_short',
+      tradeable: true,
+      label: 'First hour bearish (close before 10:00 < open) → red day',
+      description: 'Early session weakness vs full-day close colour.',
+      ...evalPattern(days, (d) => d.firstHourRed, (d) => (d.isRedDay ? 1 : -1)),
+    },
+    {
+      id: 'big_gap_up_follow_green',
+      tradeable: false,
+      label: 'Large gap up (>0.5% vs prev close) → green day',
+      description: 'Gap-and-go tendency (research; entry not defined).',
+      ...evalPattern(
+        days,
+        (d) => d.gapPct != null && d.gapPct > 0.5,
+        (d) => (d.isGreenDay ? 1 : -1)
+      ),
+    },
+    {
+      id: 'big_gap_down_follow_red',
+      tradeable: false,
+      label: 'Large gap down (<−0.5%) → red day',
+      description: 'Down gap continuation bias (research).',
+      ...evalPattern(
+        days,
+        (d) => d.gapPct != null && d.gapPct < -0.5,
+        (d) => (d.isRedDay ? 1 : -1)
+      ),
+    },
+    {
+      id: 'narrow_prev_wide_today',
+      tradeable: false,
+      label: 'Quiet prior session + wider range today',
+      description: `Prior day range ≤ median (${Number(prevRangeMedian.toFixed(1))}) and today range ≥ ${Number((dayRangeMedian * 1.1).toFixed(1))} pts (expansion days).`,
+      ...evalPattern(
+        days,
+        (d) =>
+          d.prevDayRangeChained != null &&
+          Number.isFinite(d.prevDayRangeChained) &&
+          d.prevDayRangeChained <= prevRangeMedian &&
+          d.dayRange >= dayRangeMedian * 1.1,
+        (d) => (Math.abs(d.dayPoints) > d.open * 0.002 ? 1 : 0)
+      ),
+    },
+    {
+      id: 'gap_up_faded_to_red',
+      tradeable: false,
+      label: 'Gap up >0.15% and filled to prev close → often red close',
+      description: 'Full gap fill by session low — weak close proxy.',
+      ...evalPattern(
+        days,
+        (d) => d.gapPct != null && d.gapPct > 0.15 && d.gapFilledUp,
+        (d) => (d.isRedDay ? 1 : -1)
+      ),
+    },
+    {
+      id: 'gap_down_faded_to_green',
+      tradeable: false,
+      label: 'Gap down <−0.15% and filled to prev close → often green close',
+      description: 'Full gap fill by session high — bounce close proxy.',
+      ...evalPattern(
+        days,
+        (d) => d.gapPct != null && d.gapPct < -0.15 && d.gapFilledDown,
+        (d) => (d.isGreenDay ? 1 : -1)
+      ),
+    },
+    {
+      id: 'inside_day_green_bias',
+      tradeable: false,
+      label: 'Inside day (strict vs prior range) → green close',
+      description: 'Compression day — directional bias to close.',
+      ...evalPattern(days, (d) => d.insideDay, (d) => (d.isGreenDay ? 1 : -1)),
+    },
+    {
+      id: 'outside_day_green_bias',
+      tradeable: false,
+      label: 'Outside / engulfing day vs prior → green close',
+      description: 'Expansion past both sides of prior session.',
+      ...evalPattern(days, (d) => d.outsideDay, (d) => (d.isGreenDay ? 1 : -1)),
+    },
+    {
       id: 'flat_open_trend_day',
       tradeable: false,
       label: 'Flat gap (|gap| ≤ 0.03%) + |day move| > 0.35% of open',
@@ -194,6 +285,14 @@ function computePatternStats(days) {
         if (!gaps.length) return null;
         return Number((gaps.reduce((a, g) => a + Math.abs(g), 0) / gaps.length).toFixed(3));
       })(),
+      avgAbsBodyPct: days.length
+        ? Number((days.reduce((a, d) => a + (Number(d.bodyAbsPct) || 0), 0) / days.length).toFixed(3))
+        : 0,
+      avgRangePctOfOpen: days.length
+        ? Number((days.reduce((a, d) => a + (Number(d.rangePct) || 0), 0) / days.length).toFixed(3))
+        : 0,
+      maxDayRange: days.length ? Math.max(...days.map((d) => d.dayRange)) : 0,
+      maxAbsBodyPct: days.length ? Number(Math.max(...days.map((d) => d.bodyAbsPct || 0)).toFixed(3)) : 0,
     },
     gapSummary,
     patterns: patterns.sort((a, b) => {

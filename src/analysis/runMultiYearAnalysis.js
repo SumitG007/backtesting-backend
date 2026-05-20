@@ -3,6 +3,7 @@ const { buildIntradayByDay, buildDailyFromIntraday } = require('./candleGroups')
 const { buildAllDayMetrics } = require('./dayMetrics');
 const { computePatternStats } = require('./patternStats');
 const { buildSuggestedStrategy } = require('./suggestedStrategy');
+const { computeSupplementaryStats } = require('./extendedStats');
 const { getIntervalMeta } = require('./intervalMeta');
 
 const DEFAULT_YEARS = [2022, 2023, 2024, 2025, 2026];
@@ -48,6 +49,7 @@ async function runMultiYearAnalysis({ symbol, interval, years }) {
   const dayMetrics = buildAllDayMetrics(intraByDay, dailyMap);
   const intervalMeta = getIntervalMeta(intv);
   const patternReport = computePatternStats(dayMetrics);
+  const supplementary = computeSupplementaryStats(dayMetrics);
   const suggested = buildSuggestedStrategy({
     patterns: patternReport.patterns,
     days: dayMetrics,
@@ -63,13 +65,15 @@ async function runMultiYearAnalysis({ symbol, interval, years }) {
       totalCandles: allRows.length,
       byYear: yearStats,
     },
-    analysis: patternReport,
+    analysis: { ...patternReport, supplementary },
     suggestedStrategy: suggested,
     meta: {
       durationMs: Date.now() - startedAt,
       disclaimer:
         'Patterns are descriptive statistics on historical data. High win rates on past data do not guarantee future results. Use walk-forward validation before live trading.',
       intervalNote: intervalMeta.note,
+      researchIntent:
+        'Built for intraday strategy design: use distributions, weekday/monthly bias, session splits, and pattern win rates — then validate with your own backtests and position size. No return target is implied.',
     },
   };
 }
