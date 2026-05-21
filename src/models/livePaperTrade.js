@@ -30,6 +30,7 @@ const livePaperTradeSchema = new mongoose.Schema(
     status: { type: String, enum: ['OPEN', 'CLOSED'], default: 'OPEN', index: true },
     reason: { type: String, default: null },
     investedAmount: { type: Number, required: true },
+    creditReceived: { type: Number, default: null },
     finalValue: { type: Number, default: null },
     charges: { type: Number, default: 100 },
     pnl: { type: Number, default: null },

@@ -27,6 +27,8 @@ const strategyTradeSchema = new mongoose.Schema(
     lotCount: Number,
     lotSize: Number,
     investmentAmount: Number,
+    /** Total premium credit (Rs) for short straddle sells. */
+    creditReceived: Number,
     stopLossAmount: Number,
     targetAmount: Number,
     pnl: Number,

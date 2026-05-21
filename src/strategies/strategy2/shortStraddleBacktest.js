@@ -12,6 +12,7 @@ const {
 } = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
+const { shortStraddleMarginBlocked } = require('../shared/shortStraddleMargin');
 
 /** NIFTY weekly expiry weekday (0=Sun … 6=Sat). Default Tuesday. */
 const DEFAULT_EXPIRY_WEEKDAY = 2;
@@ -173,6 +174,12 @@ function runStrategyShortStraddle({ candles, settings }) {
     const buyback = exitCombined * qty;
     const rawPnl = credit - buyback;
     const pnl = rawPnl - perTradeCost;
+    const marginBlocked = shortStraddleMarginBlocked({
+      entrySpot,
+      lotSize,
+      lotCount,
+      settings,
+    });
 
     trades.push({
       pair: symbol,
@@ -182,7 +189,7 @@ function runStrategyShortStraddle({ candles, settings }) {
       sellPrice: Number(entryCredit.toFixed(2)),
       lotSize,
       lots: lotCount,
-      invested: Number(credit.toFixed(2)),
+      invested: Number(marginBlocked.toFixed(2)),
       finalValue: Number(buyback.toFixed(2)),
       closed: 'STRADDLE',
       order: 'SELL',
@@ -195,7 +202,8 @@ function runStrategyShortStraddle({ candles, settings }) {
       qty,
       premium: Number(entryCredit.toFixed(2)),
       lotCount,
-      investmentAmount: Number(credit.toFixed(2)),
+      creditReceived: Number(credit.toFixed(2)),
+      investmentAmount: Number(marginBlocked.toFixed(2)),
       stopLossAmount: hasStopLoss
         ? Number((Math.max(0, stopCombined - entryCredit) * qty).toFixed(2))
         : null,
@@ -205,7 +213,7 @@ function runStrategyShortStraddle({ candles, settings }) {
       grossPnl: Number(rawPnl.toFixed(2)),
       charges: perTradeCost,
       pnl: Number(pnl.toFixed(2)),
-      pnlPct: credit > 0 ? Number(((pnl / credit) * 100).toFixed(2)) : 0,
+      pnlPct: marginBlocked > 0 ? Number(((pnl / marginBlocked) * 100).toFixed(2)) : 0,
       reason,
       expiryMode: usesNextExpiry ? 'NEXT_EXPIRY' : 'CURRENT_EXPIRY',
     });

@@ -8,6 +8,7 @@ const {
   getNseHolidayDescription,
 } = require('./nseHolidayService');
 const { getStrikeStep } = require('../utils/market');
+const { shortStraddleMarginBlocked } = require('../strategies/shared/shortStraddleMargin');
 const {
   getAtmPremiums,
   getCurrentLotSize,
@@ -474,7 +475,15 @@ async function placeShortStraddle(clock) {
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
       targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
       status: 'OPEN',
-      investedAmount: Number((entryCredit * qty).toFixed(2)),
+      investedAmount: Number(
+        shortStraddleMarginBlocked({
+          entrySpot: spot,
+          lotSize,
+          lotCount: lots,
+          settings: engineState.settings,
+        }).toFixed(2),
+      ),
+      creditReceived: Number((entryCredit * qty).toFixed(2)),
       charges: Number(charges.toFixed(2)),
       legs: [
         { optionType: 'CE', entryPremium: Number(ceEntry.toFixed(2)) },
@@ -574,7 +583,13 @@ async function finalizeTrade(trade, { exitCombined, mark, reason }) {
     trade.finalValue = Number(exitDebit.toFixed(2));
     trade.charges = Number(charges.toFixed(2));
     trade.pnl = Number(pnl.toFixed(2));
-    trade.pnlPct = credit > 0 ? Number(((pnl / credit) * 100).toFixed(2)) : 0;
+    const marginBlocked = Number(trade.investedAmount) || shortStraddleMarginBlocked({
+      entrySpot: trade.entrySpot,
+      lotSize: trade.lotSize,
+      lotCount: trade.lots,
+      settings: engineState.settings,
+    });
+    trade.pnlPct = marginBlocked > 0 ? Number(((pnl / marginBlocked) * 100).toFixed(2)) : 0;
     await trade.save();
 
     const wallet = await ensureWallet();
