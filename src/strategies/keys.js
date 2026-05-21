@@ -6,6 +6,7 @@
  * Strategy 3 — option chain OI direction.
  * Strategy 4 — first-hour vs open: PE or CE, entry ≥10:00, premium SL/target (intradayTier).
  * Strategy 5 — IV mean reversion: short straddle when OR IV spikes; IV-specific exits.
+ * Strategy 6 — rising wedge breakdown (see `strategies/catalog.js`).
  */
 
 /** @type {string} Strategy 1 — previous day close retest (see `strategy1/backtest.js`) */
@@ -23,10 +24,13 @@ const STRATEGY_FOUR_KEY = 'strategy4_first_hour_pe_ce';
 /** @type {string} Strategy 5 — IV mean reversion short straddle (intraday) */
 const STRATEGY_FIVE_KEY = 'strategy5_iv_mean_reversion';
 
+const { STRATEGY_SIX_KEY } = require('./catalog');
+
 module.exports = {
   STRATEGY_ONE_KEY,
   STRATEGY_TWO_KEY,
   STRATEGY_THREE_KEY,
   STRATEGY_FOUR_KEY,
   STRATEGY_FIVE_KEY,
+  STRATEGY_SIX_KEY,
 };

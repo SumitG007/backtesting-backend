@@ -34,6 +34,7 @@ const {
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
 const { runStrategyFourAnalysis } = require('../controllers/strategyFourAnalysisController');
+const { registerCatalogStrategyRoutes } = require('../controllers/backtest/registerCatalogRoutes');
 
 const router = express.Router();
 
@@ -62,6 +63,7 @@ router.post('/strategy4/analysis', runStrategyFourAnalysis);
 router.post('/strategy5/run', runStrategyFive);
 router.get('/strategy5/runs/:runId/trades', getStrategyFiveRunTrades);
 router.get('/strategy5/runs/:runId/validation', getStrategyFiveValidation);
+registerCatalogStrategyRoutes(router);
 router.post('/backtest/run', runBacktestStub);
 
 // Live paper trading

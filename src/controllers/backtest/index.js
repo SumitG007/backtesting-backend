@@ -20,7 +20,6 @@ const {
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
 } = require('./strategyFiveHandlers');
-
 module.exports = {
   health,
   getCandles,

@@ -29,6 +29,11 @@ function run() {
     const { runIvMeanReversionBacktest } = require('../strategies/strategy5/ivMeanReversionBacktest');
     return runIvMeanReversionBacktest(payload);
   }
+
+  if (strategyKey === 'strategy6_rising_wedge_breakdown') {
+    return require('../strategies/strategy6/risingWedgeBacktest').runRisingWedgeBacktest(payload);
+  }
+
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
 

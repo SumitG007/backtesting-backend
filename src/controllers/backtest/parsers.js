@@ -22,8 +22,18 @@ function parseOptionalPositiveNumber(value) {
   return parsed;
 }
 
+function parseBooleanInput(value, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  const s = String(value).trim().toLowerCase();
+  if (s === 'true' || s === '1' || s === 'yes') return true;
+  if (s === 'false' || s === '0' || s === 'no') return false;
+  return fallback;
+}
+
 module.exports = {
   parseNumberInput,
   parseStringInput,
   parseOptionalPositiveNumber,
+  parseBooleanInput,
 };
