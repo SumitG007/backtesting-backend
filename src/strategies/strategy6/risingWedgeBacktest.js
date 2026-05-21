@@ -6,6 +6,7 @@ const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
 const { buildStrategyRunSummary } = require('../shared/summary');
 const { rollingVolumeAvg } = require('../shared/indicators');
 const { detectRisingWedgeBreakdown } = require('../shared/patterns/risingWedge');
+const { buildDayIndicators, passesEntryFilters } = require('./entryFilters');
 const {
   buildIntradayByDay,
   pickStrike,
@@ -50,7 +51,6 @@ function runRisingWedgeBacktest({ execCandles, settings }) {
     hasTarget,
     targetPoints,
     perTradeCost,
-    maxTradesPerDay,
     usePatternExits,
   } = common;
 
@@ -62,6 +62,7 @@ function runRisingWedgeBacktest({ execCandles, settings }) {
   const volumeLookback = Math.max(5, Number(settings.volumeLookback) || 20);
   const volumeMultiplier = Math.max(1, Number(settings.volumeMultiplier) || 1.15);
   const patternOpts = buildPatternOpts(settings);
+  const maxTradesPerDayFixed = 1;
 
   const intraByDay = buildIntradayByDay(Array.isArray(execCandles) ? execCandles : []);
   const sortedDays = Array.from(intraByDay.keys()).sort();
@@ -75,9 +76,10 @@ function runRisingWedgeBacktest({ execCandles, settings }) {
 
     let dayTrades = 0;
     let lastEntryIdx = -minBarsBetweenTrades;
+    const dayIndicators = buildDayIndicators(dayBars, settings);
 
     for (let j = wedgeLookback; j < dayBars.length - 1; j += 1) {
-      if (dayTrades >= maxTradesPerDay) break;
+      if (dayTrades >= maxTradesPerDayFixed) break;
 
       const clock = getIstClock(dayBars[j][0]);
       if (clock.minutes < entryFromMinutes || clock.minutes > entryToMinutes) continue;
@@ -97,6 +99,7 @@ function runRisingWedgeBacktest({ execCandles, settings }) {
 
       const pattern = detectRisingWedgeBreakdown(dayBars, j, patternOpts);
       if (!pattern) continue;
+      if (!passesEntryFilters(dayBars, j, settings, dayIndicators)) continue;
       patternCandidates += 1;
 
       const entryIdx = j;
@@ -171,6 +174,9 @@ function runRisingWedgeBacktest({ execCandles, settings }) {
       patternCandidates,
       execBarsTotal: Array.isArray(execCandles) ? execCandles.length : 0,
       signalMode: patternOpts.signalMode,
+      maxTradesPerDay: maxTradesPerDayFixed,
+      pnlModel:
+        'Simulated option premium from index moves (not exchange OHLC). PE uses inverted delta vs CE. Charges per trade deducted.',
     },
   };
 }

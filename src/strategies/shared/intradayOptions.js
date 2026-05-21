@@ -43,6 +43,15 @@ function pickStrike({ entrySpot, strikeStep, optionType, strikeMode }) {
   return atm;
 }
 
+/**
+ * Long option premium vs index move.
+ * CE: LONG delta (spot up → premium up). PE: inverted (spot down → premium up).
+ * Matches strategy 1/3/4 convention — do not use side LONG for bought puts.
+ */
+function premiumSideForLongOption(optionType) {
+  return String(optionType || 'CE').toUpperCase() === 'CE' ? 'LONG' : 'SHORT';
+}
+
 function simulateLongOptionExit({
   dayBars,
   entryIdx,
@@ -60,7 +69,7 @@ function simulateLongOptionExit({
   stopIndex,
   targetIndex,
 }) {
-  const premiumSide = 'LONG';
+  const premiumSide = premiumSideForLongOption(optionType);
   let exitIdx = dayBars.length - 1;
   let exitSpot = Number(dayBars[exitIdx][4]);
   let exitPremium = getOptionPremiumFromSpotMove({
@@ -276,6 +285,7 @@ module.exports = {
   buildIntradayByDay,
   sortExecCandlesChronologically,
   pickStrike,
+  premiumSideForLongOption,
   simulateLongOptionExit,
   buildLongOptionTrade,
   parseCommonOptionSettings,
