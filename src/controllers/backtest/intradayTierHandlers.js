@@ -8,14 +8,14 @@ const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_FOUR_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { parseNumberInput, parseStringInput } = require('./parsers');
+const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 
 const TIER = {
   key: STRATEGY_FOUR_KEY,
   runName: 'Strategy 4 - First Hour Open Bias',
-  defaultSl: 18,
-  defaultTg: 80,
+  defaultSl: 22,
+  defaultTg: 70,
   defaultInterval: '5',
 };
 
@@ -37,6 +37,18 @@ function buildSettings(req) {
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '10:00'),
+      entryToTime: parseStringInput(req.body?.entryToTime, '11:00'),
+      tradeSide: parseStringInput(req.body?.tradeSide, 'both'),
+      minFirstHourMovePct: parseNumberInput(req.body?.minFirstHourMovePct, 0),
+      minFirstHourMovePoints: parseNumberInput(req.body?.minFirstHourMovePoints, 0),
+      minFirstHourRangePoints: parseNumberInput(req.body?.minFirstHourRangePoints, 0),
+      peMinFirstHourMovePct: parseNumberInput(req.body?.peMinFirstHourMovePct, 0),
+      ceMinFirstHourMovePct: parseNumberInput(req.body?.ceMinFirstHourMovePct, 0),
+      peMinFirstHourRangePoints: parseNumberInput(req.body?.peMinFirstHourRangePoints, 0),
+      maxGapPct: parseNumberInput(req.body?.maxGapPct, 0),
+      skipGapUpPe: parseBooleanInput(req.body?.skipGapUpPe, true),
+      skipGapDownCe: parseBooleanInput(req.body?.skipGapDownCe, false),
     },
     yearNum: parseNumberInput(year, 2026),
   };

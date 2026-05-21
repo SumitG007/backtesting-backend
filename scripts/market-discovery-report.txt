@@ -1,0 +1,74 @@
+
+══════════════════════════════════════════════════════════════════
+ MARKET DISCOVERY — NIFTY 5m — 2022, 2023, 2024, 2025, 2026
+══════════════════════════════════════════════════════════════════
+Candles loaded: 81600
+  2022: 18695 bars (null → null)
+  2023: 18546 bars (null → null)
+  2024: 18642 bars (null → null)
+  2025: 18639 bars (null → null)
+  2026: 7078 bars (null → null)
+
+── DAY OVERVIEW ──
+Trading days: 1083 | Green: 48.5% | Red: 51.3% | Avg range: 209.2 pts
+Avg |gap| vs prev close: 0.384%
+
+── GAP vs CLOSE COLOUR (common open behaviour) ──
+Bucket          | Days | Green% | Red%
+unknown         | 1    | 100    | 0    
+gap_up_med      | 380  | 43.9   | 56.1 
+flat            | 78   | 51.3   | 48.7 
+gap_down_large  | 83   | 56.6   | 43.4 
+gap_down_small  | 112  | 49.1   | 50   
+gap_down_med    | 184  | 47.3   | 52.2 
+gap_up_small    | 153  | 50.3   | 49.7 
+gap_up_large    | 92   | 55.4   | 44.6 
+
+── BY YEAR ──
+2022: 248 days | green 52.4% | red 46.8% | avg range 203.5
+2023: 245 days | green 47.3% | red 52.7% | avg range 150.2
+2024: 248 days | green 45.6% | red 54.4% | avg range 237.3
+2025: 248 days | green 48.4% | red 51.6% | avg range 214.2
+2026: 94 days | green 48.9% | red 51.1% | avg range 291.3
+
+── TOP PATTERNS (day-close win rate, min 35 samples) ──
+ID                        | CE/PE | Win%  | N   | Trade? | Label
+orb30_break_low_short     | PE    | 72.6  | 212 | yes | Narrow first 30m + break first-30 low before 11:00 → red day
+first_hour_green_long     | CE    | 69.9  | 502 | yes | First hour bullish (close before 10:00 > open) → green day
+first_hour_red_short      | PE    | 69.9  | 579 | yes | First hour bearish (close before 10:00 < open) → red day
+orb30_break_high_long     | CE    | 69.1  | 217 | yes | Narrow first 30m + break first-30 high before 11:00 → green day
+pdl_break_before_1030_shor| PE    | 57.5  | 372 | yes | Break previous day low before 10:30 → red day
+pdh_break_before_1030_long| CE    | 53.4  | 461 | yes | Break previous day high before 10:30 → green day
+flat_open_trend_day       | —     | 100   | 48  | no  | Flat gap (|gap| ≤ 0.03%) + |day move| > 0.35% of open
+narrow_prev_wide_today    | —     | 94.8  | 155 | no  | Quiet prior session + wider range today
+gap_up_faded_to_red       | —     | 77.2  | 263 | no  | Gap up >0.15% and filled to prev close → often red close
+gap_down_faded_to_green   | —     | 76.2  | 126 | no  | Gap down <−0.15% and filled to prev close → often green close
+big_gap_up_follow_green   | —     | 56.2  | 130 | no  | Large gap up (>0.5% vs prev close) → green day
+inside_day_green_bias     | —     | 50.9  | 114 | no  | Inside day (strict vs prior range) → green close
+
+── CALL BUY (CE) — best prototype index SL/TG per pattern ──
+  pdh_break_before_1030_long: day-win 53.4% (n=461) | proto net 1015.5 | WR 37.09% | trades 461 | SL25/TG50
+    → Break previous day high before 10:30 → green day
+  orb30_break_high_long: day-win 69.1% (n=217) | proto net 671.95 | WR 38.71% | trades 217 | SL25/TG50
+    → Narrow first 30m + break first-30 high before 11:00 → green day
+  first_hour_green_long: day-win 69.9% (n=502) | proto net -20.65 | WR 33.47% | trades 502 | SL25/TG50
+    → First hour bullish (close before 10:00 > open) → green day
+
+── PUT BUY (PE) — best prototype index SL/TG per pattern ──
+  first_hour_red_short: day-win 69.9% (n=579) | proto net 904.6 | WR 35.75% | trades 579 | SL25/TG50
+    → First hour bearish (close before 10:00 < open) → red day
+  pdl_break_before_1030_short: day-win 57.5% (n=372) | proto net 883 | WR 38.44% | trades 372 | SL18/TG35
+    → Break previous day low before 10:30 → red day
+  orb30_break_low_short: day-win 72.6% (n=212) | proto net 744.5 | WR 39.15% | trades 212 | SL25/TG50
+    → Narrow first 30m + break first-30 low before 11:00 → red day
+
+── SUGGESTED RULES TO BACKTEST NEXT ──
+  [PE] orb30_break_low_short @ 11:00 IST — hist 72.6% (n=212)
+  [CE] first_hour_green_long @ 10:00 IST — hist 69.9% (n=502)
+    prototype orb30_break_low_short: net 559.15 | WR 42.92% | trades 212
+    prototype first_hour_green_long: net -276.3 | WR 37.65% | trades 502
+
+★ Best CALL candidate: pdh_break_before_1030_long (proto net 1015.5)
+★ Best PUT candidate:  first_hour_red_short (proto net 904.6)
+
+Patterns are descriptive statistics on historical data. High win rates on past data do not guarantee future results. Use walk-forward validation before live trading.

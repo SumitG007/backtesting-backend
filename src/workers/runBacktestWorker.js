@@ -34,6 +34,10 @@ function run() {
     return require('../strategies/strategy6/risingWedgeBacktest').runRisingWedgeBacktest(payload);
   }
 
+  if (strategyKey === 'strategy7_data_pattern_intraday') {
+    return require('../strategies/strategy7/dailyPatternBacktest').runDailyPatternBacktest(payload);
+  }
+
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
 

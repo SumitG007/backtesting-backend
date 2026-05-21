@@ -9,6 +9,10 @@
     "test:token": "node src/scripts/testToken.js",
     "scenarios:s6": "node scripts/runStrategy6Scenarios.js",
     "audit:s6": "node scripts/auditStrategy6Pnl.js",
+    "discover:market": "node scripts/runMarketDiscovery.js",
+    "scenarios:s7": "node scripts/runStrategy7MultiYear.js",
+    "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
+    "cache:candles": "node scripts/saveCandleCache.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

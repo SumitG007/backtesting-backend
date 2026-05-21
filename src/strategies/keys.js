@@ -24,7 +24,7 @@ const STRATEGY_FOUR_KEY = 'strategy4_first_hour_pe_ce';
 /** @type {string} Strategy 5 — IV mean reversion short straddle (intraday) */
 const STRATEGY_FIVE_KEY = 'strategy5_iv_mean_reversion';
 
-const { STRATEGY_SIX_KEY } = require('./catalog');
+const { STRATEGY_SIX_KEY, STRATEGY_SEVEN_KEY } = require('./catalog');
 
 module.exports = {
   STRATEGY_ONE_KEY,
@@ -33,4 +33,5 @@ module.exports = {
   STRATEGY_FOUR_KEY,
   STRATEGY_FIVE_KEY,
   STRATEGY_SIX_KEY,
+  STRATEGY_SEVEN_KEY,
 };

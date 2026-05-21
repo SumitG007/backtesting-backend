@@ -1,8 +1,9 @@
 /**
- * Strategy catalog — Strategy 6 only (rising wedge breakdown).
+ * Strategy catalog — Strategy 6 (wedge) + Strategy 7 (data-mined patterns).
  */
 
 const STRATEGY_SIX_KEY = 'strategy6_rising_wedge_breakdown';
+const STRATEGY_SEVEN_KEY = 'strategy7_data_pattern_intraday';
 
 const COMMON_DEFAULTS = {
   symbol: 'NIFTY',
@@ -51,6 +52,28 @@ const STRATEGY_CATALOG = {
       maxTradesPerDay: 1,
     },
   },
+  7: {
+    id: 7,
+    key: STRATEGY_SEVEN_KEY,
+    label: 'Strategy 7 - Data Pattern Intraday (CE/PE)',
+    shortName: 'Data Patterns',
+    implemented: true,
+    defaultInterval: '5',
+    defaults: {
+      ...COMMON_DEFAULTS,
+      interval: '5',
+      patternMode: 'first_hour_pe',
+      stopLossPoints: 25,
+      targetProfitPoints: 50,
+      entryFromTime: '09:45',
+      entryToTime: '14:45',
+      maxTradesPerDay: 1,
+      requireFirstHourAlign: true,
+      minOrRangePct: 0,
+      maxOrRangePct: 0,
+      orBreakBufferPoints: 0,
+    },
+  },
 };
 
 function getCatalogEntry(strategyId) {
@@ -68,4 +91,5 @@ module.exports = {
   getCatalogEntry,
   getImplementedCatalogIds,
   STRATEGY_SIX_KEY,
+  STRATEGY_SEVEN_KEY,
 };

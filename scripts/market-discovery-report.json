@@ -1,0 +1,1245 @@
+{
+  "generatedAt": "2026-05-21T12:52:36.108Z",
+  "durationMs": 56068,
+  "symbol": "NIFTY",
+  "interval": "5",
+  "intervalMeta": {
+    "intervalMinutes": 5,
+    "intervalLabel": "5 minutes",
+    "note": "Patterns measure day-close bias (green/red) unless you run the index prototype backtest."
+  },
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "dataLoad": {
+    "source": "api",
+    "totalCandles": 81600,
+    "byYear": {
+      "2022": {
+        "candleCount": 18695,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2023": {
+        "candleCount": 18546,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2024": {
+        "candleCount": 18642,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2025": {
+        "candleCount": 18639,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2026": {
+        "candleCount": 7078,
+        "fromDate": null,
+        "toDate": null
+      }
+    }
+  },
+  "analysis": {
+    "minSample": 35,
+    "first30RangeMedian": 90.25,
+    "overview": {
+      "tradingDays": 1083,
+      "greenDays": 525,
+      "redDays": 556,
+      "greenRate": 48.5,
+      "redRate": 51.3,
+      "avgDayRange": 209.2,
+      "avgAbsGapPct": 0.384,
+      "avgAbsBodyPct": 0.519,
+      "avgRangePctOfOpen": 0.99,
+      "maxDayRange": 1898.05078125,
+      "maxAbsBodyPct": 5.104
+    },
+    "gapSummary": [
+      {
+        "bucket": "unknown",
+        "days": 1,
+        "greenRate": 100,
+        "redRate": 0
+      },
+      {
+        "bucket": "gap_up_med",
+        "days": 380,
+        "greenRate": 43.9,
+        "redRate": 56.1
+      },
+      {
+        "bucket": "flat",
+        "days": 78,
+        "greenRate": 51.3,
+        "redRate": 48.7
+      },
+      {
+        "bucket": "gap_down_large",
+        "days": 83,
+        "greenRate": 56.6,
+        "redRate": 43.4
+      },
+      {
+        "bucket": "gap_down_small",
+        "days": 112,
+        "greenRate": 49.1,
+        "redRate": 50
+      },
+      {
+        "bucket": "gap_down_med",
+        "days": 184,
+        "greenRate": 47.3,
+        "redRate": 52.2
+      },
+      {
+        "bucket": "gap_up_small",
+        "days": 153,
+        "greenRate": 50.3,
+        "redRate": 49.7
+      },
+      {
+        "bucket": "gap_up_large",
+        "days": 92,
+        "greenRate": 55.4,
+        "redRate": 44.6
+      }
+    ],
+    "patterns": [
+      {
+        "id": "orb30_break_low_short",
+        "tradeable": true,
+        "label": "Narrow first 30m + break first-30 low before 11:00 → red day",
+        "description": "Opening-range breakdown after compressed open.",
+        "sampleSize": 212,
+        "winRate": 72.6,
+        "avgDayPoints": 0.45,
+        "skipped": false
+      },
+      {
+        "id": "first_hour_green_long",
+        "tradeable": true,
+        "label": "First hour bullish (close before 10:00 > open) → green day",
+        "description": "Early session strength vs full-day close colour.",
+        "sampleSize": 502,
+        "winRate": 69.9,
+        "avgDayPoints": 0.4,
+        "skipped": false
+      },
+      {
+        "id": "first_hour_red_short",
+        "tradeable": true,
+        "label": "First hour bearish (close before 10:00 < open) → red day",
+        "description": "Early session weakness vs full-day close colour.",
+        "sampleSize": 579,
+        "winRate": 69.9,
+        "avgDayPoints": 0.4,
+        "skipped": false
+      },
+      {
+        "id": "orb30_break_high_long",
+        "tradeable": true,
+        "label": "Narrow first 30m + break first-30 high before 11:00 → green day",
+        "description": "Opening-range breakout to upside after compressed open.",
+        "sampleSize": 217,
+        "winRate": 69.1,
+        "avgDayPoints": 0.38,
+        "skipped": false
+      },
+      {
+        "id": "pdl_break_before_1030_short",
+        "tradeable": true,
+        "label": "Break previous day low before 10:30 → red day",
+        "description": "Early breakdown below prior session low.",
+        "sampleSize": 372,
+        "winRate": 57.5,
+        "avgDayPoints": 0.15,
+        "skipped": false
+      },
+      {
+        "id": "pdh_break_before_1030_long",
+        "tradeable": true,
+        "label": "Break previous day high before 10:30 → green day",
+        "description": "Early continuation above prior session high.",
+        "sampleSize": 461,
+        "winRate": 53.4,
+        "avgDayPoints": 0.07,
+        "skipped": false
+      },
+      {
+        "id": "gap_up_hold_945_long",
+        "tradeable": true,
+        "label": "Gap up (0.03–0.6%) + holds above open until 9:45 → green day",
+        "description": "Mild gap up with early strength; target bullish close.",
+        "sampleSize": 9,
+        "winRate": null,
+        "avgDayPoints": null,
+        "skipped": true,
+        "reason": "Need at least 35 days"
+      },
+      {
+        "id": "gap_down_hold_945_short",
+        "tradeable": true,
+        "label": "Gap down (−0.6% to −0.03%) + holds below open until 9:45 → red day",
+        "description": "Mild gap down with early weakness; target bearish close.",
+        "sampleSize": 9,
+        "winRate": null,
+        "avgDayPoints": null,
+        "skipped": true,
+        "reason": "Need at least 35 days"
+      },
+      {
+        "id": "flat_open_trend_day",
+        "tradeable": false,
+        "label": "Flat gap (|gap| ≤ 0.03%) + |day move| > 0.35% of open",
+        "description": "Research only: flags a big move day, not up vs down. Not used for suggested trades (no entry rule).",
+        "sampleSize": 48,
+        "winRate": 100,
+        "avgDayPoints": 1,
+        "skipped": false
+      },
+      {
+        "id": "narrow_prev_wide_today",
+        "tradeable": false,
+        "label": "Quiet prior session + wider range today",
+        "description": "Prior day range ≤ median (183.6) and today range ≥ 202 pts (expansion days).",
+        "sampleSize": 155,
+        "winRate": 94.8,
+        "avgDayPoints": 0.95,
+        "skipped": false
+      },
+      {
+        "id": "gap_up_faded_to_red",
+        "tradeable": false,
+        "label": "Gap up >0.15% and filled to prev close → often red close",
+        "description": "Full gap fill by session low — weak close proxy.",
+        "sampleSize": 263,
+        "winRate": 77.2,
+        "avgDayPoints": 0.54,
+        "skipped": false
+      },
+      {
+        "id": "gap_down_faded_to_green",
+        "tradeable": false,
+        "label": "Gap down <−0.15% and filled to prev close → often green close",
+        "description": "Full gap fill by session high — bounce close proxy.",
+        "sampleSize": 126,
+        "winRate": 76.2,
+        "avgDayPoints": 0.52,
+        "skipped": false
+      },
+      {
+        "id": "big_gap_up_follow_green",
+        "tradeable": false,
+        "label": "Large gap up (>0.5% vs prev close) → green day",
+        "description": "Gap-and-go tendency (research; entry not defined).",
+        "sampleSize": 130,
+        "winRate": 56.2,
+        "avgDayPoints": 0.12,
+        "skipped": false
+      },
+      {
+        "id": "inside_day_green_bias",
+        "tradeable": false,
+        "label": "Inside day (strict vs prior range) → green close",
+        "description": "Compression day — directional bias to close.",
+        "sampleSize": 114,
+        "winRate": 50.9,
+        "avgDayPoints": 0.02,
+        "skipped": false
+      },
+      {
+        "id": "big_gap_down_follow_red",
+        "tradeable": false,
+        "label": "Large gap down (<−0.5%) → red day",
+        "description": "Down gap continuation bias (research).",
+        "sampleSize": 100,
+        "winRate": 44,
+        "avgDayPoints": -0.12,
+        "skipped": false
+      },
+      {
+        "id": "outside_day_green_bias",
+        "tradeable": false,
+        "label": "Outside / engulfing day vs prior → green close",
+        "description": "Expansion past both sides of prior session.",
+        "sampleSize": 110,
+        "winRate": 43.6,
+        "avgDayPoints": -0.13,
+        "skipped": false
+      }
+    ],
+    "yearBreakdown": [
+      {
+        "year": "2022",
+        "tradingDays": 248,
+        "greenRate": 52.4,
+        "redRate": 46.8,
+        "avgDayRange": 203.5
+      },
+      {
+        "year": "2023",
+        "tradingDays": 245,
+        "greenRate": 47.3,
+        "redRate": 52.7,
+        "avgDayRange": 150.2
+      },
+      {
+        "year": "2024",
+        "tradingDays": 248,
+        "greenRate": 45.6,
+        "redRate": 54.4,
+        "avgDayRange": 237.3
+      },
+      {
+        "year": "2025",
+        "tradingDays": 248,
+        "greenRate": 48.4,
+        "redRate": 51.6,
+        "avgDayRange": 214.2
+      },
+      {
+        "year": "2026",
+        "tradingDays": 94,
+        "greenRate": 48.9,
+        "redRate": 51.1,
+        "avgDayRange": 291.3
+      }
+    ],
+    "supplementary": {
+      "distribution": {
+        "dayRangeP50": 183.6,
+        "dayRangeP75": 252.6,
+        "dayRangeP90": 343.65,
+        "absCloseMinusOpenPctP50": 0.41,
+        "absCloseMinusOpenPctP75": 0.71,
+        "absCloseMinusOpenPctP90": 1.09,
+        "rangeAsPercentOfOpenP50": 0.87,
+        "rangeAsPercentOfOpenP90": 1.61
+      },
+      "moveThresholds": {
+        "pctDaysAbsBodyGte_0_15": 81.7,
+        "pctDaysAbsBodyGte_0_35": 56.4,
+        "pctDaysAbsBodyGte_0_5": 40.2,
+        "pctDaysAbsBodyGte_1_0": 13.1,
+        "pctDaysRangePctGte_0_5": 88.7,
+        "pctDaysRangePctGte_0_8": 57.7,
+        "pctDaysRangePctGte_1_2": 25.8
+      },
+      "weekdayBreakdown": [
+        {
+          "weekday": "Mon",
+          "tradingDays": 216,
+          "greenRate": 55.6,
+          "redRate": 44.4,
+          "avgDayRange": 209.7,
+          "avgAbsBodyPct": 0.512
+        },
+        {
+          "weekday": "Tue",
+          "tradingDays": 215,
+          "greenRate": 44.7,
+          "redRate": 55.3,
+          "avgDayRange": 211.9,
+          "avgAbsBodyPct": 0.535
+        },
+        {
+          "weekday": "Wed",
+          "tradingDays": 215,
+          "greenRate": 53.5,
+          "redRate": 46.5,
+          "avgDayRange": 195.4,
+          "avgAbsBodyPct": 0.474
+        },
+        {
+          "weekday": "Thu",
+          "tradingDays": 216,
+          "greenRate": 43.1,
+          "redRate": 56.9,
+          "avgDayRange": 216.7,
+          "avgAbsBodyPct": 0.54
+        },
+        {
+          "weekday": "Fri",
+          "tradingDays": 214,
+          "greenRate": 47.2,
+          "redRate": 52.8,
+          "avgDayRange": 212.4,
+          "avgAbsBodyPct": 0.539
+        }
+      ],
+      "monthlyBreakdown": [
+        {
+          "month": "2022-01",
+          "tradingDays": 22,
+          "greenRate": 63.6,
+          "redRate": 27.3,
+          "avgDayRange": 207.4,
+          "avgAbsBodyPct": 0.611
+        },
+        {
+          "month": "2022-02",
+          "tradingDays": 20,
+          "greenRate": 50,
+          "redRate": 50,
+          "avgDayRange": 272.8,
+          "avgAbsBodyPct": 0.925
+        },
+        {
+          "month": "2022-03",
+          "tradingDays": 20,
+          "greenRate": 65,
+          "redRate": 35,
+          "avgDayRange": 253.9,
+          "avgAbsBodyPct": 0.767
+        },
+        {
+          "month": "2022-04",
+          "tradingDays": 19,
+          "greenRate": 42.1,
+          "redRate": 57.9,
+          "avgDayRange": 207.9,
+          "avgAbsBodyPct": 0.658
+        },
+        {
+          "month": "2022-05",
+          "tradingDays": 21,
+          "greenRate": 42.9,
+          "redRate": 57.1,
+          "avgDayRange": 250.2,
+          "avgAbsBodyPct": 0.808
+        },
+        {
+          "month": "2022-06",
+          "tradingDays": 22,
+          "greenRate": 50,
+          "redRate": 50,
+          "avgDayRange": 202.5,
+          "avgAbsBodyPct": 0.742
+        },
+        {
+          "month": "2022-07",
+          "tradingDays": 21,
+          "greenRate": 61.9,
+          "redRate": 38.1,
+          "avgDayRange": 167,
+          "avgAbsBodyPct": 0.605
+        },
+        {
+          "month": "2022-08",
+          "tradingDays": 20,
+          "greenRate": 55,
+          "redRate": 45,
+          "avgDayRange": 186.4,
+          "avgAbsBodyPct": 0.622
+        },
+        {
+          "month": "2022-09",
+          "tradingDays": 22,
+          "greenRate": 50,
+          "redRate": 50,
+          "avgDayRange": 208.8,
+          "avgAbsBodyPct": 0.617
+        },
+        {
+          "month": "2022-10",
+          "tradingDays": 18,
+          "greenRate": 50,
+          "redRate": 50,
+          "avgDayRange": 166.1,
+          "avgAbsBodyPct": 0.634
+        },
+        {
+          "month": "2022-11",
+          "tradingDays": 21,
+          "greenRate": 52.4,
+          "redRate": 47.6,
+          "avgDayRange": 139.7,
+          "avgAbsBodyPct": 0.399
+        },
+        {
+          "month": "2022-12",
+          "tradingDays": 22,
+          "greenRate": 45.5,
+          "redRate": 54.5,
+          "avgDayRange": 179.6,
+          "avgAbsBodyPct": 0.55
+        },
+        {
+          "month": "2023-01",
+          "tradingDays": 21,
+          "greenRate": 33.3,
+          "redRate": 66.7,
+          "avgDayRange": 193.6,
+          "avgAbsBodyPct": 0.609
+        },
+        {
+          "month": "2023-02",
+          "tradingDays": 20,
+          "greenRate": 30,
+          "redRate": 70,
+          "avgDayRange": 187.7,
+          "avgAbsBodyPct": 0.484
+        },
+        {
+          "month": "2023-03",
+          "tradingDays": 21,
+          "greenRate": 42.9,
+          "redRate": 57.1,
+          "avgDayRange": 184.6,
+          "avgAbsBodyPct": 0.531
+        },
+        {
+          "month": "2023-04",
+          "tradingDays": 17,
+          "greenRate": 52.9,
+          "redRate": 47.1,
+          "avgDayRange": 131.5,
+          "avgAbsBodyPct": 0.33
+        },
+        {
+          "month": "2023-05",
+          "tradingDays": 22,
+          "greenRate": 45.5,
+          "redRate": 54.5,
+          "avgDayRange": 136.6,
+          "avgAbsBodyPct": 0.369
+        },
+        {
+          "month": "2023-06",
+          "tradingDays": 21,
+          "greenRate": 57.1,
+          "redRate": 42.9,
+          "avgDayRange": 113.5,
+          "avgAbsBodyPct": 0.335
+        },
+        {
+          "month": "2023-07",
+          "tradingDays": 21,
+          "greenRate": 47.6,
+          "redRate": 52.4,
+          "avgDayRange": 148.5,
+          "avgAbsBodyPct": 0.34
+        },
+        {
+          "month": "2023-08",
+          "tradingDays": 22,
+          "greenRate": 36.4,
+          "redRate": 63.6,
+          "avgDayRange": 137.8,
+          "avgAbsBodyPct": 0.318
+        },
+        {
+          "month": "2023-09",
+          "tradingDays": 20,
+          "greenRate": 55,
+          "redRate": 45,
+          "avgDayRange": 143.3,
+          "avgAbsBodyPct": 0.344
+        },
+        {
+          "month": "2023-10",
+          "tradingDays": 20,
+          "greenRate": 45,
+          "redRate": 55,
+          "avgDayRange": 145,
+          "avgAbsBodyPct": 0.437
+        },
+        {
+          "month": "2023-11",
+          "tradingDays": 20,
+          "greenRate": 60,
+          "redRate": 40,
+          "avgDayRange": 108.2,
+          "avgAbsBodyPct": 0.224
+        },
+        {
+          "month": "2023-12",
+          "tradingDays": 20,
+          "greenRate": 65,
+          "redRate": 35,
+          "avgDayRange": 170.2,
+          "avgAbsBodyPct": 0.404
+        },
+        {
+          "month": "2024-01",
+          "tradingDays": 22,
+          "greenRate": 40.9,
+          "redRate": 59.1,
+          "avgDayRange": 224,
+          "avgAbsBodyPct": 0.605
+        },
+        {
+          "month": "2024-02",
+          "tradingDays": 21,
+          "greenRate": 57.1,
+          "redRate": 42.9,
+          "avgDayRange": 216.8,
+          "avgAbsBodyPct": 0.54
+        },
+        {
+          "month": "2024-03",
+          "tradingDays": 19,
+          "greenRate": 52.6,
+          "redRate": 47.4,
+          "avgDayRange": 211.4,
+          "avgAbsBodyPct": 0.507
+        },
+        {
+          "month": "2024-04",
+          "tradingDays": 20,
+          "greenRate": 55,
+          "redRate": 45,
+          "avgDayRange": 191.6,
+          "avgAbsBodyPct": 0.429
+        },
+        {
+          "month": "2024-05",
+          "tradingDays": 22,
+          "greenRate": 50,
+          "redRate": 50,
+          "avgDayRange": 221.3,
+          "avgAbsBodyPct": 0.468
+        },
+        {
+          "month": "2024-06",
+          "tradingDays": 19,
+          "greenRate": 36.8,
+          "redRate": 63.2,
+          "avgDayRange": 343.1,
+          "avgAbsBodyPct": 0.769
+        },
+        {
+          "month": "2024-07",
+          "tradingDays": 22,
+          "greenRate": 54.5,
+          "redRate": 45.5,
+          "avgDayRange": 216.7,
+          "avgAbsBodyPct": 0.439
+        },
+        {
+          "month": "2024-08",
+          "tradingDays": 21,
+          "greenRate": 38.1,
+          "redRate": 61.9,
+          "avgDayRange": 185.3,
+          "avgAbsBodyPct": 0.333
+        },
+        {
+          "month": "2024-09",
+          "tradingDays": 21,
+          "greenRate": 42.9,
+          "redRate": 57.1,
+          "avgDayRange": 204.6,
+          "avgAbsBodyPct": 0.421
+        },
+        {
+          "month": "2024-10",
+          "tradingDays": 22,
+          "greenRate": 36.4,
+          "redRate": 63.6,
+          "avgDayRange": 276.8,
+          "avgAbsBodyPct": 0.525
+        },
+        {
+          "month": "2024-11",
+          "tradingDays": 18,
+          "greenRate": 38.9,
+          "redRate": 61.1,
+          "avgDayRange": 324.2,
+          "avgAbsBodyPct": 0.783
+        },
+        {
+          "month": "2024-12",
+          "tradingDays": 21,
+          "greenRate": 42.9,
+          "redRate": 57.1,
+          "avgDayRange": 250,
+          "avgAbsBodyPct": 0.418
+        },
+        {
+          "month": "2025-01",
+          "tradingDays": 23,
+          "greenRate": 47.8,
+          "redRate": 52.2,
+          "avgDayRange": 248.9,
+          "avgAbsBodyPct": 0.553
+        },
+        {
+          "month": "2025-02",
+          "tradingDays": 20,
+          "greenRate": 35,
+          "redRate": 65,
+          "avgDayRange": 235.5,
+          "avgAbsBodyPct": 0.476
+        },
+        {
+          "month": "2025-03",
+          "tradingDays": 19,
+          "greenRate": 63.2,
+          "redRate": 36.8,
+          "avgDayRange": 235.6,
+          "avgAbsBodyPct": 0.578
+        },
+        {
+          "month": "2025-04",
+          "tradingDays": 19,
+          "greenRate": 47.4,
+          "redRate": 52.6,
+          "avgDayRange": 281.2,
+          "avgAbsBodyPct": 0.692
+        },
+        {
+          "month": "2025-05",
+          "tradingDays": 21,
+          "greenRate": 52.4,
+          "redRate": 47.6,
+          "avgDayRange": 272.2,
+          "avgAbsBodyPct": 0.602
+        },
+        {
+          "month": "2025-06",
+          "tradingDays": 21,
+          "greenRate": 57.1,
+          "redRate": 42.9,
+          "avgDayRange": 227,
+          "avgAbsBodyPct": 0.52
+        },
+        {
+          "month": "2025-07",
+          "tradingDays": 23,
+          "greenRate": 39.1,
+          "redRate": 60.9,
+          "avgDayRange": 177,
+          "avgAbsBodyPct": 0.403
+        },
+        {
+          "month": "2025-08",
+          "tradingDays": 19,
+          "greenRate": 42.1,
+          "redRate": 57.9,
+          "avgDayRange": 183.1,
+          "avgAbsBodyPct": 0.431
+        },
+        {
+          "month": "2025-09",
+          "tradingDays": 22,
+          "greenRate": 31.8,
+          "redRate": 68.2,
+          "avgDayRange": 160.5,
+          "avgAbsBodyPct": 0.305
+        },
+        {
+          "month": "2025-10",
+          "tradingDays": 20,
+          "greenRate": 70,
+          "redRate": 30,
+          "avgDayRange": 199.3,
+          "avgAbsBodyPct": 0.457
+        },
+        {
+          "month": "2025-11",
+          "tradingDays": 19,
+          "greenRate": 52.6,
+          "redRate": 47.4,
+          "avgDayRange": 190.2,
+          "avgAbsBodyPct": 0.396
+        },
+        {
+          "month": "2025-12",
+          "tradingDays": 22,
+          "greenRate": 45.5,
+          "redRate": 54.5,
+          "avgDayRange": 167.8,
+          "avgAbsBodyPct": 0.334
+        },
+        {
+          "month": "2026-01",
+          "tradingDays": 20,
+          "greenRate": 45,
+          "redRate": 55,
+          "avgDayRange": 243.1,
+          "avgAbsBodyPct": 0.433
+        },
+        {
+          "month": "2026-02",
+          "tradingDays": 21,
+          "greenRate": 38.1,
+          "redRate": 61.9,
+          "avgDayRange": 287.7,
+          "avgAbsBodyPct": 0.665
+        },
+        {
+          "month": "2026-03",
+          "tradingDays": 19,
+          "greenRate": 57.9,
+          "redRate": 42.1,
+          "avgDayRange": 361.7,
+          "avgAbsBodyPct": 0.708
+        },
+        {
+          "month": "2026-04",
+          "tradingDays": 20,
+          "greenRate": 60,
+          "redRate": 40,
+          "avgDayRange": 289.9,
+          "avgAbsBodyPct": 0.649
+        },
+        {
+          "month": "2026-05",
+          "tradingDays": 14,
+          "greenRate": 42.9,
+          "redRate": 57.1,
+          "avgDayRange": 271.9,
+          "avgAbsBodyPct": 0.52
+        }
+      ],
+      "sessionProfile": {
+        "avgMorningRange": 167.12,
+        "avgAfternoonRange": 117.33,
+        "afternoonShareOfDayRangePct": 58.5,
+        "note": "Morning = 09:15–13:00 IST; afternoon = 13:00–15:30 IST (bar timestamps)."
+      },
+      "gapFill": {
+        "gapUpDaysOver003": 625,
+        "gapUpClosedIntoPrevCloseRate": 64.6,
+        "gapDownDaysOver003": 379,
+        "gapDownClosedIntoPrevCloseRate": 59.1,
+        "note": "Fill = session touches previous close (full gap fill proxy, bar highs/lows only)."
+      },
+      "firstHourVsRestOfDay": {
+        "daysWithClearFirstHour": 1081,
+        "firstHourSameColorAsDayClose": 69.9,
+        "note": "First hour = candles with timestamp before 10:00 IST."
+      },
+      "dayStructure": {
+        "insideDays": 114,
+        "outsideDays": 110,
+        "insideRate": 10.5,
+        "outsideRate": 10.2,
+        "note": "Inside day = high < prev high and low > prev low. Outside = engulfs prior range."
+      },
+      "goalRealityCheck": {
+        "lines": [
+          "This panel describes how the index moved in the past — not how much your account can grow.",
+          "Targets like “double capital in a month” or a fixed “50% max” require live risk limits, slippage, and drawdowns — they cannot be guaranteed from historical stats.",
+          "Use distribution + patterns to design entries, then backtest with your real position sizing and costs."
+        ]
+      }
+    }
+  },
+  "suggestedStrategy": {
+    "selected": true,
+    "message": "Top 2 tradeable pattern(s) by day-close win rate (min 52%, n≥35). Compare with prototype win rate below — SL/target exit early.",
+    "rules": [
+      {
+        "patternId": "orb30_break_low_short",
+        "label": "Narrow first 30m + break first-30 low before 11:00 → red day",
+        "historicalWinRate": 72.6,
+        "sampleSize": 212,
+        "direction": "SHORT",
+        "optionType": "PE",
+        "entryIst": "11:00",
+        "suggestedStopLossPoints": 25,
+        "suggestedTargetPoints": 40,
+        "note": "Prototype uses index points; for live P&L you would add an option premium model like your other strategies."
+      },
+      {
+        "patternId": "first_hour_green_long",
+        "label": "First hour bullish (close before 10:00 > open) → green day",
+        "historicalWinRate": 69.9,
+        "sampleSize": 502,
+        "direction": "LONG",
+        "optionType": "CE",
+        "entryIst": "10:00",
+        "suggestedStopLossPoints": 25,
+        "suggestedTargetPoints": 40,
+        "note": "Prototype uses index points; for live P&L you would add an option premium model like your other strategies."
+      }
+    ],
+    "prototypeBacktests": [
+      {
+        "patternId": "orb30_break_low_short",
+        "label": "Narrow first 30m + break first-30 low before 11:00 → red day",
+        "summary": {
+          "totalTrades": 212,
+          "wins": 91,
+          "losses": 121,
+          "lossCount": 121,
+          "winRate": 42.92,
+          "grossProfit": 3561.55,
+          "grossLoss": -3002.4,
+          "netPnl": 559.15,
+          "avgWin": 39.14,
+          "avgLoss": -24.81,
+          "avgLossAbs": 24.81,
+          "payoffRatio": 1.577,
+          "profitFactor": 1.186,
+          "expectancyPerTrade": 2.64,
+          "totalCharges": 0,
+          "costPctOfGross": null,
+          "bestTrade": 40,
+          "worstTrade": -25,
+          "exitsByReason": {
+            "TARGET": 87,
+            "STOP_LOSS": 119,
+            "TRAIL_STOP": 0,
+            "PARTIAL_TARGET": 0,
+            "EMA_EXIT": 0,
+            "TIME_EXIT": 0,
+            "DAY_CLOSE": 6,
+            "OTHER": 0
+          }
+        },
+        "sampleTrades": [
+          {
+            "dateKey": "2022-01-11",
+            "patternId": "orb30_break_low_short",
+            "direction": "SHORT",
+            "optionType": "PE",
+            "entryTime": "2022-01-11T05:30:00.000Z",
+            "exitTime": "2022-01-11T07:30:00.000Z",
+            "entrySpot": 18035.5,
+            "exitSpot": 18060.5,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-01-13",
+            "patternId": "orb30_break_low_short",
+            "direction": "SHORT",
+            "optionType": "PE",
+            "entryTime": "2022-01-13T05:30:00.000Z",
+            "exitTime": "2022-01-13T05:50:00.000Z",
+            "entrySpot": 18204.8008,
+            "exitSpot": 18229.8008,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-01-20",
+            "patternId": "orb30_break_low_short",
+            "direction": "SHORT",
+            "optionType": "PE",
+            "entryTime": "2022-01-20T05:30:00.000Z",
+            "exitTime": "2022-01-20T05:55:00.000Z",
+            "entrySpot": 17827.75,
+            "exitSpot": 17787.75,
+            "pnl": 40,
+            "reason": "TARGET"
+          },
+          {
+            "dateKey": "2022-01-31",
+            "patternId": "orb30_break_low_short",
+            "direction": "SHORT",
+            "optionType": "PE",
+            "entryTime": "2022-01-31T05:30:00.000Z",
+            "exitTime": "2022-01-31T05:35:00.000Z",
+            "entrySpot": 17305.6504,
+            "exitSpot": 17330.6504,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-02-11",
+            "patternId": "orb30_break_low_short",
+            "direction": "SHORT",
+            "optionType": "PE",
+            "entryTime": "2022-02-11T05:30:00.000Z",
+            "exitTime": "2022-02-11T06:10:00.000Z",
+            "entrySpot": 17310.6992,
+            "exitSpot": 17335.6992,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          }
+        ]
+      },
+      {
+        "patternId": "first_hour_green_long",
+        "label": "First hour bullish (close before 10:00 > open) → green day",
+        "summary": {
+          "totalTrades": 502,
+          "wins": 189,
+          "losses": 313,
+          "lossCount": 313,
+          "winRate": 37.65,
+          "grossProfit": 7548.7,
+          "grossLoss": -7825,
+          "netPnl": -276.3,
+          "avgWin": 39.94,
+          "avgLoss": -25,
+          "avgLossAbs": 25,
+          "payoffRatio": 1.598,
+          "profitFactor": 0.965,
+          "expectancyPerTrade": -0.55,
+          "totalCharges": 0,
+          "costPctOfGross": null,
+          "bestTrade": 40,
+          "worstTrade": -25,
+          "exitsByReason": {
+            "TARGET": 188,
+            "STOP_LOSS": 313,
+            "TRAIL_STOP": 0,
+            "PARTIAL_TARGET": 0,
+            "EMA_EXIT": 0,
+            "TIME_EXIT": 0,
+            "DAY_CLOSE": 1,
+            "OTHER": 0
+          }
+        },
+        "sampleTrades": [
+          {
+            "dateKey": "2022-01-03",
+            "patternId": "first_hour_green_long",
+            "direction": "LONG",
+            "optionType": "CE",
+            "entryTime": "2022-01-03T04:30:00.000Z",
+            "exitTime": "2022-01-03T06:45:00.000Z",
+            "entrySpot": 17496.6504,
+            "exitSpot": 17536.6504,
+            "pnl": 40,
+            "reason": "TARGET"
+          },
+          {
+            "dateKey": "2022-01-04",
+            "patternId": "first_hour_green_long",
+            "direction": "LONG",
+            "optionType": "CE",
+            "entryTime": "2022-01-04T04:30:00.000Z",
+            "exitTime": "2022-01-04T05:50:00.000Z",
+            "entrySpot": 17697.6504,
+            "exitSpot": 17672.6504,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-01-05",
+            "patternId": "first_hour_green_long",
+            "direction": "LONG",
+            "optionType": "CE",
+            "entryTime": "2022-01-05T04:30:00.000Z",
+            "exitTime": "2022-01-05T05:15:00.000Z",
+            "entrySpot": 17839.4004,
+            "exitSpot": 17814.4004,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-01-07",
+            "patternId": "first_hour_green_long",
+            "direction": "LONG",
+            "optionType": "CE",
+            "entryTime": "2022-01-07T04:30:00.000Z",
+            "exitTime": "2022-01-07T05:20:00.000Z",
+            "entrySpot": 17895.9004,
+            "exitSpot": 17870.9004,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          },
+          {
+            "dateKey": "2022-01-10",
+            "patternId": "first_hour_green_long",
+            "direction": "LONG",
+            "optionType": "CE",
+            "entryTime": "2022-01-10T04:30:00.000Z",
+            "exitTime": "2022-01-10T06:15:00.000Z",
+            "entrySpot": 17949.9492,
+            "exitSpot": 17924.9492,
+            "pnl": -25,
+            "reason": "STOP_LOSS"
+          }
+        ]
+      }
+    ]
+  },
+  "optionSignals": {
+    "note": "Prototype exits use index points (SL/target intraday), not option premiums. Use for rule selection only.",
+    "slTgGridTested": [
+      {
+        "stopLossPoints": 18,
+        "targetPoints": 35
+      },
+      {
+        "stopLossPoints": 20,
+        "targetPoints": 40
+      },
+      {
+        "stopLossPoints": 25,
+        "targetPoints": 40
+      },
+      {
+        "stopLossPoints": 25,
+        "targetPoints": 50
+      }
+    ],
+    "callBuy": [
+      {
+        "patternId": "pdh_break_before_1030_long",
+        "label": "Break previous day high before 10:30 → green day",
+        "description": "Early continuation above prior session high.",
+        "optionType": "CE",
+        "direction": "LONG",
+        "entryIstMinutes": 630,
+        "historicalDayWinRate": 53.4,
+        "sampleDays": 461,
+        "avgDayPointsWhenMatched": 0.07,
+        "prototype": {
+          "stopLossPoints": 25,
+          "targetPoints": 50,
+          "netPnl": 1015.5,
+          "winRate": 37.09,
+          "totalTrades": 461,
+          "profitFactor": 1.143
+        }
+      },
+      {
+        "patternId": "orb30_break_high_long",
+        "label": "Narrow first 30m + break first-30 high before 11:00 → green day",
+        "description": "Opening-range breakout to upside after compressed open.",
+        "optionType": "CE",
+        "direction": "LONG",
+        "entryIstMinutes": 660,
+        "historicalDayWinRate": 69.1,
+        "sampleDays": 217,
+        "avgDayPointsWhenMatched": 0.38,
+        "prototype": {
+          "stopLossPoints": 25,
+          "targetPoints": 50,
+          "netPnl": 671.95,
+          "winRate": 38.71,
+          "totalTrades": 217,
+          "profitFactor": 1.204
+        }
+      },
+      {
+        "patternId": "first_hour_green_long",
+        "label": "First hour bullish (close before 10:00 > open) → green day",
+        "description": "Early session strength vs full-day close colour.",
+        "optionType": "CE",
+        "direction": "LONG",
+        "entryIstMinutes": 600,
+        "historicalDayWinRate": 69.9,
+        "sampleDays": 502,
+        "avgDayPointsWhenMatched": 0.4,
+        "prototype": {
+          "stopLossPoints": 25,
+          "targetPoints": 50,
+          "netPnl": -20.65,
+          "winRate": 33.47,
+          "totalTrades": 502,
+          "profitFactor": 0.998
+        }
+      }
+    ],
+    "putBuy": [
+      {
+        "patternId": "first_hour_red_short",
+        "label": "First hour bearish (close before 10:00 < open) → red day",
+        "description": "Early session weakness vs full-day close colour.",
+        "optionType": "PE",
+        "direction": "SHORT",
+        "entryIstMinutes": 600,
+        "historicalDayWinRate": 69.9,
+        "sampleDays": 579,
+        "avgDayPointsWhenMatched": 0.4,
+        "prototype": {
+          "stopLossPoints": 25,
+          "targetPoints": 50,
+          "netPnl": 904.6,
+          "winRate": 35.75,
+          "totalTrades": 579,
+          "profitFactor": 1.097
+        }
+      },
+      {
+        "patternId": "pdl_break_before_1030_short",
+        "label": "Break previous day low before 10:30 → red day",
+        "description": "Early breakdown below prior session low.",
+        "optionType": "PE",
+        "direction": "SHORT",
+        "entryIstMinutes": 630,
+        "historicalDayWinRate": 57.5,
+        "sampleDays": 372,
+        "avgDayPointsWhenMatched": 0.15,
+        "prototype": {
+          "stopLossPoints": 18,
+          "targetPoints": 35,
+          "netPnl": 883,
+          "winRate": 38.44,
+          "totalTrades": 372,
+          "profitFactor": 1.214
+        }
+      },
+      {
+        "patternId": "orb30_break_low_short",
+        "label": "Narrow first 30m + break first-30 low before 11:00 → red day",
+        "description": "Opening-range breakdown after compressed open.",
+        "optionType": "PE",
+        "direction": "SHORT",
+        "entryIstMinutes": 660,
+        "historicalDayWinRate": 72.6,
+        "sampleDays": 212,
+        "avgDayPointsWhenMatched": 0.45,
+        "prototype": {
+          "stopLossPoints": 25,
+          "targetPoints": 50,
+          "netPnl": 744.5,
+          "winRate": 39.15,
+          "totalTrades": 212,
+          "profitFactor": 1.232
+        }
+      }
+    ],
+    "recommendedCall": {
+      "patternId": "pdh_break_before_1030_long",
+      "label": "Break previous day high before 10:30 → green day",
+      "description": "Early continuation above prior session high.",
+      "optionType": "CE",
+      "direction": "LONG",
+      "entryIstMinutes": 630,
+      "historicalDayWinRate": 53.4,
+      "sampleDays": 461,
+      "avgDayPointsWhenMatched": 0.07,
+      "prototype": {
+        "stopLossPoints": 25,
+        "targetPoints": 50,
+        "netPnl": 1015.5,
+        "winRate": 37.09,
+        "totalTrades": 461,
+        "profitFactor": 1.143
+      }
+    },
+    "recommendedPut": {
+      "patternId": "first_hour_red_short",
+      "label": "First hour bearish (close before 10:00 < open) → red day",
+      "description": "Early session weakness vs full-day close colour.",
+      "optionType": "PE",
+      "direction": "SHORT",
+      "entryIstMinutes": 600,
+      "historicalDayWinRate": 69.9,
+      "sampleDays": 579,
+      "avgDayPointsWhenMatched": 0.4,
+      "prototype": {
+        "stopLossPoints": 25,
+        "targetPoints": 50,
+        "netPnl": 904.6,
+        "winRate": 35.75,
+        "totalTrades": 579,
+        "profitFactor": 1.097
+      }
+    }
+  },
+  "meta": {
+    "durationMs": 56066,
+    "disclaimer": "Patterns are descriptive statistics on historical data. High win rates on past data do not guarantee future results. Use walk-forward validation before live trading.",
+    "intervalNote": "Patterns measure day-close bias (green/red) unless you run the index prototype backtest.",
+    "researchIntent": "Built for intraday strategy design: use distributions, weekday/monthly bias, session splits, and pattern win rates — then validate with your own backtests and position size. No return target is implied."
+  }
+}

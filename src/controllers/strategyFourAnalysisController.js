@@ -3,7 +3,7 @@
  */
 
 const { getLotSize, getStrikeStep } = require('../utils/market');
-const { parseNumberInput, parseStringInput } = require('./backtest/parsers');
+const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./backtest/parsers');
 const {
   runStrategyFourMultiYearAnalysis,
   DEFAULT_YEARS,
@@ -31,14 +31,16 @@ function buildAnalysisSettings(req) {
     symbol: String(symbol).toUpperCase(),
     interval,
     strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-    stopLossPoints: parseNumberInput(req.body?.stopLossPoints, 18),
-    targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 80),
+    stopLossPoints: parseNumberInput(req.body?.stopLossPoints, 22),
+    targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 70),
     basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
     premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
     lotCount: parseNumberInput(req.body?.lotCount, 1),
     lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
     strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
     perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
+    skipGapUpPe: parseBooleanInput(req.body?.skipGapUpPe, true),
+    skipGapDownCe: parseBooleanInput(req.body?.skipGapDownCe, false),
   };
 }
 

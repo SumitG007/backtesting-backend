@@ -2,7 +2,7 @@
  * Strategy 4 — first-hour vs 09:15 open: PE or CE; entry ≥10:00; premium SL/target; flat 15:20.
  */
 
-const { getIstClock } = require('../../utils/dateTime');
+const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
 
@@ -41,37 +41,89 @@ function pickStrike({ entrySpot, strikeStep, optionType, strikeMode }) {
   return atm;
 }
 
-/**
- * Strategy 4: first hour vs session open → PE / CE; entry on first bar ≥ 10:00 (not after 11:00).
- */
-function findFirstHourPeCeSignal(bars) {
+function firstHourMetrics(bars) {
   const sessionOpen = Number(bars[0][1]);
   if (!Number.isFinite(sessionOpen)) return null;
 
   let lastCloseBefore1000 = null;
+  let fhHigh = -Infinity;
+  let fhLow = Infinity;
   for (const c of bars) {
     const m = getIstClock(c[0]).minutes;
     if (m < M915) continue;
     if (m >= M1000) break;
+    const h = Number(c[2]);
+    const l = Number(c[3]);
     const cl = Number(c[4]);
+    if (Number.isFinite(h)) fhHigh = Math.max(fhHigh, h);
+    if (Number.isFinite(l)) fhLow = Math.min(fhLow, l);
     if (Number.isFinite(cl)) lastCloseBefore1000 = cl;
   }
-  if (lastCloseBefore1000 == null) return null;
+  if (lastCloseBefore1000 == null || !Number.isFinite(fhHigh) || !Number.isFinite(fhLow)) return null;
 
+  const movePoints = lastCloseBefore1000 - sessionOpen;
+  const moveAbsPct = sessionOpen > 0 ? (Math.abs(movePoints) / sessionOpen) * 100 : 0;
   let optionType = null;
   if (lastCloseBefore1000 < sessionOpen) optionType = 'PE';
   else if (lastCloseBefore1000 > sessionOpen) optionType = 'CE';
   else return null;
 
+  return {
+    sessionOpen,
+    lastCloseBefore1000,
+    movePoints,
+    moveAbsPct,
+    fhRange: fhHigh - fhLow,
+    optionType,
+  };
+}
+
+/**
+ * Strategy 4: first hour vs session open → PE / CE; entry on first bar ≥ entry time (default 10:00).
+ */
+function findFirstHourPeCeSignal(bars, settings = {}) {
+  const fh = firstHourMetrics(bars);
+  if (!fh) return null;
+
+  const minMovePct = Number(settings.minFirstHourMovePct) || 0;
+  const maxMovePct = Number(settings.maxFirstHourMovePct) || 0;
+  const minMovePts = Number(settings.minFirstHourMovePoints) || 0;
+  const minFhRange = Number(settings.minFirstHourRangePoints) || 0;
+  const peMinPct = Number(settings.peMinFirstHourMovePct) || 0;
+  const ceMinPct = Number(settings.ceMinFirstHourMovePct) || 0;
+  const peMinRange = Number(settings.peMinFirstHourRangePoints) || 0;
+  const ceMinRange = Number(settings.ceMinFirstHourRangePoints) || 0;
+
+  const sideMinPct =
+    fh.optionType === 'PE'
+      ? peMinPct || minMovePct
+      : ceMinPct || minMovePct;
+  const sideMinRange =
+    fh.optionType === 'PE'
+      ? peMinRange || minFhRange
+      : ceMinRange || minFhRange;
+
+  if (sideMinPct > 0 && fh.moveAbsPct < sideMinPct) return null;
+  if (maxMovePct > 0 && fh.moveAbsPct > maxMovePct) return null;
+  if (minMovePts > 0 && Math.abs(fh.movePoints) < minMovePts) return null;
+  if (sideMinRange > 0 && fh.fhRange < sideMinRange) return null;
+
+  const side = String(settings.tradeSide || 'both').toLowerCase();
+  if (side === 'pe_only' && fh.optionType !== 'PE') return null;
+  if (side === 'ce_only' && fh.optionType !== 'CE') return null;
+
+  const entryFromMin = parseClockMinutes(settings.entryFromTime, M1000);
+  const entryToMin = parseClockMinutes(settings.entryToTime, M1100);
   let entryIdx = null;
   for (let j = 0; j < bars.length; j += 1) {
-    if (getIstClock(bars[j][0]).minutes >= M1000) {
+    const m = getIstClock(bars[j][0]).minutes;
+    if (m >= entryFromMin && m <= entryToMin) {
       entryIdx = j;
       break;
     }
   }
   if (entryIdx == null) return null;
-  return { optionType, entryIdx };
+  return { optionType: fh.optionType, entryIdx, firstHourMovePct: fh.moveAbsPct, fhRange: fh.fhRange };
 }
 
 function simulateExitPeCe({
@@ -255,13 +307,39 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
       ? Number(settings.perTradeCost)
       : 100;
 
+  const maxGapPct = Number(settings.maxGapPct) || 0;
+  const minGapPct = Number(settings.minGapPct) || 0;
+
   const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
   const sortedKeys = Array.from(intraByDay.keys()).sort();
   const trades = [];
+  const prevCloseByDay = new Map();
+  for (let i = 1; i < sortedKeys.length; i += 1) {
+    const prevBars = intraByDay.get(sortedKeys[i - 1]);
+    if (!prevBars?.length) continue;
+    const pc = Number(prevBars[prevBars.length - 1][4]);
+    if (Number.isFinite(pc)) prevCloseByDay.set(sortedKeys[i], pc);
+  }
 
   for (const dayKey of sortedKeys) {
     const dayBars = intraByDay.get(dayKey) || [];
     if (dayBars.length < 3) continue;
+
+    const sessionOpen = Number(dayBars[0][1]);
+    const prevClose = prevCloseByDay.get(dayKey);
+    if (Number.isFinite(sessionOpen) && Number.isFinite(prevClose) && prevClose > 0) {
+      const gapPct = ((sessionOpen - prevClose) / prevClose) * 100;
+      if (maxGapPct > 0 && Math.abs(gapPct) > maxGapPct) continue;
+      if (minGapPct > 0 && Math.abs(gapPct) < minGapPct) continue;
+      const skipGapUpPe = settings.skipGapUpPe === true && gapPct > 0.15;
+      const skipGapDownCe = settings.skipGapDownCe === true && gapPct < -0.15;
+      if (skipGapUpPe || skipGapDownCe) {
+        const fh = firstHourMetrics(dayBars);
+        if (fh && ((skipGapUpPe && fh.optionType === 'PE') || (skipGapDownCe && fh.optionType === 'CE'))) {
+          continue;
+        }
+      }
+    }
 
     let entryIdx = null;
     let optionType = null;
@@ -269,14 +347,14 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
     if (variant !== 'first_hour_pe_ce') {
       throw new Error(`Unknown intraday tier variant: ${variant}`);
     }
-    const sig = findFirstHourPeCeSignal(dayBars);
+    const sig = findFirstHourPeCeSignal(dayBars, settings);
     if (!sig) continue;
     entryIdx = sig.entryIdx;
     optionType = sig.optionType;
 
     if (entryIdx == null || optionType == null) continue;
     const entryMin = getIstClock(dayBars[entryIdx][0]).minutes;
-    if (entryMin > M1100) continue; // 11:00 IST — no new entry
+    if (entryMin > M1100) continue;
     if (entryIdx >= dayBars.length - 1) continue;
 
     const entrySpot = Number(dayBars[entryIdx][4]);
