@@ -9,14 +9,6 @@ function run() {
     const { runStrategyOneBacktest } = require('../strategies/strategy1/backtest');
     return runStrategyOneBacktest(payload);
   }
-  if (strategyKey === 'strategy3_short_straddle') {
-    const { runStrategyShortStraddle } = require('../strategies/strategy2/shortStraddleBacktest');
-    return runStrategyShortStraddle(payload);
-  }
-  if (strategyKey === 'strategy3_option_chain_oi_direction') {
-    const { runStrategyThreeBacktest } = require('../strategies/strategy3/backtest');
-    return runStrategyThreeBacktest(payload);
-  }
   const { runIntradayTierBacktest } = require('../strategies/intradayTier/backtest');
   const INTRADAY_TIER_VARIANT = {
     strategy4_first_hour_pe_ce: 'first_hour_pe_ce',
@@ -32,10 +24,6 @@ function run() {
 
   if (strategyKey === 'strategy6_rising_wedge_breakdown') {
     return require('../strategies/strategy6/risingWedgeBacktest').runRisingWedgeBacktest(payload);
-  }
-
-  if (strategyKey === 'strategy7_data_pattern_intraday') {
-    return require('../strategies/strategy7/dailyPatternBacktest').runDailyPatternBacktest(payload);
   }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);

@@ -4,7 +4,7 @@
 
 const { STRATEGY_CATALOG } = require('../catalog');
 
-const BASE = { ...STRATEGY_CATALOG[6].defaults };
+const BASE = { ...STRATEGY_CATALOG[4].defaults };
 
 /** Best honest matrix: SL18/TG80 — highest 5yr net + most months >=5k. */
 let STRATEGY_SIX_PRODUCTION_ID = 'C02';

@@ -1,8 +1,6 @@
 const { parseClockMinutes, getIstClock, getWeekdayFromDateKey } = require('../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../utils/market');
 const { buildStrategyRunSummary, getSummaryFromTrades } = require('../strategies/shared/summary');
-const { runStrategyShortStraddle } = require('../strategies/strategy2/shortStraddleBacktest');
-
 function calculateEma(values, period) {
   const result = new Array(values.length).fill(null);
   if (values.length < period) return result;
@@ -743,5 +741,4 @@ module.exports = {
   runStrategyDowTheory,
   runStrategyAdxMacdReversal,
   runStrategyEmaVwapMacdHistogram,
-  runStrategyShortStraddle,
 };

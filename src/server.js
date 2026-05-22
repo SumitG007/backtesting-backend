@@ -4,7 +4,6 @@ const app = require('./app');
 const { PORT } = require('./config/constants');
 const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
 const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
-const { bootEngineFromDb: bootShortStraddleEngineFromDb } = require('./services/liveShortStraddleEngine');
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 
 async function start() {
@@ -21,13 +20,6 @@ async function start() {
   app.listen(PORT, () => {
     console.log(`Backend listening on http://localhost:${PORT}`);
   });
-  // Always-on live paper trading engine on NIFTY (short straddle).
-  bootShortStraddleEngineFromDb({ symbol: 'NIFTY' })
-    .then((result) => {
-      if (result?.ok) console.log('[Strategy2LiveEngine] auto-started for NIFTY');
-      else console.warn('[Strategy2LiveEngine] auto-start skipped:', result?.error);
-    })
-    .catch((err) => console.error('[Strategy2LiveEngine] auto-start error:', err.message));
 }
 
 start().catch((error) => {
