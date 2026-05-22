@@ -11,6 +11,7 @@ const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./par
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
 const { getCatalogEntry } = require('../../strategies/catalog');
+const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
 
 function mergeSettingsFromBody(body, catalogEntry) {
   const defaults = { ...(catalogEntry?.defaults || {}) };
@@ -135,10 +136,16 @@ function createCatalogStrategyHandlers(strategyId) {
     return getRunValidationByStrategy(req, res, catalogEntry.key);
   }
 
+  const postValidation = createPostMultiYearValidationHandler({
+    strategyKey: catalogEntry.key,
+    buildSettings: (req) => ({ settings: mergeSettingsFromBody(req.body, catalogEntry) }),
+  });
+
   return {
     runStrategy,
     getRunTrades,
     getValidation,
+    postValidation,
     catalogEntry,
   };
 }

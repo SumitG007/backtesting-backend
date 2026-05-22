@@ -3,16 +3,23 @@
  */
 
 const { health, getCandles, getCandlesDay, runBacktestStub } = require('./candlesAndHealth');
-const { runStrategyOne, getStrategyOneRunTrades, getStrategyOneValidation } = require('./strategyOneHandlers');
+const {
+  runStrategyOne,
+  getStrategyOneRunTrades,
+  getStrategyOneValidation,
+  postStrategyOneValidation,
+} = require('./strategyOneHandlers');
 const {
   runStrategyFour,
   getStrategyFourRunTrades,
   getStrategyFourValidation,
+  postStrategyFourValidation,
 } = require('./intradayTierHandlers');
 const {
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
+  postStrategyFiveValidation,
 } = require('./strategyFiveHandlers');
 module.exports = {
   health,
@@ -21,11 +28,14 @@ module.exports = {
   runStrategyOne,
   getStrategyOneRunTrades,
   getStrategyOneValidation,
+  postStrategyOneValidation,
   runStrategyFour,
   getStrategyFourRunTrades,
   getStrategyFourValidation,
+  postStrategyFourValidation,
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
+  postStrategyFiveValidation,
   runBacktestStub,
 };

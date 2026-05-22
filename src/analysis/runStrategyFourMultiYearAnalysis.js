@@ -6,7 +6,7 @@ const { fetchWithRateLimitRetry } = require('../services/dhanDataService');
 const { runBacktestInWorker } = require('../utils/runBacktestInWorker');
 const { STRATEGY_FOUR_KEY } = require('../strategies/keys');
 const { buildStrategyRunSummary } = require('../strategies/shared/summary');
-const { buildValidationReport } = require('../controllers/backtest/tradeQueries');
+const { buildValidationReport } = require('../controllers/backtest/buildValidationReport');
 
 const DEFAULT_YEARS = [2022, 2023, 2024, 2025, 2026];
 

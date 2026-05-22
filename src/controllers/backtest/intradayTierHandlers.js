@@ -11,6 +11,7 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
+const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
 
 const TIER = {
   key: STRATEGY_FOUR_KEY,
@@ -121,8 +122,14 @@ async function getStrategyFourValidation(req, res) {
   return getRunValidationByStrategy(req, res, STRATEGY_FOUR_KEY);
 }
 
+const postStrategyFourValidation = createPostMultiYearValidationHandler({
+  strategyKey: STRATEGY_FOUR_KEY,
+  buildSettings,
+});
+
 module.exports = {
   runStrategyFour,
   getStrategyFourRunTrades,
   getStrategyFourValidation,
+  postStrategyFourValidation,
 };

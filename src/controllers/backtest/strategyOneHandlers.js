@@ -11,11 +11,12 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
+const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
 
-async function runStrategyOne(req, res) {
-  try {
-    const { symbol = 'NIFTY', interval = '15', year = 2026 } = req.body || {};
-    const settings = {
+function buildSettings(req) {
+  const { symbol = 'NIFTY', interval = '15' } = req.body || {};
+  return {
+    settings: {
       symbol: String(symbol).toUpperCase(),
       interval: String(interval),
       retestPoints: parseNumberInput(req.body?.retestPoints, 1),
@@ -29,8 +30,19 @@ async function runStrategyOne(req, res) {
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
       maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 1),
-    };
+    },
+  };
+}
 
+const postStrategyOneValidation = createPostMultiYearValidationHandler({
+  strategyKey: STRATEGY_ONE_KEY,
+  buildSettings,
+});
+
+async function runStrategyOne(req, res) {
+  try {
+    const { settings } = buildSettings(req);
+    const { year = 2026 } = req.body || {};
     const yearNum = parseNumberInput(year, 2026);
     const [dailyPayload, execPayload] = await Promise.all([
       fetchWithRateLimitRetry({
@@ -108,4 +120,5 @@ module.exports = {
   runStrategyOne,
   getStrategyOneRunTrades,
   getStrategyOneValidation,
+  postStrategyOneValidation,
 };

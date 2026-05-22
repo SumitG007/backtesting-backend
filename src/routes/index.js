@@ -6,12 +6,15 @@ const {
   runStrategyOne,
   getStrategyOneRunTrades,
   getStrategyOneValidation,
+  postStrategyOneValidation,
   runStrategyFour,
   getStrategyFourRunTrades,
   getStrategyFourValidation,
+  postStrategyFourValidation,
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
+  postStrategyFiveValidation,
   runBacktestStub,
 } = require('../controllers/backtestController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -43,14 +46,17 @@ router.get('/option-chain-archive/snapshots', getSnapshotsList);
 router.get('/option-chain-archive/snapshots/:id', getSnapshotDetail);
 // Strategy 1 — implement in `strategies/strategy1/` (run currently returns 501 until wired).
 router.post('/strategy1/run', runStrategyOne);
+router.post('/strategy1/validation', postStrategyOneValidation);
 router.get('/strategy1/runs/:runId/trades', getStrategyOneRunTrades);
 router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);
 // Strategy 2 — First hour open bias (intraday tier)
 router.post('/strategy2/run', runStrategyFour);
+router.post('/strategy2/validation', postStrategyFourValidation);
 router.get('/strategy2/runs/:runId/trades', getStrategyFourRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyFourValidation);
 // Strategy 3 — IV mean reversion (intraday tier)
 router.post('/strategy3/run', runStrategyFive);
+router.post('/strategy3/validation', postStrategyFiveValidation);
 router.get('/strategy3/runs/:runId/trades', getStrategyFiveRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyFiveValidation);
 registerCatalogStrategyRoutes(router);

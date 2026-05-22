@@ -11,6 +11,7 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseOptionalPositiveNumber } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
+const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
 
 const DEFAULTS = {
   defaultInterval: '5',
@@ -115,8 +116,14 @@ async function getStrategyFiveValidation(req, res) {
   return getRunValidationByStrategy(req, res, STRATEGY_FIVE_KEY);
 }
 
+const postStrategyFiveValidation = createPostMultiYearValidationHandler({
+  strategyKey: STRATEGY_FIVE_KEY,
+  buildSettings,
+});
+
 module.exports = {
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
+  postStrategyFiveValidation,
 };

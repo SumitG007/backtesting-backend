@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 const StrategyRun = require('../../models/strategyRun');
 const StrategyTrade = require('../../models/strategyTrade');
-const { getIstClock } = require('../../utils/dateTime');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { STRATEGY_TWO_KEY } = require('../../strategies/keys');
+const { runMultiYearValidation } = require('./multiYearValidation');
+const { buildValidationReport } = require('./buildValidationReport');
+const { createRunBacktestForYear } = require('./runBacktestForYear');
 
 async function getRunTrades(req, res) {
   try {
@@ -73,107 +75,39 @@ async function getRunTradesByStrategy(req, res, strategyKey) {
   return getRunTrades(reqWithStrategy, res);
 }
 
-function buildValidationReport(trades) {
-  const ordered = [...trades].sort((a, b) => new Date(a.entryTime).getTime() - new Date(b.entryTime).getTime());
-  let equity = 0;
-  let peak = 0;
-  let maxDrawdown = 0;
-  let maxDrawdownPct = 0;
-  let grossProfit = 0;
-  let grossLoss = 0;
-  let wins = 0;
-  let losses = 0;
-  let winStreak = 0;
-  let lossStreak = 0;
-  let maxWinStreak = 0;
-  let maxLossStreak = 0;
-  const monthlyMap = new Map();
-
-  for (const trade of ordered) {
-    const pnl = Number(trade.pnl || 0);
-    equity += pnl;
-    peak = Math.max(peak, equity);
-    const dd = peak - equity;
-    maxDrawdown = Math.max(maxDrawdown, dd);
-    if (peak > 0) {
-      maxDrawdownPct = Math.max(maxDrawdownPct, (dd / peak) * 100);
-    }
-
-    if (pnl > 0) {
-      wins += 1;
-      grossProfit += pnl;
-      winStreak += 1;
-      lossStreak = 0;
-      maxWinStreak = Math.max(maxWinStreak, winStreak);
-    } else if (pnl < 0) {
-      losses += 1;
-      grossLoss += pnl;
-      lossStreak += 1;
-      winStreak = 0;
-      maxLossStreak = Math.max(maxLossStreak, lossStreak);
-    }
-
-    const ist = getIstClock(trade.entryTime);
-    const monthKey = String(ist.dateKey || '').slice(0, 7);
-    if (!monthlyMap.has(monthKey)) {
-      monthlyMap.set(monthKey, { month: monthKey, pnl: 0, trades: 0, wins: 0, losses: 0 });
-    }
-    const monthStats = monthlyMap.get(monthKey);
-    monthStats.pnl += pnl;
-    monthStats.trades += 1;
-    if (pnl > 0) monthStats.wins += 1;
-    if (pnl < 0) monthStats.losses += 1;
-  }
-
-  const totalTrades = ordered.length;
-  const netPnl = equity;
-  const avgWin = wins ? grossProfit / wins : 0;
-  const avgLoss = losses ? Math.abs(grossLoss) / losses : 0;
-  const winRate = totalTrades ? (wins / totalTrades) * 100 : 0;
-  const profitFactor = grossLoss < 0 ? grossProfit / Math.abs(grossLoss) : grossProfit > 0 ? 999 : 0;
-  const expectancy = totalTrades ? netPnl / totalTrades : 0;
-  const monthly = Array.from(monthlyMap.values())
-    .sort((a, b) => a.month.localeCompare(b.month))
-    .map((m) => ({
-      ...m,
-      pnl: Number(m.pnl.toFixed(2)),
-      winRate: m.trades ? Number(((m.wins / m.trades) * 100).toFixed(2)) : 0,
-    }));
-
-  return {
-    assumptions: [
-      'Backtest uses candle-level execution and modeled option premium movement.',
-      'Real fills, slippage, spread, IV/theta shifts, and charges can reduce live performance.',
-    ],
-    stats: {
-      totalTrades,
-      wins,
-      losses,
-      winRate: Number(winRate.toFixed(2)),
-      netPnl: Number(netPnl.toFixed(2)),
-      grossProfit: Number(grossProfit.toFixed(2)),
-      grossLoss: Number(grossLoss.toFixed(2)),
-      profitFactor: Number(profitFactor.toFixed(2)),
-      expectancy: Number(expectancy.toFixed(2)),
-      avgWin: Number(avgWin.toFixed(2)),
-      avgLoss: Number(avgLoss.toFixed(2)),
-      maxDrawdown: Number(maxDrawdown.toFixed(2)),
-      maxDrawdownPct: Number(maxDrawdownPct.toFixed(2)),
-      maxWinStreak,
-      maxLossStreak,
-    },
-    monthly,
-  };
-}
-
 async function getRunValidationByStrategy(req, res, strategyKey) {
   try {
     const { runId } = req.params;
-    const query = { runId, strategyKey };
-    const trades = await StrategyTrade.find(query).sort({ entryTime: 1 }).lean();
-    const report = buildValidationReport(trades);
-    return res.json({ ok: true, runId, strategyKey, validation: report });
+    const run = await StrategyRun.findById(runId).select('strategyKey settings').lean();
+    if (!run) {
+      return res.status(404).json({ ok: false, error: 'Run not found' });
+    }
+    if (run.strategyKey !== strategyKey) {
+      return res.status(400).json({ ok: false, error: 'Run does not match this strategy' });
+    }
+    const settings = run.settings || {};
+    const report = await runMultiYearValidation({
+      strategyKey,
+      settings,
+      runBacktestForYear: createRunBacktestForYear(strategyKey),
+    });
+    return res.json({
+      ok: true,
+      runId,
+      strategyKey,
+      validation: report.validation,
+      byYear: report.byYear,
+      years: report.years,
+      errors: report.errors,
+    });
   } catch (error) {
+    if (error.response) {
+      return res.status(error.response.status).json({
+        ok: false,
+        error: 'Dhan API error',
+        details: error.response.data,
+      });
+    }
     return res.status(500).json({ ok: false, error: error.message });
   }
 }
