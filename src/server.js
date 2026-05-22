@@ -5,6 +5,7 @@ const { PORT } = require('./config/constants');
 const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
 const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
+const { scheduleAutoRecorder } = require('./services/optionChainArchiveService');
 
 async function start() {
   const mongoUri = process.env.MONGODB_URI;
@@ -17,6 +18,7 @@ async function start() {
   await hydrateDhanTokenFromMongo();
   scheduleDhanTokenMaintenance();
   scheduleNseHolidayRefresh();
+  await scheduleAutoRecorder();
   app.listen(PORT, () => {
     console.log(`Backend listening on http://localhost:${PORT}`);
   });
