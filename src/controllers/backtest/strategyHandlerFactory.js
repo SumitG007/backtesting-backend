@@ -9,6 +9,7 @@ const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
+const { mapTradesForInsert } = require('./tradePersistence');
 const { getCatalogEntry } = require('../../strategies/catalog');
 
 function mergeSettingsFromBody(body, catalogEntry) {
@@ -92,13 +93,7 @@ function createCatalogStrategyHandlers(strategyId) {
 
       if (result.trades.length > 0) {
         await StrategyTrade.insertMany(
-          result.trades.map((t) => ({
-            ...t,
-            runId: runDoc._id,
-            strategyKey: catalogEntry.key,
-            entryTime: new Date(t.entryTime),
-            exitTime: new Date(t.exitTime),
-          }))
+          mapTradesForInsert(result.trades, runDoc._id, catalogEntry.key),
         );
       }
 

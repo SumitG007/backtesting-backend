@@ -7,6 +7,7 @@
 const { getIstClock } = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
+const { computeSessionHighLow } = require('../shared/sessionRange');
 const { shortStraddleMarginBlocked } = require('../shared/shortStraddleMargin');
 
 const M915 = 555;
@@ -377,6 +378,7 @@ function runIvMeanReversionBacktest({ candles, settings }) {
       pnl: Number(pnl.toFixed(2)),
       pnlPct: marginBlocked > 0 ? Number(((pnl / marginBlocked) * 100).toFixed(2)) : 0,
       reason: ex.reason,
+      ...computeSessionHighLow(dayBars),
       entryIvProxy: Number(entryIv.toFixed(2)),
       medianIvProxy: Number(medianIv.toFixed(2)),
     });

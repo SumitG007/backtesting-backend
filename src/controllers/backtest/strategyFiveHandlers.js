@@ -10,6 +10,7 @@ const { STRATEGY_FIVE_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseOptionalPositiveNumber } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
+const { mapTradesForInsert } = require('./tradePersistence');
 
 const DEFAULTS = {
   defaultInterval: '5',
@@ -72,13 +73,7 @@ async function runStrategyFive(req, res) {
 
     if (result.trades.length > 0) {
       await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          ...t,
-          runId: runDoc._id,
-          strategyKey: STRATEGY_FIVE_KEY,
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-        })),
+        mapTradesForInsert(result.trades, runDoc._id, STRATEGY_FIVE_KEY),
       );
     }
 

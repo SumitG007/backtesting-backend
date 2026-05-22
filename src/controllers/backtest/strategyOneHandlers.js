@@ -10,6 +10,7 @@ const { STRATEGY_ONE_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
+const { mapTradesForInsert } = require('./tradePersistence');
 
 async function runStrategyOne(req, res) {
   try {
@@ -20,7 +21,7 @@ async function runStrategyOne(req, res) {
       retestPoints: parseNumberInput(req.body?.retestPoints, 1),
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPoints: parseNumberInput(req.body?.stopLossPoints, 0),
-      targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 10),
+      targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, 20),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 1),
@@ -62,13 +63,7 @@ async function runStrategyOne(req, res) {
 
     if (result.trades.length > 0) {
       await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          ...t,
-          runId: runDoc._id,
-          strategyKey: STRATEGY_ONE_KEY,
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-        }))
+        mapTradesForInsert(result.trades, runDoc._id, STRATEGY_ONE_KEY),
       );
     }
 

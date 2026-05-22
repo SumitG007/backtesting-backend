@@ -3,6 +3,7 @@
  */
 
 const { getIstClock } = require('../../utils/dateTime');
+const { computeSessionHighLow } = require('./sessionRange');
 const { getOptionPremiumFromSpotMove } = require('../../utils/market');
 
 function buildIntradayByDay(rows) {
@@ -241,6 +242,7 @@ function buildLongOptionTrade({
     pnl: Number(pnl.toFixed(2)),
     pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
     reason,
+    ...computeSessionHighLow(dayBars),
     ...extra,
   };
 }

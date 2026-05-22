@@ -24,7 +24,6 @@ const {
   getSnapshotDetail,
   getStats: getOptionChainArchiveStats,
 } = require('../controllers/optionChainArchiveController');
-const { runStrategyFourAnalysis } = require('../controllers/strategyFourAnalysisController');
 const { registerCatalogStrategyRoutes } = require('../controllers/backtest/registerCatalogRoutes');
 
 const router = express.Router();
@@ -50,7 +49,6 @@ router.get('/strategy1/runs/:runId/validation', getStrategyOneValidation);
 router.post('/strategy2/run', runStrategyFour);
 router.get('/strategy2/runs/:runId/trades', getStrategyFourRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyFourValidation);
-router.post('/strategy2/analysis', runStrategyFourAnalysis);
 // Strategy 3 — IV mean reversion (intraday tier)
 router.post('/strategy3/run', runStrategyFive);
 router.get('/strategy3/runs/:runId/trades', getStrategyFiveRunTrades);

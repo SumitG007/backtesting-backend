@@ -7,6 +7,7 @@
 const { getIstClock } = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
+const { computeSessionHighLow } = require('../shared/sessionRange');
 
 function candleTouchesBand(high, low, bandLow, bandHigh) {
   return high >= bandLow && low <= bandHigh;
@@ -230,6 +231,7 @@ function runStrategyOneBacktest({ dailyCandles, execCandles, settings }) {
     const finalValue = exitPremium * lotSize * lotCount;
     const rawPnl = finalValue - invested;
     const pnl = rawPnl - perTradeCost;
+    const sessionRange = computeSessionHighLow(dayBars);
 
     trades.push({
       pair: symbol,
@@ -266,6 +268,7 @@ function runStrategyOneBacktest({ dailyCandles, execCandles, settings }) {
       pnl: Number(pnl.toFixed(2)),
       pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
       reason,
+      ...sessionRange,
     });
   }
 

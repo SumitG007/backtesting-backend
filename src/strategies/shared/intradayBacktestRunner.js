@@ -12,6 +12,7 @@ const {
   buildLongOptionTrade,
   parseCommonOptionSettings,
 } = require('./intradayOptions');
+const { computeSessionHighLow } = require('./sessionRange');
 
 function premiumAt({ side, entrySpot, currentSpot, entryPremium, strike, strikeStep, premiumLeverage }) {
   return getOptionPremiumFromSpotMove({
@@ -152,6 +153,7 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
           pnl: Number(pnl.toFixed(2)),
           pnlPct: credit > 0 ? Number(((pnl / credit) * 100).toFixed(2)) : 0,
           reason,
+          ...computeSessionHighLow(dayBars),
         });
         dayTrades += 1;
         lastEntry = entryIdx;

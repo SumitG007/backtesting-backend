@@ -5,6 +5,7 @@
 const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
+const { computeSessionHighLow } = require('../shared/sessionRange');
 
 const M915 = 555;
 const M1000 = 600; // 10:00
@@ -282,6 +283,7 @@ function pushTrade({
     pnl: Number(pnl.toFixed(2)),
     pnlPct: invested > 0 ? Number(((pnl / invested) * 100).toFixed(2)) : 0,
     reason,
+    ...computeSessionHighLow(dayBars),
   });
 }
 

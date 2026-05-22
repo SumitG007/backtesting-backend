@@ -10,6 +10,7 @@ const { STRATEGY_FOUR_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
+const { mapTradesForInsert } = require('./tradePersistence');
 
 const TIER = {
   key: STRATEGY_FOUR_KEY,
@@ -79,15 +80,7 @@ async function runStrategyFour(req, res) {
     });
 
     if (result.trades.length > 0) {
-      await StrategyTrade.insertMany(
-        result.trades.map((t) => ({
-          ...t,
-          runId: runDoc._id,
-          strategyKey: TIER.key,
-          entryTime: new Date(t.entryTime),
-          exitTime: new Date(t.exitTime),
-        })),
-      );
+      await StrategyTrade.insertMany(mapTradesForInsert(result.trades, runDoc._id, TIER.key));
     }
 
     const pageSize = 25;
