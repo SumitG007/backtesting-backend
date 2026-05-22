@@ -16,8 +16,9 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 const TIER = {
   key: STRATEGY_FOUR_KEY,
   runName: 'Strategy 4 - First Hour Open Bias',
-  defaultSl: 22,
-  defaultTg: 70,
+  defaultSl: 20,
+  defaultSignal: 70,
+  defaultTrail: 30,
   defaultInterval: '5',
 };
 
@@ -32,7 +33,11 @@ function buildSettings(req) {
       interval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPoints: parseNumberInput(req.body?.stopLossPoints, TIER.defaultSl),
-      targetProfitPoints: parseNumberInput(req.body?.targetProfitPoints, TIER.defaultTg),
+      signalPoints: parseNumberInput(
+        req.body?.signalPoints ?? req.body?.targetProfitPoints,
+        TIER.defaultSignal,
+      ),
+      trailPoints: parseNumberInput(req.body?.trailPoints, TIER.defaultTrail),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 1),

@@ -134,9 +134,11 @@ function simulateExitPeCe({
   entrySpot,
   entryPremium,
   stopPremium,
-  targetPremium,
   hasStopLoss,
-  hasTarget,
+  hasSignal,
+  signalPoints,
+  hasTrail,
+  trailPoints,
   premiumLeverage,
   strike,
   strikeStep,
@@ -154,6 +156,7 @@ function simulateExitPeCe({
     strikeStep,
   });
   let reason = 'DAY_CLOSE';
+  let peakFavorablePremium = entryPremium;
 
   for (let k = entryIdx + 1; k < dayBars.length; k += 1) {
     const hi = Number(dayBars[k][2]);
@@ -161,6 +164,18 @@ function simulateExitPeCe({
     const c = Number(dayBars[k][4]);
     const kMin = getIstClock(dayBars[k][0]).minutes;
     if (![hi, lo, c].every(Number.isFinite)) continue;
+
+    const favSpot = optionType === 'CE' ? hi : lo;
+    const favPrem = getOptionPremiumFromSpotMove({
+      side: premiumSide,
+      entrySpot,
+      currentSpot: favSpot,
+      entryPremium,
+      premiumLeverage,
+      strike,
+      strikeStep,
+    });
+    if (favPrem > peakFavorablePremium) peakFavorablePremium = favPrem;
 
     if (hasStopLoss && stopPremium != null) {
       const adverseSpot = optionType === 'CE' ? lo : hi;
@@ -182,22 +197,25 @@ function simulateExitPeCe({
       }
     }
 
-    if (hasTarget && targetPremium != null) {
-      const favSpot = optionType === 'CE' ? hi : lo;
-      const favPrem = getOptionPremiumFromSpotMove({
+    const peakProfitPts = peakFavorablePremium - entryPremium;
+    const signalReached = hasSignal && signalPoints > 0 && peakProfitPts >= signalPoints;
+    if (hasTrail && trailPoints > 0 && signalReached) {
+      const trailStopPremium = Math.max(0.05, peakFavorablePremium - trailPoints);
+      const adverseSpot = optionType === 'CE' ? lo : hi;
+      const adversePrem = getOptionPremiumFromSpotMove({
         side: premiumSide,
         entrySpot,
-        currentSpot: favSpot,
+        currentSpot: adverseSpot,
         entryPremium,
         premiumLeverage,
         strike,
         strikeStep,
       });
-      if (favPrem >= targetPremium) {
+      if (adversePrem <= trailStopPremium) {
         exitIdx = k;
-        exitSpot = favSpot;
-        exitPremium = targetPremium;
-        reason = 'TARGET';
+        exitSpot = adverseSpot;
+        exitPremium = trailStopPremium;
+        reason = 'TRAIL_STOP';
         break;
       }
     }
@@ -301,9 +319,12 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
   const rawSl = Number(settings.stopLossPoints);
   const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
   const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSl)) : 0;
-  const rawTg = Number(settings.targetProfitPoints);
-  const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
-  const targetPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
+  const rawSignal = Number(settings.signalPoints ?? settings.targetProfitPoints);
+  const hasSignal = Number.isFinite(rawSignal) && rawSignal > 0;
+  const signalPoints = hasSignal ? Math.min(5000, Math.max(0.01, rawSignal)) : 0;
+  const rawTrail = Number(settings.trailPoints);
+  const hasTrail = Number.isFinite(rawTrail) && rawTrail > 0;
+  const trailPoints = hasTrail ? Math.min(5000, Math.max(0.01, rawTrail)) : 0;
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
@@ -365,7 +386,7 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
     const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
     const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
 
-    const targetPremium = hasTarget ? entryPremium + targetPoints : null;
+    const signalPremium = hasSignal ? entryPremium + signalPoints : null;
     const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
     const { exitIdx, exitSpot, exitPremium, reason } = simulateExitPeCe({
       dayBars,
@@ -374,9 +395,11 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
       entrySpot,
       entryPremium,
       stopPremium,
-      targetPremium,
       hasStopLoss,
-      hasTarget,
+      hasSignal,
+      signalPoints,
+      hasTrail,
+      trailPoints,
       premiumLeverage,
       strike,
       strikeStep,
@@ -399,8 +422,8 @@ function runIntradayTierBacktest({ candles, settings, variant }) {
       perTradeCost,
       hasStopLoss,
       stopPremium,
-      hasTarget,
-      targetPremium,
+      hasTarget: hasSignal,
+      targetPremium: signalPremium,
       strike,
     });
   }

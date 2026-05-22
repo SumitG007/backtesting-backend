@@ -12,6 +12,7 @@
     "discover:market": "node scripts/runMarketDiscovery.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
     "cache:candles": "node scripts/saveCandleCache.js",
+    "analyze:s1": "node scripts/analyzeStrategy1DayRange.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

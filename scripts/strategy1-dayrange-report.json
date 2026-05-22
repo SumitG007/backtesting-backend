@@ -1,0 +1,328 @@
+{
+  "generatedAt": "2026-05-22T11:39:45.547Z",
+  "settings": {
+    "symbol": "NIFTY",
+    "interval": "15",
+    "retestPoints": 1,
+    "strikeMode": "ATM",
+    "stopLossPoints": 0,
+    "targetProfitPoints": 20,
+    "basePremiumPct": 0.5,
+    "premiumLeverage": 8,
+    "lotCount": 1,
+    "lotSize": 65,
+    "strikeStep": 100,
+    "perTradeCost": 100,
+    "maxTradesPerDay": 1
+  },
+  "baseline": {
+    "trades": 622,
+    "wins": 400,
+    "losses": 222,
+    "winRate": 64.31,
+    "netPnl": -79517.57,
+    "avgWin": 1107.35,
+    "avgLoss": 2353.41,
+    "profitFactor": 0.85
+  },
+  "byYear": {
+    "2022": {
+      "trades": 131,
+      "wins": 84,
+      "losses": 47,
+      "winRate": 64.12,
+      "netPnl": -22412.97,
+      "avgWin": 1082.76,
+      "avgLoss": 2412.02,
+      "profitFactor": 0.8
+    },
+    "2023": {
+      "trades": 142,
+      "wins": 82,
+      "losses": 60,
+      "winRate": 57.75,
+      "netPnl": -26878.43,
+      "avgWin": 1029.01,
+      "avgLoss": 1854.29,
+      "profitFactor": 0.76
+    },
+    "2024": {
+      "trades": 163,
+      "wins": 108,
+      "losses": 55,
+      "winRate": 66.26,
+      "netPnl": -26505.35,
+      "avgWin": 1136.24,
+      "avgLoss": 2713.08,
+      "profitFactor": 0.82
+    },
+    "2025": {
+      "trades": 139,
+      "wins": 96,
+      "losses": 43,
+      "winRate": 69.06,
+      "netPnl": 6727.26,
+      "avgWin": 1143.91,
+      "avgLoss": 2397.39,
+      "profitFactor": 1.07
+    },
+    "2026": {
+      "trades": 47,
+      "wins": 30,
+      "losses": 17,
+      "winRate": 63.83,
+      "netPnl": -10448.08,
+      "avgWin": 1169.3,
+      "avgLoss": 2678.06,
+      "profitFactor": 0.77
+    }
+  },
+  "byExitReason": {
+    "TARGET": {
+      "trades": 353,
+      "wins": 353,
+      "losses": 0,
+      "winRate": 100,
+      "netPnl": 423600,
+      "avgWin": 1200,
+      "avgLoss": 0,
+      "profitFactor": 999
+    },
+    "DAY_CLOSE": {
+      "trades": 269,
+      "wins": 47,
+      "losses": 222,
+      "winRate": 17.47,
+      "netPnl": -503117.57,
+      "avgWin": 411.48,
+      "avgLoss": 2353.41,
+      "profitFactor": 0.04
+    }
+  },
+  "excursionSummary": {
+    "analyzed": 622,
+    "avgDayRange": 222.09,
+    "avgMaxFavPremPts": 34.83,
+    "avgMaxAdvPremPts": 32.96,
+    "avgLeftOnTableWinners": 30.98,
+    "avgExtraPainLosers": 15.85,
+    "loserAdvP50": 44.04,
+    "loserAdvP75": 71.11,
+    "loserAdvP90": 101.05,
+    "allAdvP75": 47.59,
+    "winnerLeftP50": 17.56
+  },
+  "slGridTarget20": [
+    {
+      "stopLossPoints": 0,
+      "targetProfitPoints": 20,
+      "netPnl": -79518.93,
+      "exits": {
+        "TARGET": 353,
+        "DAY_CLOSE": 269
+      }
+    },
+    {
+      "stopLossPoints": 8,
+      "targetProfitPoints": 20,
+      "netPnl": -39852.05,
+      "exits": {
+        "TARGET": 178,
+        "STOP_LOSS": 420,
+        "DAY_CLOSE": 24
+      }
+    },
+    {
+      "stopLossPoints": 10,
+      "targetProfitPoints": 20,
+      "netPnl": -35990.98,
+      "exits": {
+        "TARGET": 206,
+        "STOP_LOSS": 386,
+        "DAY_CLOSE": 30
+      }
+    },
+    {
+      "stopLossPoints": 12,
+      "targetProfitPoints": 20,
+      "netPnl": -51282.3,
+      "exits": {
+        "TARGET": 220,
+        "STOP_LOSS": 365,
+        "DAY_CLOSE": 37
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 20,
+      "netPnl": -38586.92,
+      "exits": {
+        "TARGET": 250,
+        "DAY_CLOSE": 51,
+        "STOP_LOSS": 321
+      }
+    },
+    {
+      "stopLossPoints": 18,
+      "targetProfitPoints": 20,
+      "netPnl": -54527.57,
+      "exits": {
+        "TARGET": 262,
+        "DAY_CLOSE": 70,
+        "STOP_LOSS": 290
+      }
+    },
+    {
+      "stopLossPoints": 20,
+      "targetProfitPoints": 20,
+      "netPnl": -56269.5,
+      "exits": {
+        "TARGET": 273,
+        "DAY_CLOSE": 76,
+        "STOP_LOSS": 273
+      }
+    },
+    {
+      "stopLossPoints": 25,
+      "targetProfitPoints": 20,
+      "netPnl": -73703.17,
+      "exits": {
+        "TARGET": 293,
+        "DAY_CLOSE": 88,
+        "STOP_LOSS": 241
+      }
+    },
+    {
+      "stopLossPoints": 30,
+      "targetProfitPoints": 20,
+      "netPnl": -70729.24,
+      "exits": {
+        "TARGET": 311,
+        "DAY_CLOSE": 106,
+        "STOP_LOSS": 205
+      }
+    }
+  ],
+  "tgGridSl15": [
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 10,
+      "netPnl": -56083.05,
+      "exits": {
+        "TARGET": 366,
+        "DAY_CLOSE": 17,
+        "STOP_LOSS": 239
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 15,
+      "netPnl": -58594.15,
+      "exits": {
+        "TARGET": 296,
+        "DAY_CLOSE": 32,
+        "STOP_LOSS": 294
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 20,
+      "netPnl": -38586.92,
+      "exits": {
+        "TARGET": 250,
+        "DAY_CLOSE": 51,
+        "STOP_LOSS": 321
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 25,
+      "netPnl": -16071.01,
+      "exits": {
+        "TARGET": 217,
+        "DAY_CLOSE": 69,
+        "STOP_LOSS": 336
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 30,
+      "netPnl": -14573.18,
+      "exits": {
+        "TARGET": 179,
+        "DAY_CLOSE": 90,
+        "STOP_LOSS": 353
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 40,
+      "netPnl": 9548.01,
+      "exits": {
+        "TARGET": 136,
+        "DAY_CLOSE": 117,
+        "STOP_LOSS": 369
+      }
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 50,
+      "netPnl": 35614.15,
+      "exits": {
+        "TARGET": 105,
+        "DAY_CLOSE": 140,
+        "STOP_LOSS": 377
+      }
+    }
+  ],
+  "topCombos": [
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 30,
+      "netPnl": -14573.18
+    },
+    {
+      "stopLossPoints": 15,
+      "targetProfitPoints": 25,
+      "netPnl": -16071.01
+    },
+    {
+      "stopLossPoints": 20,
+      "targetProfitPoints": 30,
+      "netPnl": -32220.67
+    },
+    {
+      "stopLossPoints": 20,
+      "targetProfitPoints": 25,
+      "netPnl": -32284.59
+    },
+    {
+      "stopLossPoints": 18,
+      "targetProfitPoints": 25,
+      "netPnl": -32427.66
+    },
+    {
+      "stopLossPoints": 18,
+      "targetProfitPoints": 30,
+      "netPnl": -32462.07
+    },
+    {
+      "stopLossPoints": 12,
+      "targetProfitPoints": 30,
+      "netPnl": -34718.05
+    },
+    {
+      "stopLossPoints": 12,
+      "targetProfitPoints": 25,
+      "netPnl": -38294.02
+    }
+  ],
+  "findings": [
+    "Many exits are DAY_CLOSE (269 trades, net Rs -503117.57) — with SL=0 losers ride full session move.",
+    "TARGET hits (353) avg win Rs 1200 — capped at 20 premium pts.",
+    "Losers had median adverse premium excursion 44.04 pts (P75 71.11) — SL near 15–18 pts cuts tail risk.",
+    "Winners left median Rs 17.56 premium on table vs exit — target 20–30 pts balances.",
+    "Best SL-only grid (target 20): SL 10 → net Rs -35990.98.",
+    "Best SL+target combo replay: SL 15 / target 30 → net Rs -14573.18."
+  ]
+}
