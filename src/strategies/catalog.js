@@ -1,8 +1,10 @@
 /**
- * Catalog strategy — Strategy 4 (bearish breakdown). Stable Mongo key unchanged for old runs.
+ * Catalog strategies — Strategy 4 (bearish breakdown), Strategy 5 (Kukki V2).
+ * Mongo keys stay stable so old runs stay readable.
  */
 
 const STRATEGY_FOUR_KEY = 'strategy6_rising_wedge_breakdown';
+const STRATEGY_FIVE_KUKKI_KEY = 'strategy5_kukki_v2_intraday';
 
 const COMMON_DEFAULTS = {
   symbol: 'NIFTY',
@@ -51,6 +53,34 @@ const STRATEGY_CATALOG = {
       maxTradesPerDay: 1,
     },
   },
+  5: {
+    id: 5,
+    key: STRATEGY_FIVE_KUKKI_KEY,
+    label: 'Strategy 5 - Kukki V2 Long + Short Intraday',
+    shortName: 'Kukki V2',
+    implemented: true,
+    defaultInterval: '5',
+    defaults: {
+      ...COMMON_DEFAULTS,
+      interval: '5',
+      stopLossPoints: 0,
+      targetProfitPoints: 0,
+      maxTradesPerDay: 6,
+      minBarsBetweenTrades: 2,
+      entryFromTime: '09:30',
+      entryToTime: '14:30',
+      emaFast: 9,
+      emaSlow: 21,
+      adxLength: 14,
+      adxSmoothing: 10,
+      minAdx: 20,
+      macdFast: 12,
+      macdSlow: 26,
+      macdSignal: 9,
+      breakLookbackBars: 3,
+      usePatternExits: false,
+    },
+  },
 };
 
 function getCatalogEntry(strategyId) {
@@ -68,4 +98,5 @@ module.exports = {
   getCatalogEntry,
   getImplementedCatalogIds,
   STRATEGY_FOUR_KEY,
+  STRATEGY_FIVE_KUKKI_KEY,
 };

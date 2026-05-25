@@ -161,6 +161,63 @@ function calculateStochastic(bars, kPeriod, dPeriod) {
   return { k, d };
 }
 
+function calculateDmi(highs, lows, closes, length = 14, smoothing = 10) {
+  const n = highs.length;
+  const tr = new Array(n).fill(0);
+  const plusDm = new Array(n).fill(0);
+  const minusDm = new Array(n).fill(0);
+  for (let i = 1; i < n; i += 1) {
+    const upMove = highs[i] - highs[i - 1];
+    const downMove = lows[i - 1] - lows[i];
+    plusDm[i] = upMove > downMove && upMove > 0 ? upMove : 0;
+    minusDm[i] = downMove > upMove && downMove > 0 ? downMove : 0;
+    const highLow = highs[i] - lows[i];
+    const highClose = Math.abs(highs[i] - closes[i - 1]);
+    const lowClose = Math.abs(lows[i] - closes[i - 1]);
+    tr[i] = Math.max(highLow, highClose, lowClose);
+  }
+  const diplus = new Array(n).fill(null);
+  const diminus = new Array(n).fill(null);
+  const dx = new Array(n).fill(null);
+  let atr = 0;
+  let pdm = 0;
+  let mdm = 0;
+  for (let i = 1; i <= length; i += 1) {
+    atr += tr[i] || 0;
+    pdm += plusDm[i] || 0;
+    mdm += minusDm[i] || 0;
+  }
+  for (let i = length; i < n; i += 1) {
+    if (i > length) {
+      atr = atr - atr / length + (tr[i] || 0);
+      pdm = pdm - pdm / length + (plusDm[i] || 0);
+      mdm = mdm - mdm / length + (minusDm[i] || 0);
+    }
+    const plus = atr > 0 ? (100 * pdm) / atr : 0;
+    const minus = atr > 0 ? (100 * mdm) / atr : 0;
+    diplus[i] = plus;
+    diminus[i] = minus;
+    const sum = plus + minus;
+    dx[i] = sum > 0 ? (100 * Math.abs(plus - minus)) / sum : 0;
+  }
+  const adx = new Array(n).fill(null);
+  const start = length * 2 - 1;
+  let seed = 0;
+  let count = 0;
+  for (let i = length; i <= Math.min(start, n - 1); i += 1) {
+    if (Number.isFinite(dx[i])) {
+      seed += dx[i];
+      count += 1;
+    }
+  }
+  if (count > 0 && start < n) adx[start] = seed / count;
+  for (let i = start + 1; i < n; i += 1) {
+    const prev = adx[i - 1];
+    adx[i] = Number.isFinite(prev) ? (prev * (smoothing - 1) + (dx[i] || 0)) / smoothing : dx[i];
+  }
+  return { diplus, diminus, adx };
+}
+
 function calculateMacd(closes, fast, slow, signal) {
   const emaFast = calculateEma(closes, fast);
   const emaSlow = calculateEma(closes, slow);
@@ -182,5 +239,6 @@ module.exports = {
   calculateSma,
   calculateBollinger,
   calculateStochastic,
+  calculateDmi,
   calculateMacd,
 };

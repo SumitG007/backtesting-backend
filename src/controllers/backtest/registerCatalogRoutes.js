@@ -5,7 +5,7 @@
 const { createCatalogStrategyHandlers } = require('./strategyHandlerFactory');
 
 function registerCatalogStrategyRoutes(router) {
-  for (const id of [4]) {
+  for (const id of [4, 5]) {
     const { runStrategy, getRunTrades, getValidation, postValidation } = createCatalogStrategyHandlers(id);
     router.post(`/strategy${id}/run`, runStrategy);
     router.post(`/strategy${id}/validation`, postValidation);
