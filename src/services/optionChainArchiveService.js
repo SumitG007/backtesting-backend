@@ -2,7 +2,7 @@ const OptionChainSnapshot = require('../models/optionChainSnapshot');
 const { ensureOptionChainIndexes } = require('../models/optionChainSnapshot');
 const { fetchOptionChain } = require('./dhanLiveService');
 const { resolveSymbolConfig } = require('../utils/market');
-const { getIstClock, isWeekendDateKey, sleep } = require('../utils/dateTime');
+const { getIstClock, isWeekendDateKey, sleep, buildIstWallClockTimestamp } = require('../utils/dateTime');
 const { isNseCashTradingDay } = require('./nseHolidayService');
 const {
   DEFAULT_ARCHIVE_EXPIRIES,
@@ -12,8 +12,12 @@ const {
   FETCH_MAX_ATTEMPTS,
   FETCH_RETRY_DELAYS_MS,
   DB_SAVE_MAX_ATTEMPTS,
-  MARKET_OPEN_MINUTES,
-  MARKET_CLOSE_MINUTES,
+  ALLOWED_CAPTURE_MINUTES,
+  ALLOWED_IST_TIME_KEYS,
+  CAPTURE_TIME_SLOTS,
+  formatIstTimeKey,
+  minutesFromIstTimeKey,
+  isOutsideCaptureZones,
 } = require('../config/optionChainArchive');
 
 function num(v) {
@@ -116,18 +120,119 @@ function validateArchiveSetup() {
   }
 }
 
-function isWithinNseCashSession() {
-  const now = new Date();
+function isAllowedCaptureMinute(minutes) {
+  return ALLOWED_CAPTURE_MINUTES.includes(minutes);
+}
+
+function isWithinCaptureWindow(now = new Date()) {
   const clock = getIstClock(now.toISOString());
   if (!isNseCashTradingDay(clock.dateKey)) return false;
-  return clock.minutes >= MARKET_OPEN_MINUTES && clock.minutes <= MARKET_CLOSE_MINUTES;
+  return isAllowedCaptureMinute(clock.minutes);
+}
+
+/** @deprecated alias */
+function isWithinNseCashSession() {
+  return isWithinCaptureWindow();
+}
+
+function normalizeIstTimeQuery(raw) {
+  const s = String(raw || '').trim();
+  const m = /^(\d{1,2}):(\d{2})$/.exec(s);
+  if (!m) return null;
+  const minutes = Number(m[1]) * 60 + Number(m[2]);
+  if (isOutsideCaptureZones(minutes)) return null;
+  const key = formatIstTimeKey(minutes);
+  return ALLOWED_IST_TIME_KEYS.includes(key) ? key : null;
+}
+
+function istMinuteUtcRange(dateKey, timeKey) {
+  const minutes = minutesFromIstTimeKey(timeKey);
+  if (!Number.isFinite(minutes)) return null;
+  const startMs = buildIstWallClockTimestamp(dateKey, minutes);
+  const endMs = buildIstWallClockTimestamp(dateKey, minutes + 1);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+  return { start: new Date(startMs), end: new Date(endMs) };
+}
+
+function deriveIstTimeFromRow(row) {
+  if (row?.istTime && ALLOWED_IST_TIME_KEYS.includes(row.istTime)) return row.istTime;
+  const clock = getIstClock(row.capturedAt);
+  if (isOutsideCaptureZones(clock.minutes)) return null;
+  return formatIstTimeKey(clock.minutes);
+}
+
+async function findSnapshotAtSlot({ symbol, expiry, dateKey, istTime }) {
+  const sym = String(symbol).toUpperCase();
+  const exp = String(expiry).slice(0, 10);
+  const timeKey = normalizeIstTimeQuery(istTime);
+  if (!timeKey) return null;
+
+  const dayKey = dateKey
+    ? String(dateKey).slice(0, 10)
+    : getIstClock(new Date().toISOString()).dateKey;
+
+  let row = await OptionChainSnapshot.findOne({
+    symbol: sym,
+    expiry: exp,
+    dateKey: dayKey,
+    istTime: timeKey,
+  })
+    .sort({ capturedAt: -1 })
+    .lean();
+
+  if (row) return row;
+
+  const range = istMinuteUtcRange(dayKey, timeKey);
+  if (!range) return null;
+
+  row = await OptionChainSnapshot.findOne({
+    symbol: sym,
+    expiry: exp,
+    dateKey: dayKey,
+    capturedAt: { $gte: range.start, $lt: range.end },
+  })
+    .sort({ capturedAt: -1 })
+    .lean();
+
+  return row;
+}
+
+async function findLatestInWindowSnapshot({ symbol, expiry, dateKey }) {
+  const sym = String(symbol).toUpperCase();
+  const exp = String(expiry).slice(0, 10);
+  const dayKey = dateKey
+    ? String(dateKey).slice(0, 10)
+    : getIstClock(new Date().toISOString()).dateKey;
+
+  let row = await OptionChainSnapshot.findOne({
+    symbol: sym,
+    expiry: exp,
+    dateKey: dayKey,
+    istTime: { $in: ALLOWED_IST_TIME_KEYS },
+  })
+    .sort({ capturedAt: -1 })
+    .lean();
+
+  if (row) return row;
+
+  const candidates = await OptionChainSnapshot.find({ symbol: sym, expiry: exp, dateKey: dayKey })
+    .sort({ capturedAt: -1 })
+    .limit(80)
+    .lean();
+
+  return (
+    candidates.find((doc) => {
+      const clock = getIstClock(doc.capturedAt);
+      return !isOutsideCaptureZones(clock.minutes);
+    }) || null
+  );
 }
 
 const recorderState = {
   running: false,
   symbol: DEFAULT_ARCHIVE_SYMBOL,
   expiries: [...DEFAULT_ARCHIVE_EXPIRIES],
-  onlyMarketHours: true,
+  onlyCaptureWindows: true,
   loopTask: null,
   startedAt: null,
   lastCycleAt: null,
@@ -176,6 +281,14 @@ async function fetchOptionChainWithRetry({ symbol, expiry }) {
 async function saveChainSnapshot({ symbol, expiry, chainData, recorderRunId }) {
   const capturedAt = new Date();
   const clock = getIstClock(capturedAt.toISOString());
+
+  if (!isAllowedCaptureMinute(clock.minutes)) {
+    throw Object.assign(new Error('Snapshot outside capture windows (9:15–9:30 or 15:15–15:30 IST)'), {
+      code: 'OUTSIDE_CAPTURE_WINDOW',
+    });
+  }
+
+  const istTime = formatIstTimeKey(clock.minutes);
   const flat = flattenOptionChain(chainData);
 
   if (flat.strikes.length === 0) {
@@ -187,10 +300,10 @@ async function saveChainSnapshot({ symbol, expiry, chainData, recorderRunId }) {
     expiry: String(expiry).slice(0, 10),
     capturedAt,
     dateKey: clock.dateKey,
+    istTime,
     spot: flat.spot,
     strikeCount: flat.strikes.length,
     strikes: flat.strikes,
-    rawOc: flat.rawOc,
     source: 'dhan-optionchain',
     recorderRunId: recorderRunId || null,
   };
@@ -199,9 +312,29 @@ async function saveChainSnapshot({ symbol, expiry, chainData, recorderRunId }) {
   for (let attempt = 0; attempt < DB_SAVE_MAX_ATTEMPTS; attempt += 1) {
     try {
       if (attempt > 0) await sleep(1000 * attempt);
+      const existing = await OptionChainSnapshot.findOne({
+        symbol: docPayload.symbol,
+        expiry: docPayload.expiry,
+        dateKey: docPayload.dateKey,
+        istTime: docPayload.istTime,
+      });
+      if (existing) {
+        return await OptionChainSnapshot.findByIdAndUpdate(existing._id, docPayload, { new: true });
+      }
       return await OptionChainSnapshot.create(docPayload);
     } catch (error) {
       lastDbError = error;
+      if (error?.code === 11000) {
+        const existing = await OptionChainSnapshot.findOne({
+          symbol: docPayload.symbol,
+          expiry: docPayload.expiry,
+          dateKey: docPayload.dateKey,
+          istTime: docPayload.istTime,
+        });
+        if (existing) {
+          return await OptionChainSnapshot.findByIdAndUpdate(existing._id, docPayload, { new: true });
+        }
+      }
       console.error(`[OptionChainArchive] Mongo save retry ${attempt + 1}:`, error.message);
     }
   }
@@ -284,17 +417,81 @@ async function captureAllExpiries({ symbol, expiries, recorderRunId, respectRate
   return { results, errors };
 }
 
-async function recorderLoop() {
-  console.log('[OptionChainArchive] Recorder loop active (24/7; fetch 9:15–15:30 IST on trading days)');
-  while (recorderState.running) {
-    const marketOpen = isWithinNseCashSession();
-    try {
-      if (marketOpen && !recorderState.marketWasOpen) {
-        console.log('[OptionChainArchive] Market open — fetching both expiries');
-      }
-      recorderState.marketWasOpen = marketOpen;
+async function purgeInvalidSnapshots() {
+  const allowedKeySet = new Set(ALLOWED_IST_TIME_KEYS);
+  let deleted = 0;
 
-      if (!recorderState.onlyMarketHours || marketOpen) {
+  const badIstTime = await OptionChainSnapshot.deleteMany({
+    istTime: { $exists: true, $nin: [...allowedKeySet] },
+  });
+  deleted += badIstTime.deletedCount || 0;
+
+  const rows = await OptionChainSnapshot.find({})
+    .select('_id capturedAt istTime symbol expiry dateKey')
+    .lean();
+
+  const toDelete = [];
+  const keepBySlot = new Map();
+
+  for (const row of rows) {
+    const clock = getIstClock(row.capturedAt);
+    const dateKey = row.dateKey || clock.dateKey;
+
+    if (isOutsideCaptureZones(clock.minutes)) {
+      toDelete.push(row._id);
+      continue;
+    }
+
+    const timeKey = deriveIstTimeFromRow(row);
+    if (!timeKey) {
+      toDelete.push(row._id);
+      continue;
+    }
+
+    const slotKey = `${row.symbol}|${row.expiry}|${dateKey}|${timeKey}`;
+    const prev = keepBySlot.get(slotKey);
+    if (!prev || new Date(row.capturedAt) > new Date(prev.capturedAt)) {
+      if (prev) toDelete.push(prev._id);
+      keepBySlot.set(slotKey, { _id: row._id, istTime: timeKey, dateKey });
+    } else {
+      toDelete.push(row._id);
+    }
+  }
+
+  if (toDelete.length > 0) {
+    const r = await OptionChainSnapshot.deleteMany({ _id: { $in: toDelete } });
+    deleted += r.deletedCount || 0;
+  }
+
+  for (const doc of keepBySlot.values()) {
+    await OptionChainSnapshot.updateOne(
+      { _id: doc._id },
+      { $set: { istTime: doc.istTime, dateKey: doc.dateKey } },
+    );
+  }
+
+  if (deleted > 0) {
+    console.log(
+      `[OptionChainArchive] Purged ${deleted} snapshot(s) outside 9:15–9:30 & 15:15–15:30 IST (incl. after 9:30 / before 3:15)`,
+    );
+  }
+
+  return { deleted, kept: keepBySlot.size };
+}
+
+async function recorderLoop() {
+  console.log(
+    '[OptionChainArchive] Recorder active — capture only 9:15–9:30 & 15:15–15:30 IST (1 slot per minute per expiry)',
+  );
+  while (recorderState.running) {
+    const inWindow = isWithinCaptureWindow();
+    try {
+      if (inWindow && !recorderState.marketWasOpen) {
+        console.log('[OptionChainArchive] Capture window open — fetching both expiries');
+      }
+      recorderState.marketWasOpen = inWindow;
+
+      if (!recorderState.onlyCaptureWindows || inWindow) {
         const runId = `run-${Date.now()}`;
         const { errors } = await captureAllExpiries({
           symbol: recorderState.symbol,
@@ -309,7 +506,7 @@ async function recorderLoop() {
         }
       } else {
         recorderState.lastError = null;
-        recorderState.lastErrorCode = 'MARKET_CLOSED';
+        recorderState.lastErrorCode = 'OUTSIDE_CAPTURE_WINDOW';
         await sleep(MARKET_CLOSED_POLL_MS);
       }
     } catch (error) {
@@ -323,14 +520,14 @@ async function recorderLoop() {
   }
 }
 
-function startRecorder({ symbol, expiries, onlyMarketHours = true } = {}) {
+function startRecorder({ symbol, expiries, onlyCaptureWindows = true } = {}) {
   if (recorderState.running) {
     return { ...getRecorderStatus(), message: 'Recorder already running' };
   }
   recorderState.symbol = String(symbol || DEFAULT_ARCHIVE_SYMBOL).toUpperCase();
   recorderState.expiries = (expiries && expiries.length ? expiries : DEFAULT_ARCHIVE_EXPIRIES)
     .map((e) => String(e).slice(0, 10));
-  recorderState.onlyMarketHours = onlyMarketHours !== false;
+  recorderState.onlyCaptureWindows = onlyCaptureWindows !== false;
   recorderState.running = true;
   recorderState.startedAt = new Date();
   recorderState.lastError = null;
@@ -349,17 +546,23 @@ function stopRecorder() {
 }
 
 function getRecorderStatus() {
-  const marketSessionOpen = isWithinNseCashSession();
+  const captureWindowOpen = isWithinCaptureWindow();
   return {
     running: recorderState.running,
     symbol: recorderState.symbol,
     expiries: recorderState.expiries,
-    onlyMarketHours: recorderState.onlyMarketHours,
-    marketSessionOpen,
+    onlyCaptureWindows: recorderState.onlyCaptureWindows,
+    captureWindowOpen,
+    marketSessionOpen: captureWindowOpen,
+    captureWindows: {
+      open: '09:15–09:30 IST',
+      close: '15:15–15:30 IST',
+    },
+    timeSlots: CAPTURE_TIME_SLOTS,
     startedAt: recorderState.startedAt,
     lastCycleAt: recorderState.lastCycleAt,
     lastError: recorderState.lastError,
-    lastErrorCode: recorderState.lastErrorCode || (marketSessionOpen ? null : 'MARKET_CLOSED'),
+    lastErrorCode: recorderState.lastErrorCode || (captureWindowOpen ? null : 'OUTSIDE_CAPTURE_WINDOW'),
     totals: { ...recorderState.totals },
     lastCaptureByExpiry: { ...recorderState.lastCaptureByExpiry },
   };
@@ -367,34 +570,78 @@ function getRecorderStatus() {
 
 function ensureRecorderRunning() {
   if (!recorderState.running) {
-    startRecorder({ onlyMarketHours: true });
+    startRecorder({ onlyCaptureWindows: true });
     console.log('[OptionChainArchive] Recorder (re)started');
   }
 }
 
-async function getLatestSnapshot({ symbol, expiry }) {
-  return OptionChainSnapshot.findOne({
-    symbol: String(symbol).toUpperCase(),
-    expiry: String(expiry).slice(0, 10),
-  })
-    .sort({ capturedAt: -1 })
-    .lean();
+async function getLatestSnapshot({ symbol, expiry, istTime, dateKey }) {
+  if (istTime) {
+    return findSnapshotAtSlot({ symbol, expiry, dateKey, istTime });
+  }
+  return findLatestInWindowSnapshot({ symbol, expiry, dateKey });
 }
 
-async function listSnapshots({ symbol, expiry, limit = 50, before }) {
+async function listSnapshots({ symbol, expiry, limit = 50, before, istTime, dateKey }) {
+  const timeKey = istTime ? normalizeIstTimeQuery(istTime) : null;
+  if (timeKey && dateKey) {
+    const one = await findSnapshotAtSlot({ symbol, expiry, dateKey, istTime: timeKey });
+    return one
+      ? [
+          {
+            symbol: one.symbol,
+            expiry: one.expiry,
+            capturedAt: one.capturedAt,
+            dateKey: one.dateKey,
+            istTime: deriveIstTimeFromRow(one),
+            spot: one.spot,
+            strikeCount: one.strikeCount,
+          },
+        ]
+      : [];
+  }
+
+  const q = {
+    symbol: String(symbol).toUpperCase(),
+    expiry: String(expiry).slice(0, 10),
+    istTime: { $in: ALLOWED_IST_TIME_KEYS },
+  };
+  if (before) q.capturedAt = { $lt: new Date(before) };
+  if (dateKey) q.dateKey = String(dateKey).slice(0, 10);
+
+  const rows = await OptionChainSnapshot.find(q)
+    .sort({ dateKey: -1, istTime: -1, capturedAt: -1 })
+    .limit(Math.min(200, Math.max(1, Number(limit) || 50)))
+    .select('symbol expiry capturedAt dateKey istTime spot strikeCount')
+    .lean();
+  return rows;
+}
+
+async function listAvailableTimes({ symbol, expiry, dateKey }) {
   const q = {
     symbol: String(symbol).toUpperCase(),
     expiry: String(expiry).slice(0, 10),
   };
-  if (before) {
-    q.capturedAt = { $lt: new Date(before) };
-  }
+  if (dateKey) q.dateKey = String(dateKey).slice(0, 10);
+
   const rows = await OptionChainSnapshot.find(q)
-    .sort({ capturedAt: -1 })
-    .limit(Math.min(200, Math.max(1, Number(limit) || 50)))
-    .select('symbol expiry capturedAt dateKey spot strikeCount')
+    .select('istTime dateKey capturedAt')
+    .sort({ capturedAt: 1 })
     .lean();
-  return rows;
+
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const timeKey = deriveIstTimeFromRow(row);
+    if (!timeKey || seen.has(timeKey)) continue;
+    seen.add(timeKey);
+    out.push({
+      istTime: timeKey,
+      dateKey: row.dateKey || getIstClock(row.capturedAt).dateKey,
+      capturedAt: row.capturedAt,
+    });
+  }
+  return out;
 }
 
 async function getSnapshotById(id) {
@@ -425,14 +672,30 @@ async function getArchiveStats({ symbol }) {
 
 async function scheduleAutoRecorder() {
   validateArchiveSetup();
-  await ensureOptionChainIndexes();
-  console.log('[OptionChainArchive] Mongo indexes synced (collection: optionchainsnapshots)');
-  startRecorder({ onlyMarketHours: true });
+  try {
+    await ensureOptionChainIndexes();
+    console.log('[OptionChainArchive] Mongo indexes synced (collection: optionchainsnapshots)');
+    await purgeInvalidSnapshots();
+  } catch (error) {
+    const quota = /space quota|over your space/i.test(String(error.message));
+    console.error(
+      `[OptionChainArchive] Mongo setup skipped (${quota ? 'Atlas storage full' : error.message}).`,
+      'Run: node scripts/freeMongoStorage.js — then restart.',
+    );
+    if (quota) return;
+    throw error;
+  }
+  startRecorder({ onlyCaptureWindows: true });
   console.log(
-    '[OptionChainArchive] Always-on recorder | NIFTY | Dhan UnderlyingScrip=13 IDX_I | Expiries:',
+    '[OptionChainArchive] Always-on recorder | NIFTY | capture 9:15–9:30 & 15:15–15:30 IST | Expiries:',
     recorderState.expiries.join(', '),
   );
   setInterval(() => ensureRecorderRunning(), 30000);
+  setInterval(() => {
+    purgeInvalidSnapshots().catch((err) => {
+      console.error('[OptionChainArchive] Purge job failed:', err.message);
+    });
+  }, 60 * 60 * 1000);
 }
 
 function getArchivePageStatus({ symbol, expiry }) {
@@ -445,7 +708,9 @@ function getArchivePageStatus({ symbol, expiry }) {
     expiry: exp,
     viewFilterOnly: true,
     recordingExpiries: [...recorder.expiries],
-    marketSessionOpen: recorder.marketSessionOpen,
+    captureWindowOpen: recorder.captureWindowOpen,
+    marketSessionOpen: recorder.captureWindowOpen,
+    captureWindows: recorder.captureWindows,
     recorderRunning: recorder.running,
     lastError: recorder.lastError,
     lastErrorCode: recorder.lastErrorCode,
@@ -466,13 +731,20 @@ module.exports = {
   getRecorderStatus,
   getLatestSnapshot,
   listSnapshots,
+  listAvailableTimes,
   getSnapshotById,
   getArchiveStats,
+  isWithinCaptureWindow,
   isWithinNseCashSession,
+  purgeInvalidSnapshots,
+  normalizeIstTimeQuery,
+  findSnapshotAtSlot,
   scheduleAutoRecorder,
   ensureRecorderRunning,
   getArchivePageStatus,
   parseDhanError,
   validateArchiveSetup,
   DEFAULT_ARCHIVE_EXPIRIES,
+  CAPTURE_TIME_SLOTS,
+  ALLOWED_IST_TIME_KEYS,
 };

@@ -6,10 +6,14 @@ const {
   getRecorderStatus,
   getLatestSnapshot,
   listSnapshots,
+  listAvailableTimes,
   getSnapshotById,
   getArchiveStats,
-  isWithinNseCashSession,
+  isWithinCaptureWindow,
   getArchivePageStatus,
+  purgeInvalidSnapshots,
+  normalizeIstTimeQuery,
+  CAPTURE_TIME_SLOTS,
 } = require('../services/optionChainArchiveService');
 
 function getConfig(req, res) {
@@ -21,7 +25,13 @@ function getConfig(req, res) {
       '2026-05-26': '26 May 2026',
       '2026-06-02': '2 June 2026',
     },
-    marketSessionOpen: isWithinNseCashSession(),
+    captureWindowOpen: isWithinCaptureWindow(),
+    marketSessionOpen: isWithinCaptureWindow(),
+    captureWindows: {
+      open: '09:15–09:30 IST',
+      close: '15:15–15:30 IST',
+    },
+    timeSlots: CAPTURE_TIME_SLOTS,
     fieldsPerLeg: [
       'last_price',
       'oi',
@@ -47,20 +57,31 @@ function getRecorder(req, res) {
 async function getLatest(req, res) {
   try {
     const symbol = String(req.query.symbol || DEFAULT_ARCHIVE_SYMBOL).toUpperCase();
-    // `expiry` query is a read-only display filter — recorder always saves all configured expiries.
     const expiry = String(req.query.expiry || DEFAULT_ARCHIVE_EXPIRIES[0]).slice(0, 10);
+    const istTime = req.query.istTime || req.query.time || null;
+    const dateKey = req.query.dateKey || null;
     const status = getArchivePageStatus({ symbol, expiry });
-    const row = await getLatestSnapshot({ symbol, expiry });
+    const timeKey = istTime ? normalizeIstTimeQuery(istTime) : null;
+    if (istTime && !timeKey) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Invalid time — only 9:15–9:30 or 15:15–15:30 IST',
+        code: 'INVALID_TIME',
+      });
+    }
+
+    const row = await getLatestSnapshot({ symbol, expiry, istTime: timeKey, dateKey });
     if (!row) {
-      const message = status.marketSessionOpen
-        ? (status.lastError || 'Waiting for first capture — recorder is running.')
-        : 'Market is closed. Keep the backend running — fetching resumes automatically at 9:15 AM IST.';
+      const timeHint = timeKey ? ` at ${timeKey} IST` : '';
+      const message = status.captureWindowOpen
+        ? (status.lastError || `Waiting for first capture${timeHint} — recorder runs 9:15–9:30 & 15:15–15:30 only.`)
+        : `Outside capture windows${timeHint}. Data is stored only 9:15–9:30 and 15:15–15:30 IST. Pick a time slot below when available.`;
       return res.json({
         ok: true,
         snapshot: null,
         status,
         message,
-        code: status.lastErrorCode || (status.marketSessionOpen ? 'NO_DATA' : 'MARKET_CLOSED'),
+        code: status.lastErrorCode || (status.captureWindowOpen ? 'NO_DATA' : 'OUTSIDE_CAPTURE_WINDOW'),
       });
     }
     return res.json({ ok: true, snapshot: row, status, message: null, code: null });
@@ -75,7 +96,9 @@ async function getSnapshotsList(req, res) {
     const expiry = String(req.query.expiry || DEFAULT_ARCHIVE_EXPIRIES[0]).slice(0, 10);
     const limit = Number(req.query.limit) || 50;
     const before = req.query.before || null;
-    const rows = await listSnapshots({ symbol, expiry, limit, before });
+    const istTime = req.query.istTime || req.query.time || null;
+    const dateKey = req.query.dateKey || null;
+    const rows = await listSnapshots({ symbol, expiry, limit, before, istTime, dateKey });
     return res.json({ ok: true, symbol, expiry, snapshots: rows });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -95,6 +118,35 @@ async function getSnapshotDetail(req, res) {
   }
 }
 
+async function getAvailableTimes(req, res) {
+  try {
+    const symbol = String(req.query.symbol || DEFAULT_ARCHIVE_SYMBOL).toUpperCase();
+    const expiry = String(req.query.expiry || DEFAULT_ARCHIVE_EXPIRIES[0]).slice(0, 10);
+    const dateKey = req.query.dateKey || null;
+    const rows = await listAvailableTimes({ symbol, expiry, dateKey });
+    const byDate = {};
+    for (const r of rows) {
+      if (!byDate[r.dateKey]) byDate[r.dateKey] = [];
+      if (!byDate[r.dateKey].includes(r.istTime)) byDate[r.dateKey].push(r.istTime);
+    }
+    for (const dk of Object.keys(byDate)) {
+      byDate[dk].sort((a, b) => a.localeCompare(b));
+    }
+    return res.json({ ok: true, symbol, expiry, byDate, rows });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function postPurge(req, res) {
+  try {
+    const result = await purgeInvalidSnapshots();
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 async function getStats(req, res) {
   try {
     const symbol = String(req.query.symbol || DEFAULT_ARCHIVE_SYMBOL).toUpperCase();
@@ -110,6 +162,8 @@ module.exports = {
   getRecorder,
   getLatest,
   getSnapshotsList,
+  getAvailableTimes,
+  postPurge,
   getSnapshotDetail,
   getStats,
 };

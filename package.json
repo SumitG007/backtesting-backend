@@ -13,6 +13,8 @@
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
     "cache:candles": "node scripts/saveCandleCache.js",
     "analyze:s1": "node scripts/analyzeStrategy1DayRange.js",
+    "mongo:free-space": "node scripts/freeMongoStorage.js",
+    "mongo:purge-archive": "node scripts/freeMongoStorage.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

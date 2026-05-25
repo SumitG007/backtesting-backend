@@ -46,6 +46,8 @@ const optionChainSnapshotSchema = new mongoose.Schema(
     expiry: { type: String, required: true, index: true },
     capturedAt: { type: Date, required: true, index: true },
     dateKey: { type: String, required: true, index: true },
+    /** IST wall-clock minute label e.g. "09:15" — one row per symbol/expiry/date/time. */
+    istTime: { type: String, index: true },
     spot: Number,
     strikeCount: Number,
     strikes: [strikeRowSchema],
@@ -58,6 +60,10 @@ const optionChainSnapshotSchema = new mongoose.Schema(
 
 optionChainSnapshotSchema.index({ symbol: 1, expiry: 1, capturedAt: -1 });
 optionChainSnapshotSchema.index({ symbol: 1, expiry: 1, dateKey: 1, capturedAt: -1 });
+optionChainSnapshotSchema.index(
+  { symbol: 1, expiry: 1, dateKey: 1, istTime: 1 },
+  { unique: true },
+);
 
 const OptionChainSnapshot = mongoose.models.OptionChainSnapshot
   || mongoose.model('OptionChainSnapshot', optionChainSnapshotSchema);

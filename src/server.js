@@ -18,7 +18,12 @@ async function start() {
   await hydrateDhanTokenFromMongo();
   scheduleDhanTokenMaintenance();
   scheduleNseHolidayRefresh();
-  await scheduleAutoRecorder();
+  try {
+    await scheduleAutoRecorder();
+  } catch (error) {
+    console.error('[OptionChainArchive] Recorder not started:', error.message);
+    console.error('  Fix: node scripts/freeMongoStorage.js  (or free space in Atlas UI)');
+  }
   app.listen(PORT, () => {
     console.log(`Backend listening on http://localhost:${PORT}`);
   });
