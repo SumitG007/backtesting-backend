@@ -2,33 +2,51 @@ const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategyTwoEngine = require('../services/liveShortStraddleEngine');
-const { ensureWallet } = strategyTwoEngine;
+const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
+const { STRATEGY_THREE_IV_LIVE_KEY } = require('../strategies/keys');
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
   getAtmPremiums,
 } = require('../services/dhanLiveService');
 
-const STRATEGY_TWO_KEY = 'strategy3_short_straddle';
-
-function getLiveContext(req) {
-  const strategyId = String(req.params?.strategyId || 'strategy-2').toLowerCase();
-  if (strategyId !== 'strategy-2') return null;
-  return {
-    strategyId,
-    strategyKey: STRATEGY_TWO_KEY,
+const LIVE_STRATEGIES = {
+  'strategy-2': {
+    strategyId: 'strategy-2',
+    strategyKey: strategyTwoEngine.STRATEGY_KEY,
     startEngine: strategyTwoEngine.startEngine,
     stopEngine: strategyTwoEngine.stopEngine,
     updateEngineSettings: strategyTwoEngine.updateEngineSettings,
     getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
-  };
+    ensureWallet: strategyTwoEngine.ensureWallet,
+    recalcWallet: strategyTwoEngine.ensureWallet,
+  },
+  'strategy-3': {
+    strategyId: 'strategy-3',
+    strategyKey: STRATEGY_THREE_IV_LIVE_KEY,
+    startEngine: strategyThreeEngine.ensureEngineRunning,
+    stopEngine: strategyThreeEngine.ensureEngineRunning,
+    updateEngineSettings: strategyThreeEngine.updateEngineSettings,
+    getEngineSnapshot: strategyThreeEngine.getEngineSnapshot,
+    ensureWallet: strategyThreeEngine.ensureWallet,
+    recalcWallet: strategyThreeEngine.recalcWalletFromTrades,
+    ensureRunning: strategyThreeEngine.ensureEngineRunning,
+  },
+};
+
+function getLiveContext(req) {
+  const strategyId = String(req.params?.strategyId || 'strategy-2').toLowerCase();
+  return LIVE_STRATEGIES[strategyId] || null;
 }
 
 async function getStatus(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    const wallet = await ensureWallet();
+    if (typeof ctx.ensureRunning === 'function') {
+      await ctx.ensureRunning();
+    }
+    const wallet = await ctx.ensureWallet();
     const openTrade = await LivePaperTrade.findOne({
       strategyKey: ctx.strategyKey,
       exitTime: null,
@@ -38,6 +56,10 @@ async function getStatus(req, res) {
     const [chargesAgg] = await LivePaperTrade.aggregate([
       { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
       { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
+    ]);
+    const [pnlAgg] = await LivePaperTrade.aggregate([
+      { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
+      { $group: { _id: null, netPnl: { $sum: '$pnl' }, wins: { $sum: { $cond: [{ $gt: ['$pnl', 0] }, 1, 0] } } } },
     ]);
     const snapshot = ctx.getEngineSnapshot();
     return res.json({
@@ -53,6 +75,8 @@ async function getStatus(req, res) {
         totalTrades: wallet.totalTrades,
         wins: wallet.wins,
         losses: wallet.losses,
+        strategyNetPnl: Number(Number(pnlAgg?.[0]?.netPnl || 0).toFixed(2)),
+        strategyWins: Number(pnlAgg?.[0]?.wins || 0),
         totalCharges: Number(Number(chargesAgg?.totalCharges || 0).toFixed(2)),
         lastResetAt: wallet.lastResetAt,
       },
@@ -85,7 +109,7 @@ function stopLive(req, res) {
   }
 }
 
-const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct']);
+const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct', 'targetVolCrushPct', 'stopVolExpandPct']);
 
 function coerceLiveEngineSetting(key, value) {
   if (typeof value === 'string' && /Time$/.test(key)) {
@@ -119,24 +143,19 @@ async function saveLiveSettings(req, res) {
   }
 }
 
-async function updateWallet(req, res) {
-  return res.status(400).json({ ok: false, error: 'Wallet balance is managed by live trade P/L only' });
-}
-
-async function resetWallet(_req, res) {
+async function resetWallet(req, res) {
   try {
-    const wallet = await ensureWallet();
-    wallet.startingBalance = 0;
-    wallet.balance = 0;
-    wallet.realizedPnl = 0;
-    wallet.totalTrades = 0;
-    wallet.wins = 0;
-    wallet.losses = 0;
-    wallet.lastResetAt = new Date();
-    await wallet.save();
-    // Force-close any open trades and wipe history.
-    await LivePaperTrade.deleteMany({});
-    return res.json({ ok: true, wallet });
+    const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
+    await LivePaperTrade.deleteMany({ strategyKey: ctx.strategyKey });
+    if (typeof ctx.recalcWallet === 'function') {
+      await ctx.recalcWallet();
+    } else {
+      const wallet = await ctx.ensureWallet();
+      await wallet.save();
+    }
+    const wallet = await ctx.ensureWallet();
+    return res.json({ ok: true, wallet, message: `Cleared paper trades for ${ctx.strategyId}` });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -155,9 +174,8 @@ async function listTrades(req, res) {
     } else if (statusQ === 'CLOSED') {
       filter.exitTime = { $ne: null };
     } else if (statusQ === 'ALL') {
-      // no extra filter — includes OPEN + CLOSED
+      // include open + closed
     } else {
-      // Default: completed trades only (open position uses GET /status → openTrade)
       filter.exitTime = { $ne: null };
     }
     const totalRows = await LivePaperTrade.countDocuments(filter);
@@ -185,38 +203,25 @@ async function exportTradesExcel(req, res) {
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
     const trades = await LivePaperTrade.find({ strategyKey: ctx.strategyKey }).sort({ entryTime: -1 }).lean();
     const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Live Paper Trades');
+    const sheet = workbook.addWorksheet('Paper Live Trades');
     sheet.columns = [
       { header: 'Strategy', key: 'strategyKey', width: 30 },
       { header: 'Symbol', key: 'symbol', width: 12 },
-      { header: 'Side', key: 'side', width: 8 },
-      { header: 'Option', key: 'optionType', width: 8 },
       { header: 'Strike', key: 'strike', width: 10 },
-      { header: 'Expiry', key: 'expiryDate', width: 14 },
-      { header: 'Lot Size', key: 'lotSize', width: 10 },
-      { header: 'Lots', key: 'lots', width: 8 },
-      { header: 'Qty', key: 'qty', width: 10 },
+      { header: 'Entry IV proxy', key: 'entryIvProxy', width: 14 },
+      { header: 'Median IV proxy', key: 'medianIvProxy', width: 14 },
       { header: 'Entry Premium', key: 'entryPremium', width: 16 },
-      { header: 'Entry Spot', key: 'entrySpot', width: 12 },
       { header: 'Entry Time (IST)', key: 'entryTime', width: 22 },
-      { header: 'Stop Loss Premium', key: 'stopLossPremium', width: 18 },
-      { header: 'Target Premium', key: 'targetPremium', width: 16 },
-      { header: 'Ref High', key: 'refHigh', width: 12 },
-      { header: 'Ref Low', key: 'refLow', width: 12 },
+      { header: 'Margin (Rs)', key: 'investedAmount', width: 14 },
+      { header: 'Credit (Rs)', key: 'creditReceived', width: 14 },
       { header: 'Status', key: 'status', width: 10 },
       { header: 'Exit Premium', key: 'exitPremium', width: 14 },
-      { header: 'Exit Spot', key: 'exitSpot', width: 12 },
       { header: 'Exit Time (IST)', key: 'exitTime', width: 22 },
       { header: 'Reason', key: 'reason', width: 14 },
-      { header: 'Credit Received (Rs)', key: 'creditReceived', width: 18 },
-      { header: 'Margin (Rs)', key: 'investedAmount', width: 14 },
-      { header: 'Final Value (Rs)', key: 'finalValue', width: 16 },
-      { header: 'Tax / Charges (Rs)', key: 'charges', width: 18 },
       { header: 'P/L (Rs)', key: 'pnl', width: 12 },
       { header: 'P/L %', key: 'pnlPct', width: 10 },
     ];
     sheet.getRow(1).font = { bold: true };
-
     const istFormat = (date) =>
       date
         ? new Intl.DateTimeFormat('en-GB', {
@@ -236,12 +241,8 @@ async function exportTradesExcel(req, res) {
         exitTime: istFormat(t.exitTime),
       });
     }
-
-    res.setHeader(
-      'Content-Type',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
-    res.setHeader('Content-Disposition', 'attachment; filename="live-paper-trades.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${ctx.strategyId}-paper-trades.xlsx"`);
     await workbook.xlsx.write(res);
     return res.end();
   } catch (error) {
@@ -259,16 +260,12 @@ async function getLiveMeta(req, res) {
     let peLtp = null;
     if (expiry) {
       try {
-        const data = await getAtmPremiums({
-          symbol,
-          strike: 0, // will return spot regardless of strike match
-          expiry,
-        });
+        const data = await getAtmPremiums({ symbol, strike: 0, expiry });
         chainSpot = data.chainSpot;
         ceLtp = data.ceLtp;
         peLtp = data.peLtp;
       } catch {
-        // ignore — meta endpoint best-effort
+        // best-effort
       }
     }
     return res.json({ ok: true, symbol, lotSize, expiry, chainSpot, ceLtp, peLtp });
@@ -282,7 +279,6 @@ module.exports = {
   startLive,
   stopLive,
   saveLiveSettings,
-  updateWallet,
   resetWallet,
   listTrades,
   exportTradesExcel,

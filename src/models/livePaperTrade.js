@@ -36,6 +36,10 @@ const livePaperTradeSchema = new mongoose.Schema(
     pnl: { type: Number, default: null },
     pnlPct: { type: Number, default: null },
     notes: { type: String, default: null },
+    entryIvProxy: { type: Number, default: null },
+    medianIvProxy: { type: Number, default: null },
+    highSinceEntry: { type: Number, default: null },
+    lowSinceEntry: { type: Number, default: null },
   },
   { timestamps: true }
 );

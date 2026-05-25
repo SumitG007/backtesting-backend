@@ -20,6 +20,16 @@ const {
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
 const { registerCatalogStrategyRoutes } = require('../controllers/backtest/registerCatalogRoutes');
+const {
+  getStatus: getLiveStatus,
+  startLive,
+  stopLive,
+  saveLiveSettings,
+  resetWallet: resetLiveWallet,
+  listTrades: listLiveTrades,
+  exportTradesExcel: exportLiveTradesExcel,
+  getLiveMeta,
+} = require('../controllers/liveTradeController');
 
 const router = express.Router();
 
@@ -45,6 +55,15 @@ router.post('/strategy3/run', runStrategyFive);
 router.post('/strategy3/validation', postStrategyFiveValidation);
 router.get('/strategy3/runs/:runId/trades', getStrategyFiveRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyFiveValidation);
+// Paper live (real market data, simulated fills in DB)
+router.get('/live/:strategyId/status', getLiveStatus);
+router.get('/live/:strategyId/meta', getLiveMeta);
+router.post('/live/:strategyId/start', startLive);
+router.post('/live/:strategyId/stop', stopLive);
+router.post('/live/:strategyId/settings', saveLiveSettings);
+router.post('/live/:strategyId/wallet/reset', resetLiveWallet);
+router.get('/live/:strategyId/trades', listLiveTrades);
+router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 registerCatalogStrategyRoutes(router);
 router.post('/backtest/run', runBacktestStub);
 
