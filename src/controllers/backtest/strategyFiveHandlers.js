@@ -16,10 +16,14 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 const DEFAULTS = {
   defaultInterval: '5',
   ivLookbackDays: 20,
-  ivSpikeMultiplier: 1.25,
-  maxSpikeMultiplier: 2,
+  ivSpikeMultiplier: 1.15,
+  maxSpikeMultiplier: 2.5,
   ivExpandStopMult: 1.5,
   premiumLeverage: 8,
+  minOrHistoryDays: 3,
+  entryToTime: '12:00',
+  spikeMode: 'either',
+  orPercentileMin: 65,
 };
 
 function buildSettings(req) {
@@ -43,6 +47,10 @@ function buildSettings(req) {
       stopVolExpandPct: parseOptionalPositiveNumber(req.body?.stopVolExpandPct),
       ivExpandStopMult: parseNumberInput(req.body?.ivExpandStopMult, DEFAULTS.ivExpandStopMult),
       maxSpikeMultiplier: parseNumberInput(req.body?.maxSpikeMultiplier, DEFAULTS.maxSpikeMultiplier),
+      minOrHistoryDays: parseNumberInput(req.body?.minOrHistoryDays, DEFAULTS.minOrHistoryDays),
+      entryToTime: parseStringInput(req.body?.entryToTime, DEFAULTS.entryToTime),
+      spikeMode: parseStringInput(req.body?.spikeMode, DEFAULTS.spikeMode),
+      orPercentileMin: parseNumberInput(req.body?.orPercentileMin, DEFAULTS.orPercentileMin),
     },
     yearNum: parseNumberInput(year, 2026),
   };

@@ -24,7 +24,7 @@ const {
   orIvProxyFromBars,
   buildOrIvByDayFromCandles,
   computeMedianOrIv,
-  evaluateIvSpikeSignal,
+  evaluateOrSpikeSignal,
   isInEntryWindow,
   isAfterOrWindow,
   isEodExitTime,
@@ -308,17 +308,21 @@ function evaluateTodaySignal(clock) {
     sortedKeys.sort();
     idx = sortedKeys.indexOf(clock.dateKey);
   }
-  const { medianOrIv, sampleSize } = computeMedianOrIv(
+  const { medianOrIv, sampleSize, histOr } = computeMedianOrIv(
     engineState.orIvByDay,
     sortedKeys,
     idx,
     engineState.settings.ivLookbackDays,
+    engineState.settings.minOrHistoryDays,
   );
-  const spike = evaluateIvSpikeSignal({
+  const spike = evaluateOrSpikeSignal({
     todayOr,
     medianOrIv,
+    histOr,
     ivSpikeMultiplier: engineState.settings.ivSpikeMultiplier,
     maxSpikeMultiplier: engineState.settings.maxSpikeMultiplier,
+    spikeMode: engineState.settings.spikeMode,
+    orPercentileMin: engineState.settings.orPercentileMin,
   });
   engineState.todaySignal = {
     at: new Date().toISOString(),
@@ -410,8 +414,13 @@ async function getEntryGate(clock) {
     return { ok: false, reason: 'MARKET_CLOSED_HOLIDAY', holiday: getNseHolidayDescription(clock.dateKey) };
   }
   await syncEngineTradeStateFromDb(clock);
-  if (!isInEntryWindow(clock.minutes)) {
-    return { ok: false, reason: 'OUTSIDE_ENTRY_WINDOW', minutes: clock.minutes };
+  if (!isInEntryWindow(clock.minutes, engineState.settings.entryEndMinutes)) {
+    return {
+      ok: false,
+      reason: 'OUTSIDE_ENTRY_WINDOW',
+      minutes: clock.minutes,
+      entryToTime: engineState.settings.entryToTime,
+    };
   }
   if (engineState.tradeDateKey === clock.dateKey) {
     return { ok: false, reason: 'ALREADY_TRADED_TODAY' };
@@ -536,7 +545,7 @@ async function evaluateEntry() {
   if (clock.minutes < M1000 - 30) return;
   const gate = await getEntryGate(clock);
   if (!gate.ok) {
-    if (isInEntryWindow(clock.minutes)) {
+    if (isInEntryWindow(clock.minutes, engineState.settings.entryEndMinutes)) {
       logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), ...gate });
     }
     return;
@@ -730,12 +739,13 @@ function startPoll() {
   const tick = async () => {
     const clock = getIstClock(new Date());
     try {
-      if (clock.minutes >= M945 - 15 && clock.minutes <= M1100 + 5) {
+      const entryEnd = engineState.settings.entryEndMinutes || 720;
+      if (clock.minutes >= M945 - 15 && clock.minutes <= entryEnd + 5) {
         await refreshTodayCandles(clock);
       }
       if (
         isAfterOrWindow(clock.minutes)
-        && isInEntryWindow(clock.minutes)
+        && isInEntryWindow(clock.minutes, entryEnd)
         && engineState.tradeDateKey !== clock.dateKey
       ) {
         evaluateTodaySignal(clock);

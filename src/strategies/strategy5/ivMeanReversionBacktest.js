@@ -5,6 +5,7 @@
  */
 
 const { getIstClock } = require('../../utils/dateTime');
+const { passesOrSpikeSignal, normalizeIvSettings } = require('./ivMeanReversionLogic');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
 const { computeSessionHighLow } = require('../shared/sessionRange');
@@ -109,16 +110,36 @@ function shortStraddlePremium({
   return Math.max(0.05, combined);
 }
 
-function findEntry({ dayBars, medianOrIv, ivSpikeMultiplier, maxSpikeMultiplier }) {
+function findEntry({
+  dayBars,
+  medianOrIv,
+  histOr,
+  ivSpikeMultiplier,
+  maxSpikeMultiplier,
+  spikeMode,
+  orPercentileMin,
+  entryEndMinutes,
+}) {
   const todayOr = orIvProxy(dayBars);
-  if (!todayOr || todayOr <= 0 || medianOrIv <= 0) return null;
-  if (todayOr < medianOrIv * ivSpikeMultiplier) return null;
-  if (todayOr > medianOrIv * maxSpikeMultiplier) return null;
+  if (
+    !passesOrSpikeSignal({
+      todayOr,
+      medianOrIv,
+      histOr,
+      ivSpikeMultiplier,
+      maxSpikeMultiplier,
+      spikeMode,
+      orPercentileMin,
+    })
+  ) {
+    return null;
+  }
 
+  const endMin = Number.isFinite(entryEndMinutes) ? entryEndMinutes : M1100;
   for (let j = 0; j < dayBars.length; j += 1) {
     const m = getIstClock(dayBars[j][0]).minutes;
     if (m < M1000) continue;
-    if (m > M1100) break;
+    if (m > endMin) break;
     return { entryIdx: j, entryIv: todayOr, medianIv: medianOrIv };
   }
   return null;
@@ -253,10 +274,16 @@ function runIvMeanReversionBacktest({ candles, settings }) {
       ? Number(settings.perTradeCost)
       : 100;
 
-  const ivLookbackDays = Math.max(5, Math.min(60, Number(settings.ivLookbackDays) || 20));
-  const ivSpikeMultiplier = Math.max(1.05, Number(settings.ivSpikeMultiplier) || 1.25);
-  const maxSpikeMultiplier = Math.max(ivSpikeMultiplier + 0.1, Number(settings.maxSpikeMultiplier) || 2);
-  const ivExpandStopMult = Math.max(1.2, Number(settings.ivExpandStopMult) || 1.5);
+  const {
+    ivLookbackDays,
+    ivSpikeMultiplier,
+    maxSpikeMultiplier,
+    ivExpandStopMult,
+    minOrHistoryDays,
+    entryEndMinutes,
+    spikeMode,
+    orPercentileMin,
+  } = normalizeIvSettings(settings);
 
   const rawTg = settings.targetVolCrushPct;
   const hasPremiumTarget =
@@ -293,14 +320,18 @@ function runIvMeanReversionBacktest({ candles, settings }) {
       const v = orIvByDay.get(sortedKeys[j]);
       if (v != null) histOr.push(v);
     }
-    if (histOr.length < 5) continue;
+    if (histOr.length < minOrHistoryDays) continue;
     const medianOrIv = median(histOr);
 
     const entry = findEntry({
       dayBars,
       medianOrIv,
+      histOr,
       ivSpikeMultiplier,
       maxSpikeMultiplier,
+      spikeMode,
+      orPercentileMin,
+      entryEndMinutes,
     });
     if (!entry) continue;
 
