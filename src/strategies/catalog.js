@@ -63,11 +63,11 @@ const STRATEGY_CATALOG = {
     defaults: {
       ...COMMON_DEFAULTS,
       interval: '5',
-      stopLossPoints: 0,
+      stopLossPoints: 20,
       targetProfitPoints: 0,
       maxTradesPerDay: 6,
       minBarsBetweenTrades: 2,
-      entryFromTime: '09:30',
+      entryFromTime: '10:30',
       entryToTime: '14:30',
       emaFast: 9,
       emaSlow: 21,

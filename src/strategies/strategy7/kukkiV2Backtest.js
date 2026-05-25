@@ -56,7 +56,7 @@ function runKukkiV2Backtest({ execCandles, settings }) {
   const macdSlow = Math.max(macdFast + 1, Number(settings.macdSlow) || 26);
   const macdSignal = Math.max(2, Number(settings.macdSignal) || 9);
   const breakLookback = Math.max(2, Number(settings.breakLookbackBars) || 3);
-  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 570);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 630);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 870);
   const minWarmup = Math.max(emaSlowLen, macdSlow + macdSignal, adxLength * 2) + breakLookback + 2;
 
