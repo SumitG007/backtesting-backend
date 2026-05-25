@@ -64,7 +64,7 @@ const STRATEGY_CATALOG = {
       ...COMMON_DEFAULTS,
       interval: '5',
       stopLossPoints: 20,
-      targetProfitPoints: 80,
+      targetProfitPoints: 100,
       maxTradesPerDay: 1,
       minBarsBetweenTrades: 6,
       entryFromTime: '11:00',

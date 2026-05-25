@@ -7,7 +7,12 @@ const StrategyTrade = require('../../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { parseNumberInput, parseStringInput, parseBooleanInput } = require('./parsers');
+const {
+  parseNumberInput,
+  parseStringInput,
+  parseBooleanInput,
+  parsePremiumExitPoints,
+} = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
 const { getCatalogEntry } = require('../../strategies/catalog');
@@ -23,8 +28,8 @@ function mergeSettingsFromBody(body, catalogEntry) {
     symbol: String(symbol).toUpperCase(),
     interval: String(interval),
     strikeMode: parseStringInput(body?.strikeMode, defaults.strikeMode || 'ATM'),
-    stopLossPoints: parseNumberInput(body?.stopLossPoints, defaults.stopLossPoints ?? 0),
-    targetProfitPoints: parseNumberInput(body?.targetProfitPoints, defaults.targetProfitPoints ?? 0),
+    stopLossPoints: parsePremiumExitPoints(body?.stopLossPoints, defaults.stopLossPoints ?? 0),
+    targetProfitPoints: parsePremiumExitPoints(body?.targetProfitPoints, defaults.targetProfitPoints ?? 0),
     basePremiumPct: parseNumberInput(body?.basePremiumPct, defaults.basePremiumPct ?? 0.5),
     premiumLeverage: parseNumberInput(body?.premiumLeverage, defaults.premiumLeverage ?? 8),
     lotCount: parseNumberInput(body?.lotCount, defaults.lotCount ?? 1),
@@ -38,6 +43,12 @@ function mergeSettingsFromBody(body, catalogEntry) {
   };
 
   for (const key of Object.keys(defaults)) {
+    if (key === 'stopLossPoints' || key === 'targetProfitPoints') {
+      if (body?.[key] === '') {
+        settings[key] = 0;
+        continue;
+      }
+    }
     if (body?.[key] === undefined || body?.[key] === '') continue;
     const def = defaults[key];
     if (typeof def === 'boolean') {

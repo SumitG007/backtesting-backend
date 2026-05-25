@@ -13,6 +13,18 @@ function parseStringInput(value, fallback) {
   return parsed.length > 0 ? parsed : fallback;
 }
 
+/**
+ * Premium SL / target: blank or ≤0 → 0 (exit at day close only).
+ * Omitted field uses catalog fallback (e.g. default 20 / 100).
+ */
+function parsePremiumExitPoints(value, fallbackWhenOmitted) {
+  if (value === undefined || value === null) return fallbackWhenOmitted;
+  if (typeof value === 'string' && value.trim() === '') return 0;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return parsed;
+}
+
 /** Empty or non-positive → null (optional field, e.g. disabled target / stop). */
 function parseOptionalPositiveNumber(value) {
   if (value === undefined || value === null) return null;
@@ -34,6 +46,7 @@ function parseBooleanInput(value, fallback) {
 module.exports = {
   parseNumberInput,
   parseStringInput,
+  parsePremiumExitPoints,
   parseOptionalPositiveNumber,
   parseBooleanInput,
 };
