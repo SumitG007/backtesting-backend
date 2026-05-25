@@ -2,14 +2,13 @@
  * Free MongoDB Atlas space when near/over quota.
  * Run: node scripts/freeMongoStorage.js
  * Options (env):
- *   PURGE_OPTION_CHAIN=0  — delete ALL option chain (default: purge out-of-window only)
- *   PURGE_OPTION_CHAIN=1  — delete entire optionchainsnapshots collection
+ *   PURGE_OPTION_CHAIN=1 — delete entire optionchainsnapshots collection (if it exists)
  *   PURGE_OLD_RUNS_DAYS=30 — delete strategy runs older than N days (0 = skip)
  */
 require('dotenv').config();
 const mongoose = require('mongoose');
 
-const PURGE_OPTION_CHAIN_ALL = process.env.PURGE_OPTION_CHAIN === '1';
+const PURGE_OPTION_CHAIN = process.env.PURGE_OPTION_CHAIN === '1';
 const PURGE_OLD_RUNS_DAYS = Number(process.env.PURGE_OLD_RUNS_DAYS) || 0;
 
 async function collectionStats(db, name) {
@@ -41,16 +40,11 @@ async function main() {
     console.log(`  ${st.name}: ${st.count ?? '?'} docs, ~${st.storageMB ?? '?'} MB storage`);
   }
 
-  if (PURGE_OPTION_CHAIN_ALL) {
+  if (PURGE_OPTION_CHAIN) {
     const name = 'optionchainsnapshots';
     console.log(`\nDeleting ALL documents in ${name}...`);
     const r = await db.collection(name).deleteMany({});
     console.log(`  deleted: ${r.deletedCount}`);
-  } else {
-    const { purgeInvalidSnapshots } = require('../src/services/optionChainArchiveService');
-    console.log('\nPurging snapshots outside 9:15–9:30 & 15:15–15:30 IST...');
-    const r = await purgeInvalidSnapshots();
-    console.log(`  deleted: ${r.deleted}, kept slots: ${r.kept}`);
   }
 
   if (PURGE_OLD_RUNS_DAYS > 0) {
@@ -76,7 +70,7 @@ async function main() {
   }
 
   console.log('\nDone. Restart backend: npm run dev');
-  console.log('If Atlas still blocks writes, open MongoDB Atlas → Browse Collections → drop optionchainsnapshots, or upgrade tier.');
+  console.log('If Atlas still blocks writes, open MongoDB Atlas → Browse Collections → drop old collections, or upgrade tier.');
   await mongoose.disconnect();
 }
 
@@ -84,8 +78,8 @@ main().catch((err) => {
   console.error('Cleanup failed:', err.message);
   if (/space quota|over your space/i.test(err.message)) {
     console.error(
-      '\nAtlas blocks writes while over 512 MB. Use Atlas UI: Cluster → Browse Collections →',
-      'delete/drop "optionchainsnapshots" (and old "strategyruns" if needed), then re-run this script.',
+      '\nAtlas blocks writes while over quota. Use Atlas UI: Cluster → Browse Collections →',
+      'delete/drop large collections (e.g. optionchainsnapshots, old strategyruns), then re-run this script.',
     );
   }
   process.exit(1);

@@ -11,10 +11,10 @@
     "audit:s6": "node scripts/auditStrategy6Pnl.js",
     "discover:market": "node scripts/runMarketDiscovery.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
+    "scenarios:s5": "node scripts/runStrategy5Scenarios.js",
     "cache:candles": "node scripts/saveCandleCache.js",
     "analyze:s1": "node scripts/analyzeStrategy1DayRange.js",
     "mongo:free-space": "node scripts/freeMongoStorage.js",
-    "mongo:purge-archive": "node scripts/freeMongoStorage.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
