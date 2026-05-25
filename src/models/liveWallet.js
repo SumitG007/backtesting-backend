@@ -44,7 +44,6 @@ const liveWalletSchema = new mongoose.Schema(
       targetVolCrushPct: { type: Number, default: null },
       stopVolExpandPct: { type: Number, default: null },
       ivExpandStopMult: { type: Number, default: 1.5 },
-      skipExpiryDay: { type: Boolean, default: true },
     },
     strategy3OrHistory: {
       type: [{ dateKey: String, orIv: Number }],

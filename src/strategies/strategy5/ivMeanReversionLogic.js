@@ -208,7 +208,6 @@ function normalizeIvSettings(raw = {}) {
     stopVolExpandPct,
     hasPremiumTarget,
     hasPremiumStop,
-    skipExpiryDay: raw.skipExpiryDay !== false && raw.skipExpiryDay !== 'false',
   };
 }
 

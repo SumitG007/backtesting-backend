@@ -36,7 +36,6 @@ const {
   getAtmPremiums,
   getCurrentLotSize,
   getNearestWeeklyExpiry,
-  getTradableWeeklyExpiry,
   resolveOptionInstrument,
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
@@ -361,14 +360,9 @@ async function subscribeOpenStraddle(trade) {
 
 async function getCurrentExpiry(symbol, dateKey) {
   const cachedExpiry = String(engineState.expiry || '').slice(0, 10);
-  const shouldAvoidSameDay = engineState.settings.skipExpiryDay;
-  const isStale = !cachedExpiry
-    || cachedExpiry < dateKey
-    || (shouldAvoidSameDay && cachedExpiry === dateKey);
+  const isStale = !cachedExpiry || cachedExpiry < dateKey;
   if (isStale) {
-    engineState.expiry = shouldAvoidSameDay
-      ? await getTradableWeeklyExpiry(symbol, dateKey)
-      : await getNearestWeeklyExpiry(symbol);
+    engineState.expiry = await getNearestWeeklyExpiry(symbol);
   }
   return engineState.expiry;
 }
@@ -777,9 +771,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     await backfillOrHistoryIfNeeded();
     engineState.lotSize = await getCurrentLotSize(engineState.symbol);
     const clock = getIstClock(new Date());
-    engineState.expiry = engineState.settings.skipExpiryDay
-      ? await getTradableWeeklyExpiry(engineState.symbol, clock.dateKey)
-      : await getNearestWeeklyExpiry(engineState.symbol);
+    engineState.expiry = await getNearestWeeklyExpiry(engineState.symbol);
     const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({
       entryTime: -1,
     });
