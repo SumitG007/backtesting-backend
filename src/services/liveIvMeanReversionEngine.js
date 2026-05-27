@@ -30,6 +30,7 @@ const {
   isEodExitTime,
   postEntrySpotRange,
   normalizeIvSettings,
+  applyPaperLivePremiumDefaults,
   premiumTargetsFromCredit,
 } = require('../strategies/strategy5/ivMeanReversionLogic');
 const {
@@ -820,7 +821,16 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     const persisted = wallet.strategy3EngineSettings
       ? wallet.strategy3EngineSettings.toObject?.() || wallet.strategy3EngineSettings
       : {};
-    return startEngine({ symbol, settings: persisted });
+    const withDefaults = applyPaperLivePremiumDefaults(persisted);
+    const seeded =
+      withDefaults.targetVolCrushPct !== persisted.targetVolCrushPct
+      || withDefaults.stopVolExpandPct !== persisted.stopVolExpandPct;
+    const result = await startEngine({ symbol, settings: withDefaults });
+    if (seeded) {
+      wallet.strategy3EngineSettings = engineState.settings;
+      await wallet.save();
+    }
+    return result;
   } catch (err) {
     return { ok: false, error: err.message };
   }

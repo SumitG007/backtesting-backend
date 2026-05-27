@@ -11,6 +11,10 @@ const M1200 = 720;
 const EOD_EXIT = 920;
 const SESSION_END = 930;
 const MIN_HOLD_MS = 10 * 60 * 1000;
+/** Default TARGET: combined premium falls by this % of entry credit (vol crush). */
+const DEFAULT_TARGET_VOL_CRUSH_PCT = 70;
+/** Default premium STOP_LOSS: combined premium rises by this % of entry credit. */
+const DEFAULT_STOP_VOL_EXPAND_PCT = 30;
 
 function median(nums) {
   const a = nums.filter(Number.isFinite).sort((x, y) => x - y);
@@ -165,19 +169,38 @@ function postEntrySpotRange(entrySpot, highSinceEntry, lowSinceEntry) {
   return Math.max(0, hi - lo);
 }
 
+/**
+ * Paper live only: seed 70/30 when wallet never saved premium exits.
+ * Explicit null + hasPremiumTarget/hasPremiumStop false = user turned off (blank).
+ */
+function applyPaperLivePremiumDefaults(raw = {}) {
+  const out = { ...(raw && typeof raw === 'object' ? raw : {}) };
+  const targetUnset = out.targetVolCrushPct === undefined;
+  const stopUnset = out.stopVolExpandPct === undefined;
+  if (targetUnset && out.hasPremiumTarget !== false) {
+    out.targetVolCrushPct = DEFAULT_TARGET_VOL_CRUSH_PCT;
+  }
+  if (stopUnset && out.hasPremiumStop !== false) {
+    out.stopVolExpandPct = DEFAULT_STOP_VOL_EXPAND_PCT;
+  }
+  return out;
+}
+
 function normalizeIvSettings(raw = {}) {
   const rawTg = raw.targetVolCrushPct;
+  const parsedTg = Number(rawTg);
   const hasPremiumTarget =
-    rawTg != null && rawTg !== '' && Number.isFinite(Number(rawTg)) && Number(rawTg) > 0;
+    rawTg != null && rawTg !== '' && Number.isFinite(parsedTg) && parsedTg > 0;
   const targetVolCrushPct = hasPremiumTarget
-    ? Math.min(90, Math.max(5, Number(rawTg)))
+    ? Math.min(90, Math.max(5, parsedTg))
     : null;
 
   const rawSl = raw.stopVolExpandPct;
+  const parsedSl = Number(rawSl);
   const hasPremiumStop =
-    rawSl != null && rawSl !== '' && Number.isFinite(Number(rawSl)) && Number(rawSl) > 0;
+    rawSl != null && rawSl !== '' && Number.isFinite(parsedSl) && parsedSl > 0;
   const stopVolExpandPct = hasPremiumStop
-    ? Math.min(200, Math.max(5, Number(rawSl)))
+    ? Math.min(200, Math.max(5, parsedSl))
     : null;
 
   const spikeModeRaw = String(raw.spikeMode || 'either').toLowerCase();
@@ -223,6 +246,9 @@ function premiumTargetsFromCredit(entryCredit, settings) {
 }
 
 module.exports = {
+  DEFAULT_TARGET_VOL_CRUSH_PCT,
+  DEFAULT_STOP_VOL_EXPAND_PCT,
+  applyPaperLivePremiumDefaults,
   M915,
   M945,
   M1000,
