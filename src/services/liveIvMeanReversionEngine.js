@@ -37,6 +37,7 @@ const {
   getAtmPremiums,
   getCurrentLotSize,
   getNearestWeeklyExpiry,
+  getTradableWeeklyExpiry,
   resolveOptionInstrument,
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
@@ -144,13 +145,14 @@ function optionTicksAreFresh() {
   return now - (ce.ts || 0) < TICK_FRESH_MAX_AGE_MS && now - (pe.ts || 0) < TICK_FRESH_MAX_AGE_MS;
 }
 
-async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain = true } = {}) {
+async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain = true, forceChain = false } = {}) {
   if (preferTicks || optionTicksAreFresh()) {
     const tickMark = getCombinedFromTrade(trade, null);
     if (tickMark.source === 'websocket') return tickMark;
   }
   const now = Date.now();
-  if (!allowChain || now - engineState.lastChainFetchAt < OPEN_MARK_CHAIN_MIN_GAP_MS) {
+  const chainGapOk = forceChain || now - engineState.lastChainFetchAt >= OPEN_MARK_CHAIN_MIN_GAP_MS;
+  if (!allowChain || !chainGapOk) {
     return getCombinedFromTrade(trade, null);
   }
   try {
@@ -187,9 +189,17 @@ function buildOpenPositionMark(trade, mark, clock) {
     ? entryIv * (Number(engineState.settings.ivExpandStopMult) || 1.5)
     : null;
 
+  const source = mark?.source || 'entry';
+  const isLiveMark = source === 'websocket' || source === 'chain';
+  const creditNum = Number(credit.toFixed(2));
+  const buybackNum = Number(buyback.toFixed(2));
+  const chargesEst = Number(trade.charges) || 0;
+
   return {
     at: new Date().toISOString(),
-    source: mark?.source || 'entry',
+    source,
+    isLiveMark,
+    priceSourceLabel: isLiveMark ? 'LIVE' : 'STALE',
     ceLtp: Number.isFinite(mark?.ce) ? Number(mark.ce.toFixed(2)) : null,
     peLtp: Number.isFinite(mark?.pe) ? Number(mark.pe.toFixed(2)) : null,
     combinedPremium: Number(combined.toFixed(2)),
@@ -209,6 +219,13 @@ function buildOpenPositionMark(trade, mark, clock) {
     todaySignal: engineState.todaySignal,
     isProfitable: grossPnl > 0,
     phase: 'INTRADAY_HOLD',
+    pnlAudit: {
+      creditReceived: creditNum,
+      currentBuyback: buybackNum,
+      charges: chargesEst,
+      grossPnl: Number(grossPnl.toFixed(2)),
+      formula: `${creditNum} − ${buybackNum} − ${chargesEst}`,
+    },
   };
 }
 
@@ -297,8 +314,9 @@ async function refreshTodayCandles(clock) {
 }
 
 function evaluateTodaySignal(clock) {
-  const todayOr = orIvProxyFromBars(engineState.todayBars);
-  if (todayOr != null && todayOr > 0) {
+  const orComplete = isAfterOrWindow(clock.minutes);
+  const todayOr = orComplete ? orIvProxyFromBars(engineState.todayBars) : null;
+  if (todayOr != null && todayOr > 0 && orComplete) {
     engineState.orIvByDay.set(clock.dateKey, todayOr);
   }
   const sortedKeys = [...engineState.orIvByDay.keys()].sort();
@@ -315,6 +333,18 @@ function evaluateTodaySignal(clock) {
     engineState.settings.ivLookbackDays,
     engineState.settings.minOrHistoryDays,
   );
+  if (!orComplete) {
+    engineState.todaySignal = {
+      at: new Date().toISOString(),
+      todayOr: null,
+      medianOrIv,
+      sampleSize,
+      ok: false,
+      reason: 'OR_WINDOW_OPEN',
+      orComplete: false,
+    };
+    return engineState.todaySignal;
+  }
   const spike = evaluateOrSpikeSignal({
     todayOr,
     medianOrIv,
@@ -329,6 +359,7 @@ function evaluateTodaySignal(clock) {
     todayOr,
     medianOrIv,
     sampleSize,
+    orComplete: true,
     ...spike,
   };
   return engineState.todaySignal;
@@ -361,9 +392,13 @@ async function subscribeOpenStraddle(trade) {
 
 async function getCurrentExpiry(symbol, dateKey) {
   const cachedExpiry = String(engineState.expiry || '').slice(0, 10);
-  const isStale = !cachedExpiry || cachedExpiry < dateKey;
+  // On weekly expiry day, avoid opening new positions in the expiring series.
+  const isStale = !cachedExpiry || cachedExpiry <= dateKey;
   if (isStale) {
-    engineState.expiry = await getNearestWeeklyExpiry(symbol);
+    engineState.expiry = await getTradableWeeklyExpiry(symbol, dateKey);
+    if (!engineState.expiry) {
+      engineState.expiry = await getNearestWeeklyExpiry(symbol);
+    }
   }
   return engineState.expiry;
 }
@@ -464,7 +499,7 @@ async function placeShortStraddle(clock) {
         throw new Error(`Missing CE/PE LTP for strike ${strike}`);
       }
 
-      const lotSize = engineState.lotSize || (await getCurrentLotSize(symbol));
+      const lotSize = await getCurrentLotSize(symbol);
       engineState.lotSize = lotSize;
       const lots = engineState.settings.lotCount;
       const qty = lotSize * lots;
@@ -507,7 +542,7 @@ async function placeShortStraddle(clock) {
           { optionType: 'CE', entryPremium: Number(ceEntry.toFixed(2)) },
           { optionType: 'PE', entryPremium: Number(peEntry.toFixed(2)) },
         ],
-        notes: `ivLive; spike=${signal.reason}`,
+        notes: `ivLive; spike=${signal.reason}; lotSize=${lotSize}; qty=${qty}; expiry=${expiry}; dhanLtp=1`,
       });
 
       engineState.openTradeId = tradeDoc._id.toString();
@@ -602,6 +637,12 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
   const combined = Number(mark.combined);
   if (!Number.isFinite(combined) || combined <= 0) return;
 
+  // Never exit on stale entry-premium fallback — wait for real Dhan LTP (chain or WS).
+  if (mark.source === 'entry' && !isEodExitTime(clock.minutes)) {
+    engineState.lastError = 'Strategy 3 mark: waiting for live CE/PE LTP from Dhan';
+    return;
+  }
+
   if (
     engineState.settings.hasPremiumTarget
     && trade.targetPremium != null
@@ -629,7 +670,7 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
   }
 
   if (isEodExitTime(clock.minutes)) {
-    await finalizeTrade(trade, { exitCombined: combined, mark, reason: 'DAY_CLOSE' });
+    await finalizeTrade(trade, { exitCombined: combined, mark, reason: 'DAY_CLOSE', forceChain: true });
   }
 }
 
@@ -639,8 +680,16 @@ async function finalizeTrade(trade, { exitCombined, mark, reason, forceChain = f
   try {
     await withRetry('EXIT_STRADDLE', async () => {
       let resolvedMark = mark;
-      if (forceChain || !Number.isFinite(mark?.combined)) {
-        resolvedMark = await resolveMarkForOpenTrade(trade, { allowChain: true });
+      if (forceChain || !Number.isFinite(mark?.combined) || mark?.source === 'entry') {
+        resolvedMark = await resolveMarkForOpenTrade(trade, { allowChain: true, forceChain: true });
+      }
+      const markSource = resolvedMark?.source || 'unknown';
+      const liveExitMark = markSource === 'websocket' || markSource === 'chain';
+      if (!liveExitMark && !forceChain) {
+        throw new Error('Exit blocked — no live Dhan CE/PE LTP yet');
+      }
+      if (!liveExitMark && forceChain) {
+        engineState.lastError = `Strategy 3 exit: used last available mark (${markSource}) — Dhan LTP unavailable`;
       }
       const safeExitCombined = Math.max(
         0.05,
@@ -664,6 +713,8 @@ async function finalizeTrade(trade, { exitCombined, mark, reason, forceChain = f
       trade.pnl = Number(pnl.toFixed(2));
       const marginBlocked = Number(trade.investedAmount) || 0;
       trade.pnlPct = marginBlocked > 0 ? Number(((pnl / marginBlocked) * 100).toFixed(2)) : 0;
+      const auditTail = `exitMark=${markSource}; credit=${Number(credit.toFixed(2))}; buyback=${Number(exitDebit.toFixed(2))}; charges=${charges}; pnl=${Number(pnl.toFixed(2))}`;
+      trade.notes = [trade.notes, auditTail].filter(Boolean).join(' | ').slice(0, 500);
       await trade.save();
 
       const wallet = await ensureWallet();
@@ -685,6 +736,8 @@ async function finalizeTrade(trade, { exitCombined, mark, reason, forceChain = f
         reason,
         pnl,
         exitCombined: safeExitCombined,
+        markSource,
+        liveExitMark,
       });
       clearOpenTrade();
     });
@@ -772,7 +825,10 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     await backfillOrHistoryIfNeeded();
     engineState.lotSize = await getCurrentLotSize(engineState.symbol);
     const clock = getIstClock(new Date());
-    engineState.expiry = await getNearestWeeklyExpiry(engineState.symbol);
+    engineState.expiry = await getTradableWeeklyExpiry(engineState.symbol, clock.dateKey);
+    if (!engineState.expiry) {
+      engineState.expiry = await getNearestWeeklyExpiry(engineState.symbol);
+    }
     const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({
       entryTime: -1,
     });
@@ -868,7 +924,7 @@ function getEngineSnapshot() {
 
 async function recalcWalletFromTrades() {
   const wallet = await ensureWallet();
-  const rows = await LivePaperTrade.find({ exitTime: { $ne: null } }).lean();
+  const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: { $ne: null } }).lean();
   let realizedPnl = 0;
   let wins = 0;
   let losses = 0;

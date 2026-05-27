@@ -13,8 +13,8 @@ const PRESET_SYMBOLS = {
 };
 
 const DEFAULT_LOT_SIZES = {
-  NIFTY: 65,
-  BANKNIFTY: 65,
+  NIFTY: 75,
+  BANKNIFTY: 30,
 };
 
 module.exports = {

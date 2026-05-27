@@ -180,8 +180,8 @@ async function main() {
   }
 
   console.log('\n--- Live vs backtest ---');
-  console.log('Strategy 3 has NO live/paper engine wired to IV mean reversion.');
-  console.log('liveShortStraddleEngine uses key strategy3_short_straddle = Strategy 2 style entry, not this logic.');
+  console.log('Paper live: liveIvMeanReversionEngine (strategy3_iv_mean_reversion_live) — real Dhan LTP + lot size.');
+  console.log('Backtest: modeled premium from basePremiumPct — same entry/exit rules, not same rupee P/L.');
 }
 
 main().catch((e) => {
