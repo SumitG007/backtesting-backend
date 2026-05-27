@@ -22,14 +22,6 @@ function run() {
     return runIvMeanReversionBacktest(payload);
   }
 
-  if (strategyKey === 'strategy6_rising_wedge_breakdown') {
-    return require('../strategies/strategy6/risingWedgeBacktest').runRisingWedgeBacktest(payload);
-  }
-
-  if (strategyKey === 'strategy5_kukki_v2_intraday') {
-    return require('../strategies/strategy7/kukkiV2Backtest').runKukkiV2Backtest(payload);
-  }
-
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
 

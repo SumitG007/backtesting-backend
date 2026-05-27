@@ -19,7 +19,6 @@ const {
 } = require('../controllers/backtestController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
-const { registerCatalogStrategyRoutes } = require('../controllers/backtest/registerCatalogRoutes');
 const {
   getStatus: getLiveStatus,
   startLive,
@@ -64,7 +63,6 @@ router.post('/live/:strategyId/settings', saveLiveSettings);
 router.post('/live/:strategyId/wallet/reset', resetLiveWallet);
 router.get('/live/:strategyId/trades', listLiveTrades);
 router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
-registerCatalogStrategyRoutes(router);
 router.post('/backtest/run', runBacktestStub);
 
 module.exports = router;
