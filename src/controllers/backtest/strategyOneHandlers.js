@@ -52,7 +52,7 @@ async function runStrategyOne(req, res) {
       }),
       fetchWithRateLimitRetry({
         symbol: settings.symbol,
-        interval: String(interval),
+        interval: String(settings.interval),
         year: yearNum,
       }),
     ]);
@@ -66,7 +66,7 @@ async function runStrategyOne(req, res) {
     const runDoc = await StrategyRun.create({
       strategyKey: STRATEGY_ONE_KEY,
       symbol: settings.symbol,
-      interval: String(interval),
+      interval: String(settings.interval),
       year: yearNum,
       settings,
       summary: result.summary,
@@ -86,7 +86,7 @@ async function runStrategyOne(req, res) {
       strategy: 'Strategy 1 - Previous Day Close Retest',
       year: yearNum,
       symbol: settings.symbol,
-      interval: String(interval),
+      interval: String(settings.interval),
       summary: result.summary,
       trades: result.trades.slice(0, pageSize),
       pagination: {
