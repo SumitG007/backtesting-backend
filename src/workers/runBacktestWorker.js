@@ -12,6 +12,7 @@ function run() {
   const { runIntradayTierBacktest } = require('../strategies/intradayTier/backtest');
   const INTRADAY_TIER_VARIANT = {
     strategy4_first_hour_pe_ce: 'first_hour_pe_ce',
+    strategy6_short_straddle_next_day: 'short_straddle_next_day',
   };
   const variant = INTRADAY_TIER_VARIANT[strategyKey];
   if (variant) {

@@ -14,6 +14,10 @@ const {
   getStrategyFourRunTrades,
   getStrategyFourValidation,
   postStrategyFourValidation,
+  runStrategyShortStraddleNextDay,
+  getStrategyShortStraddleRunTrades,
+  getStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidation,
 } = require('./intradayTierHandlers');
 const {
   runStrategyFive,
@@ -33,6 +37,10 @@ module.exports = {
   getStrategyFourRunTrades,
   getStrategyFourValidation,
   postStrategyFourValidation,
+  runStrategyShortStraddleNextDay,
+  getStrategyShortStraddleRunTrades,
+  getStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidation,
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,

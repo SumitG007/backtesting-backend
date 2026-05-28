@@ -2,15 +2,25 @@
  * Strategy 4 — first-hour vs 09:15 open: PE or CE; entry ≥10:00; premium SL/target; flat 15:20.
  */
 
-const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
+const {
+  getIstClock,
+  parseClockMinutes,
+  getWeekdayFromDateKey,
+  parseDateOnly,
+  addDays,
+  formatDateOnly,
+} = require('../../utils/dateTime');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
 const { computeSessionHighLow } = require('../shared/sessionRange');
+const { shortStraddleMarginBlocked } = require('../shared/shortStraddleMargin');
 
 const M915 = 555;
+const M920 = 560;
 const M1000 = 600; // 10:00
 const M1100 = 660;
 const EOD_EXIT = 920; // 15:20 IST
+const NEXT_DAY_EOD_EXIT = 915; // 15:15 IST
 const SESSION_END = 930;
 
 function buildIntradayByDay(rows) {
@@ -305,10 +315,249 @@ function pushTrade({
   });
 }
 
+function firstBarAtOrAfter(bars, minuteMark) {
+  for (let i = 0; i < bars.length; i += 1) {
+    if (getIstClock(bars[i][0]).minutes >= minuteMark) return i;
+  }
+  return null;
+}
+
+function parseExpiryWeekday(value) {
+  const byName = {
+    SUNDAY: 0,
+    MONDAY: 1,
+    TUESDAY: 2,
+    WEDNESDAY: 3,
+    THURSDAY: 4,
+    FRIDAY: 5,
+    SATURDAY: 6,
+  };
+  const raw = String(value == null ? 'TUESDAY' : value).trim().toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(byName, raw)) return byName[raw];
+  const n = Number(raw);
+  if (Number.isInteger(n) && n >= 0 && n <= 6) return n;
+  return 2; // Tuesday default
+}
+
+function resolveNextExpiryDateKey(entryDateKey, expiryWeekday) {
+  const wd = getWeekdayFromDateKey(entryDateKey);
+  if (wd < 0) return null;
+  const parsed = parseDateOnly(entryDateKey);
+  if (Number.isNaN(parsed.getTime())) return null;
+  let daysAhead = (expiryWeekday - wd + 7) % 7;
+  if (daysAhead === 0) daysAhead = 7; // On expiry day, use next expiry.
+  return formatDateOnly(addDays(parsed, daysAhead));
+}
+
+function runShortStraddleNextDay({ candles, settings }) {
+  const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
+  const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
+  const lotCount = Math.max(1, Number(settings.lotCount) || 1);
+  const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.5);
+  const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
+  const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
+  const strikeMode = String(settings.strikeMode || 'ATM');
+  const rawSl = Number(settings.stopLossPoints);
+  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
+  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSl)) : 0;
+  const rawTarget = Number(settings.targetProfitPoints);
+  const hasTarget = Number.isFinite(rawTarget) && rawTarget > 0;
+  const targetProfitPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTarget)) : 0;
+  const perTradeCost =
+    Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
+      ? Number(settings.perTradeCost)
+      : 100;
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, M920);
+  const entryToMinutes = parseClockMinutes(settings.entryToTime, entryFromMinutes);
+  const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
+  const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
+  const nextDayExitAtMinutes = parseClockMinutes(settings.nextDayExitTime, NEXT_DAY_EOD_EXIT);
+  const expiryWeekday = parseExpiryWeekday(settings.expiryWeekday);
+  const thetaDecayPerDayPct = Math.max(1, Number(settings.thetaDecayPerDayPct) || 12);
+
+  const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
+  const sortedKeys = Array.from(intraByDay.keys()).sort();
+  const trades = [];
+
+  for (let i = 0; i < sortedKeys.length - 1; i += 1) {
+    const entryBars = intraByDay.get(sortedKeys[i]) || [];
+    const exitBars = intraByDay.get(sortedKeys[i + 1]) || [];
+    if (entryBars.length < 2 || exitBars.length < 2) continue;
+
+    let entryIdx = null;
+    for (let j = 0; j < entryBars.length; j += 1) {
+      const m = getIstClock(entryBars[j][0]).minutes;
+      if (m >= normalizedEntryFrom && m <= normalizedEntryTo) {
+        entryIdx = j;
+        break;
+      }
+    }
+    if (entryIdx == null) continue;
+
+    const nextDayExitIdx = firstBarAtOrAfter(exitBars, nextDayExitAtMinutes);
+    if (nextDayExitIdx == null) continue;
+
+    const entrySpot = Number(entryBars[entryIdx][4]);
+    const exitSpot = Number(exitBars[nextDayExitIdx][4]);
+    if (!Number.isFinite(entrySpot) || entrySpot <= 0 || !Number.isFinite(exitSpot) || exitSpot <= 0) continue;
+
+    const strike = pickStrike({ entrySpot, strikeStep, optionType: 'CE', strikeMode });
+    const expiryDate = resolveNextExpiryDateKey(sortedKeys[i], expiryWeekday);
+    const ceEntryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
+    const peEntryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
+
+    const ceExitPremium = getOptionPremiumFromSpotMove({
+      side: 'LONG',
+      entrySpot,
+      currentSpot: exitSpot,
+      entryPremium: ceEntryPremium,
+      premiumLeverage,
+      strike,
+      strikeStep,
+    });
+    const peExitPremium = getOptionPremiumFromSpotMove({
+      side: 'SHORT',
+      entrySpot,
+      currentSpot: exitSpot,
+      entryPremium: peEntryPremium,
+      premiumLeverage,
+      strike,
+      strikeStep,
+    });
+
+    const entryCredit = ceEntryPremium + peEntryPremium;
+    let exitBuyback = ceExitPremium + peExitPremium;
+    const stopCombined = hasStopLoss ? entryCredit + stopLossPoints : null;
+    const targetCombined = hasTarget ? Math.max(0.05, entryCredit - targetProfitPoints) : null;
+    const qty = lotSize * lotCount;
+    let exitTime = exitBars[nextDayExitIdx][0];
+    let exitSpotChosen = exitSpot;
+    let reason = 'NEXT_DAY_EXIT';
+
+    const entryTs = new Date(entryBars[entryIdx][0]).getTime();
+    const evalCombinedPremium = (spot, barIsoTime) => {
+      const ce = getOptionPremiumFromSpotMove({
+        side: 'LONG',
+        entrySpot,
+        currentSpot: spot,
+        entryPremium: ceEntryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      const pe = getOptionPremiumFromSpotMove({
+        side: 'SHORT',
+        entrySpot,
+        currentSpot: spot,
+        entryPremium: peEntryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      const barTs = new Date(barIsoTime).getTime();
+      const elapsedDays =
+        Number.isFinite(entryTs) && Number.isFinite(barTs) && barTs > entryTs
+          ? (barTs - entryTs) / (1000 * 60 * 60 * 24)
+          : 0;
+      const decayFactor = Math.max(0.35, 1 - (thetaDecayPerDayPct / 100) * elapsedDays);
+      return (ce + pe) * decayFactor;
+    };
+
+    const scanBars = [
+      ...entryBars.slice(entryIdx + 1).map((row) => ({ row, isFinalForcedBar: false })),
+      ...exitBars.slice(0, nextDayExitIdx + 1).map((row, idx) => ({ row, isFinalForcedBar: idx === nextDayExitIdx })),
+    ];
+
+    for (const item of scanBars) {
+      const row = item.row;
+      const h = Number(row[2]);
+      const l = Number(row[3]);
+      const c = Number(row[4]);
+      if (![h, l, c].every(Number.isFinite)) continue;
+
+      const combinedAtHigh = evalCombinedPremium(h, row[0]);
+      const combinedAtLow = evalCombinedPremium(l, row[0]);
+      const adverseCombined = Math.max(combinedAtHigh, combinedAtLow);
+      const favorableCombined = Math.min(combinedAtHigh, combinedAtLow);
+
+      if (hasStopLoss && stopCombined != null && adverseCombined >= stopCombined) {
+        exitBuyback = stopCombined;
+        exitTime = row[0];
+        exitSpotChosen = adverseCombined === combinedAtHigh ? h : l;
+        reason = 'STOP_LOSS';
+        break;
+      }
+      if (hasTarget && targetCombined != null && favorableCombined <= targetCombined) {
+        exitBuyback = targetCombined;
+        exitTime = row[0];
+        exitSpotChosen = favorableCombined === combinedAtLow ? l : h;
+        reason = 'TARGET';
+        break;
+      }
+      if (item.isFinalForcedBar) {
+        exitBuyback = evalCombinedPremium(c, row[0]);
+        exitTime = row[0];
+        exitSpotChosen = c;
+        reason = 'NEXT_DAY_EXIT';
+      }
+    }
+
+    const credit = entryCredit * qty;
+    const buyback = exitBuyback * qty;
+    const rawPnl = credit - buyback;
+    const pnl = rawPnl - perTradeCost;
+    const totalMarginBlocked = shortStraddleMarginBlocked({
+      entrySpot,
+      lotSize,
+      lotCount,
+      settings,
+    });
+    trades.push({
+      pair: symbol,
+      type: 'STRADDLE',
+      strike,
+      buyPrice: Number(exitBuyback.toFixed(2)),
+      sellPrice: Number(entryCredit.toFixed(2)),
+      lotSize,
+      lots: lotCount,
+      invested: Number(totalMarginBlocked.toFixed(2)),
+      finalValue: Number(buyback.toFixed(2)),
+      closed: 'STRADDLE',
+      order: 'SELL',
+      entryTime: entryBars[entryIdx][0],
+      exitTime,
+      entryPrice: Number(entrySpot.toFixed(2)),
+      exitPrice: Number(exitSpotChosen.toFixed(2)),
+      stopLoss: hasStopLoss && stopCombined != null ? Number(stopCombined.toFixed(2)) : null,
+      target: hasTarget && targetCombined != null ? Number(targetCombined.toFixed(2)) : null,
+      qty,
+      premium: Number(entryCredit.toFixed(2)),
+      lotCount,
+      creditReceived: Number(credit.toFixed(2)),
+      investmentAmount: Number(totalMarginBlocked.toFixed(2)),
+      stopLossAmount: hasStopLoss ? Number((stopLossPoints * qty).toFixed(2)) : null,
+      targetAmount: hasTarget ? Number((targetProfitPoints * qty).toFixed(2)) : null,
+      grossPnl: Number(rawPnl.toFixed(2)),
+      charges: perTradeCost,
+      pnl: Number(pnl.toFixed(2)),
+      pnlPct: totalMarginBlocked > 0 ? Number(((pnl / totalMarginBlocked) * 100).toFixed(2)) : 0,
+      reason,
+      expiryDate: expiryDate || undefined,
+      ...computeSessionHighLow(entryBars),
+    });
+  }
+
+  return { trades, summary: buildStrategyRunSummary(trades) };
+}
+
 /**
  * @param {{ candles: unknown[], settings: Record<string, unknown>, variant: string }} args
  */
 function runIntradayTierBacktest({ candles, settings, variant }) {
+  if (variant === 'short_straddle_next_day') {
+    return runShortStraddleNextDay({ candles, settings });
+  }
+
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
   const lotCount = Math.max(1, Number(settings.lotCount) || 1);

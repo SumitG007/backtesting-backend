@@ -45,6 +45,16 @@ const liveWalletSchema = new mongoose.Schema(
       stopVolExpandPct: { type: Number, default: null },
       ivExpandStopMult: { type: Number, default: 1.5 },
     },
+    strategy4EngineSettings: {
+      lotCount: { type: Number, default: 1 },
+      targetPct: { type: Number, default: null },
+      stopLossPct: { type: Number, default: null },
+      entryTime: { type: String, default: '09:20' },
+      entryWindowMinutes: { type: Number, default: 2 },
+      dayCloseTime: { type: String, default: '15:15' },
+      skipExpiryDay: { type: Boolean, default: true },
+      perTradeCost: { type: Number, default: 100 },
+    },
     strategy3OrHistory: {
       type: [{ dateKey: String, orIv: Number }],
       default: [],

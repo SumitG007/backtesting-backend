@@ -11,6 +11,10 @@ const {
   getStrategyFourRunTrades,
   getStrategyFourValidation,
   postStrategyFourValidation,
+  runStrategyShortStraddleNextDay,
+  getStrategyShortStraddleRunTrades,
+  getStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidation,
   runStrategyFive,
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
@@ -54,6 +58,11 @@ router.post('/strategy3/run', runStrategyFive);
 router.post('/strategy3/validation', postStrategyFiveValidation);
 router.get('/strategy3/runs/:runId/trades', getStrategyFiveRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategyFiveValidation);
+// Strategy 4 — short straddle (entry day + next day exit)
+router.post('/strategy4/run', runStrategyShortStraddleNextDay);
+router.post('/strategy4/validation', postStrategyShortStraddleValidation);
+router.get('/strategy4/runs/:runId/trades', getStrategyShortStraddleRunTrades);
+router.get('/strategy4/runs/:runId/validation', getStrategyShortStraddleValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

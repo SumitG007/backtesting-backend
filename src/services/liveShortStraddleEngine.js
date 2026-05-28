@@ -18,8 +18,9 @@ const {
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
 } = require('./dhanLiveService');
+const { STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } = require('../strategies/keys');
 
-const STRATEGY_KEY = 'strategy3_short_straddle';
+const STRATEGY_KEY = STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY;
 const CE_SUBSCRIPTION_KEY = 'engine:strategy2:ce';
 const PE_SUBSCRIPTION_KEY = 'engine:strategy2:pe';
 const POLL_INTERVAL_MS = 8000;
@@ -38,9 +39,9 @@ const engineState = {
     lotCount: 1,
     targetPct: null,
     stopLossPct: null,
-    entryTime: '09:30',
-    entryWindowMinutes: 5,
-    dayCloseTime: '09:20',
+    entryTime: '09:20',
+    entryWindowMinutes: 2,
+    dayCloseTime: '15:15',
     skipExpiryDay: true,
     perTradeCost: 100,
   },
@@ -82,14 +83,17 @@ function logEntry(line, payload = {}) {
 
 function normalizeSettings(settings = {}) {
   const rawPerTradeCost = Number(settings.perTradeCost);
+  const rawEntryWindow = Number(settings.entryWindowMinutes);
   const skipExpiryDay = settings.skipExpiryDay !== false && settings.skipExpiryDay !== 'false';
   return {
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
     targetPct: parseOptionalPct(settings.targetPct),
     stopLossPct: parseOptionalPct(settings.stopLossPct),
-    entryTime: String(settings.entryTime || settings.entryFromTime || '09:30'),
-    entryWindowMinutes: Math.max(0, Math.min(30, Number(settings.entryWindowMinutes) || 5)),
-    dayCloseTime: String(settings.dayCloseTime || '09:20'),
+    entryTime: String(settings.entryTime || settings.entryFromTime || '09:20'),
+    entryWindowMinutes: Number.isFinite(rawEntryWindow)
+      ? Math.max(0, Math.min(30, rawEntryWindow))
+      : 2,
+    dayCloseTime: String(settings.dayCloseTime || settings.nextDayExitTime || '15:15'),
     skipExpiryDay,
     perTradeCost: Number.isFinite(rawPerTradeCost) && rawPerTradeCost >= 0 ? rawPerTradeCost : 100,
   };
@@ -228,8 +232,9 @@ async function refreshOpenPositionMark({ preferTicks = false, tradeDoc = null } 
 }
 
 async function ensureWallet() {
-  let wallet = await LiveWallet.findOne({ walletKey: 'default' });
-  if (!wallet) wallet = await LiveWallet.create({ walletKey: 'default' });
+  const walletKey = 'paper_live_strategy4';
+  let wallet = await LiveWallet.findOne({ walletKey });
+  if (!wallet) wallet = await LiveWallet.create({ walletKey });
   if (wallet.startingBalance !== 0 || wallet.balance !== wallet.realizedPnl) {
     wallet.startingBalance = 0;
     wallet.balance = Number(wallet.realizedPnl || 0);
@@ -707,7 +712,7 @@ async function updateEngineSettings(partial = {}) {
   logEntry('SETTINGS_UPDATED', { settings: next, running: engineState.running });
   try {
     const wallet = await ensureWallet();
-    wallet.strategy2EngineSettings = next;
+    wallet.strategy4EngineSettings = next;
     await wallet.save();
   } catch (err) {
     engineState.lastError = `Strategy 2 settings persist failed: ${err.message}`;
@@ -718,8 +723,8 @@ async function updateEngineSettings(partial = {}) {
 async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
   try {
     const wallet = await ensureWallet();
-    const persisted = wallet.strategy2EngineSettings
-      ? wallet.strategy2EngineSettings.toObject?.() || wallet.strategy2EngineSettings
+    const persisted = wallet.strategy4EngineSettings
+      ? wallet.strategy4EngineSettings.toObject?.() || wallet.strategy4EngineSettings
       : {};
     return startEngine({ symbol, settings: persisted });
   } catch (err) {
@@ -747,13 +752,43 @@ function getEngineSnapshot() {
   };
 }
 
+async function ensureEngineRunning() {
+  if (engineState.running) {
+    return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  }
+  return bootEngineFromDb();
+}
+
+async function recalcWalletFromTrades() {
+  const wallet = await ensureWallet();
+  const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: { $ne: null } }).lean();
+  let realizedPnl = 0;
+  let wins = 0;
+  let losses = 0;
+  for (const t of rows) {
+    const p = Number(t.pnl) || 0;
+    realizedPnl += p;
+    if (p > 0) wins += 1;
+    else if (p < 0) losses += 1;
+  }
+  wallet.realizedPnl = Number(realizedPnl.toFixed(2));
+  wallet.balance = wallet.realizedPnl;
+  wallet.totalTrades = rows.length;
+  wallet.wins = wins;
+  wallet.losses = losses;
+  await wallet.save();
+  return wallet;
+}
+
 module.exports = {
   STRATEGY_KEY,
   startEngine,
   stopEngine,
   updateEngineSettings,
   bootEngineFromDb,
+  ensureEngineRunning,
   getEngineSnapshot,
   refreshOpenPositionMark,
   ensureWallet,
+  recalcWalletFromTrades,
 };
