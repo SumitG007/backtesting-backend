@@ -308,6 +308,151 @@ async function getAtmPremiums({ symbol, strike, expiry }) {
   };
 }
 
+function parseMarginFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const directCandidates = [
+    payload.totalMargin,
+    payload.marginRequired,
+    payload.margin,
+    payload.requiredMargin,
+    payload.blockedMargin,
+  ]
+    .map((v) => Number(v))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (directCandidates.length > 0) return Math.max(...directCandidates);
+
+  const nestedKeys = ['data', 'result', 'summary'];
+  for (const key of nestedKeys) {
+    const nested = payload[key];
+    if (nested && typeof nested === 'object') {
+      const n = parseMarginFromPayload(nested);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+  }
+
+  const listKeys = ['scripList', 'scripts', 'orders', 'orderMargins', 'items'];
+  for (const key of listKeys) {
+    const arr = payload[key];
+    if (!Array.isArray(arr)) continue;
+    const sum = arr.reduce((acc, row) => {
+      const n = parseMarginFromPayload(row);
+      return acc + (Number.isFinite(n) && n > 0 ? n : 0);
+    }, 0);
+    if (sum > 0) return sum;
+  }
+  return null;
+}
+
+async function postWithAuthRetry(path, body, authContext) {
+  const clientId = getDhanClientId();
+  const accessToken = readLatestAccessToken();
+  if (!clientId || !accessToken) throw new Error('Missing Dhan credentials');
+  const headers = {
+    'access-token': accessToken,
+    'client-id': clientId,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  try {
+    return await axios.post(`${DHAN_BASE}${path}`, body, { headers, timeout: 20000 });
+  } catch (error) {
+    if (isLikelyDhanAuthError(error)) {
+      const renewed = await ensureValidDhanAccessToken(authContext);
+      return axios.post(`${DHAN_BASE}${path}`, body, {
+        headers: { ...headers, 'access-token': renewed },
+        timeout: 20000,
+      });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Calculate short straddle margin from Dhan margin calculator API.
+ * Falls back by throwing if endpoint rejects payload; caller should fallback.
+ */
+async function estimateShortStraddleMargin({
+  symbol,
+  expiry,
+  strike,
+  lotSize,
+  lots = 1,
+  cePrice,
+  pePrice,
+}) {
+  const resolved = resolveSymbolConfig(symbol);
+  const clientId = getDhanClientId();
+  if (!clientId) throw new Error('Missing dhanClientId');
+  const qty = Math.max(1, Number(lotSize) || 1) * Math.max(1, Number(lots) || 1);
+  const ceInstrument = await resolveOptionInstrument({
+    symbol,
+    strike,
+    expiry,
+    optionType: 'CE',
+  });
+  const peInstrument = await resolveOptionInstrument({
+    symbol,
+    strike,
+    expiry,
+    optionType: 'PE',
+  });
+  const segment = ceInstrument.exchangeSegment || resolved.exchangeSegment || 'NSE_FNO';
+  const mkOrder = (securityId, price) => ({
+    exchangeSegment: segment,
+    transactionType: 'SELL',
+    quantity: qty,
+    productType: 'INTRADAY',
+    securityId: String(securityId),
+    price: Number.isFinite(Number(price)) ? Number(price) : 0,
+    triggerPrice: 0,
+  });
+
+  const multiBody = {
+    includePosition: false,
+    includeOrder: false,
+    dhanClientId: clientId,
+    scripList: [
+      mkOrder(ceInstrument.securityId, cePrice),
+      mkOrder(peInstrument.securityId, pePrice),
+    ],
+  };
+
+  try {
+    const resp = await postWithAuthRetry('/margincalculator/multi', multiBody, 'margin-calc-multi');
+    const margin = parseMarginFromPayload(resp.data);
+    if (Number.isFinite(margin) && margin > 0) return Number(margin.toFixed(2));
+  } catch {
+    // Try single-order endpoints and add.
+  }
+
+  const singleCeBody = {
+    dhanClientId: clientId,
+    exchangeSegment: segment,
+    transactionType: 'SELL',
+    quantity: qty,
+    productType: 'INTRADAY',
+    securityId: String(ceInstrument.securityId),
+    price: Number.isFinite(Number(cePrice)) ? Number(cePrice) : 0,
+    triggerPrice: 0,
+  };
+  const singlePeBody = {
+    ...singleCeBody,
+    securityId: String(peInstrument.securityId),
+    price: Number.isFinite(Number(pePrice)) ? Number(pePrice) : 0,
+  };
+
+  const [ceResp, peResp] = await Promise.all([
+    postWithAuthRetry('/margincalculator', singleCeBody, 'margin-calc-ce'),
+    postWithAuthRetry('/margincalculator', singlePeBody, 'margin-calc-pe'),
+  ]);
+  const ceMargin = parseMarginFromPayload(ceResp.data);
+  const peMargin = parseMarginFromPayload(peResp.data);
+  if (Number.isFinite(ceMargin) && ceMargin > 0 && Number.isFinite(peMargin) && peMargin > 0) {
+    return Number((ceMargin + peMargin).toFixed(2));
+  }
+  throw new Error('Margin calculator response missing margin values');
+}
+
 // ----------------- WebSocket (Live Index Ticker) -----------------
 
 const wsState = {
@@ -579,6 +724,7 @@ module.exports = {
   getTradableWeeklyExpiry,
   getAtmPremiums,
   resolveOptionInstrument,
+  estimateShortStraddleMargin,
   subscribeLiveInstrument,
   subscribeLiveSymbol,
   unsubscribeLiveSymbol,

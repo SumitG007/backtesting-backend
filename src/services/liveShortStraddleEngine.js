@@ -15,6 +15,7 @@ const {
   getNearestWeeklyExpiry,
   getTradableWeeklyExpiry,
   resolveOptionInstrument,
+  estimateShortStraddleMargin,
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
 } = require('./dhanLiveService');
@@ -462,6 +463,29 @@ async function placeShortStraddle(clock) {
     const rawCharges = Number(engineState.settings.perTradeCost);
     const charges = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
 
+    let marginBlocked = null;
+    try {
+      marginBlocked = await estimateShortStraddleMargin({
+        symbol,
+        expiry,
+        strike,
+        lotSize,
+        lots,
+        cePrice: ceEntry,
+        pePrice: peEntry,
+      });
+    } catch (err) {
+      engineState.lastError = `Strategy 4 margin API fallback: ${err.message}`;
+    }
+    if (!Number.isFinite(marginBlocked) || marginBlocked <= 0) {
+      marginBlocked = shortStraddleMarginBlocked({
+        entrySpot: spot,
+        lotSize,
+        lotCount: lots,
+        settings: engineState.settings,
+      });
+    }
+
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
       symbol,
@@ -480,14 +504,7 @@ async function placeShortStraddle(clock) {
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
       targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
       status: 'OPEN',
-      investedAmount: Number(
-        shortStraddleMarginBlocked({
-          entrySpot: spot,
-          lotSize,
-          lotCount: lots,
-          settings: engineState.settings,
-        }).toFixed(2),
-      ),
+      investedAmount: Number(marginBlocked.toFixed(2)),
       creditReceived: Number((entryCredit * qty).toFixed(2)),
       charges: Number(charges.toFixed(2)),
       legs: [
