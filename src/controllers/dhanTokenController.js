@@ -6,24 +6,13 @@ const {
   decodeJwtMeta,
   sanitizeAccessToken,
   shouldAttemptDhanRenew,
+  getDhanRenewScheduleMeta,
 } = require('../services/dhanTokenPersistence');
 const { getDhanClientId } = require('../services/dhanTokenStore');
 
-function requireSeedPassword(req, res) {
-  const required = String(process.env.APP_LOGIN_PASSWORD || '').trim();
-  if (!required) return true;
-  const given = String(req.body?.password || '').trim();
-  if (given !== required) {
-    res.status(401).json({ ok: false, error: 'Invalid or missing password' });
-    return false;
-  }
-  return true;
-}
-
-/** Seed Dhan JWT + client id in MongoDB, then call RenewToken. No JWT in .env. */
+/** Seed Dhan JWT + client id in MongoDB, then call RenewToken. Requires platform JWT. */
 async function postDhanAccessToken(req, res) {
   try {
-    if (!requireSeedPassword(req, res)) return;
     const mergedBody = {
       ...(req.body || {}),
       accessToken: req.body?.accessToken || req.body?.token || req.headers['access-token'],
@@ -72,6 +61,9 @@ async function getDhanTokenStatus(_req, res) {
       }
     }
 
+    const renewGate = shouldAttemptDhanRenew(doc);
+    const schedule = getDhanRenewScheduleMeta(doc);
+
     return res.json({
       ok: true,
       hasToken: Boolean(token),
@@ -80,13 +72,19 @@ async function getDhanTokenStatus(_req, res) {
       jwtExpIso: jwt.expIso,
       renewCreateTime: doc?.renewCreateTime || null,
       renewExpiryTime: doc?.renewExpiryTime || null,
-      shouldRenew: shouldAttemptDhanRenew(doc),
+      lastRenewedAt: doc?.lastRenewedAt || null,
+      shouldRenew: renewGate.ok,
+      renewSkipReason: renewGate.ok ? null : renewGate.reason,
+      nextScheduledRenewAt: schedule.nextScheduledRenewAt,
+      renewAgeHours: schedule.renewAgeHours,
       profileOk,
       profileError,
       updatedAt: doc?.updatedAt || null,
       hint: !jwtValid
-        ? 'JWT expired. RenewToken will fail with DH-906. Get a new token at web.dhan.co and POST /api/dhan/access-token (do not paste only into Mongo while server is running).'
-        : null,
+        ? 'JWT expired. RenewToken will fail with DH-906. Get a new token at web.dhan.co and POST /api/dhan/access-token once (then auto-renew every ~20h while server runs).'
+        : renewGate.ok
+          ? 'Renew recommended now (age or near expiry). Scheduler will call Dhan RenewToken.'
+          : `Auto-renew active. Next check when token is ~${schedule.renewAgeHours}h old or <${schedule.renewBeforeExpiryHours}h to JWT expiry.`,
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message || String(error) });

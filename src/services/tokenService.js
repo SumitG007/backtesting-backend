@@ -4,6 +4,7 @@ const {
   reloadDhanCredentialsFromMongo,
   sanitizeAccessToken,
   tokenLooksValid,
+  shouldAttemptDhanRenew,
 } = require('./dhanTokenPersistence');
 
 function readLatestAccessToken() {
@@ -36,7 +37,11 @@ async function ensureValidDhanAccessToken(reason = 'ensure-valid') {
       `Cannot ensure Dhan token (${reason}): JWT expired — generate a new token at web.dhan.co and POST /api/dhan/access-token`,
     );
   }
-  await renewAccessToken();
+  const doc = await reloadDhanCredentialsFromMongo();
+  const gate = shouldAttemptDhanRenew(doc);
+  if (gate.ok) {
+    await renewAccessToken();
+  }
   return readLatestAccessToken();
 }
 

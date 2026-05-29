@@ -111,7 +111,15 @@ async function renewAccessToken({ force = false } = {}) {
         dhanClientId: clientId,
         renewCreateTime: raw.createTime,
         renewExpiryTime: raw.expiryTime,
+        markRenewed: true,
       });
+
+      try {
+        const { notifyDhanConnectivityRestored } = require('./livePaperEngineRecovery');
+        await notifyDhanConnectivityRestored();
+      } catch (resumeErr) {
+        console.warn('[DHAN TOKEN] Paper-live resume after renew:', resumeErr.message);
+      }
 
       return { accessToken: next, raw };
     })().finally(() => {
@@ -143,6 +151,12 @@ async function seedAccessTokenFromBody(body) {
   setAccessToken(initialJwt);
   setDhanClientId(clientId);
   await persistDhanTokenToMongo(initialJwt, { force: true, dhanClientId: clientId });
+  try {
+    const { notifyDhanConnectivityRestored } = require('./livePaperEngineRecovery');
+    await notifyDhanConnectivityRestored();
+  } catch (resumeErr) {
+    console.warn('[DHAN TOKEN] Paper-live resume after seed:', resumeErr.message);
+  }
   const seeded = await getDhanTokenDoc();
   if (!String(seeded?.accessToken || '').trim()) {
     throw new Error('Mongo persist verification failed: token not found after seed');

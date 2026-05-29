@@ -13,19 +13,6 @@ const {
 const { getIstClock } = require('../utils/dateTime');
 
 const LIVE_STRATEGIES = {
-  'strategy-2': {
-    strategyId: 'strategy-2',
-    strategyKey: strategyTwoEngine.STRATEGY_KEY,
-    startEngine: strategyTwoEngine.startEngine,
-    stopEngine: strategyTwoEngine.stopEngine,
-    updateEngineSettings: strategyTwoEngine.updateEngineSettings,
-    getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
-    ensureWallet: strategyTwoEngine.ensureWallet,
-    recalcWallet: strategyTwoEngine.recalcWalletFromTrades,
-    ensureRunning: strategyTwoEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyTwoEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyTwoEngine.closeOpenPosition,
-  },
   'strategy-4': {
     strategyId: 'strategy-4',
     strategyKey: strategyTwoEngine.STRATEGY_KEY,
@@ -55,7 +42,7 @@ const LIVE_STRATEGIES = {
 };
 
 function getLiveContext(req) {
-  const strategyId = String(req.params?.strategyId || 'strategy-2').toLowerCase();
+  const strategyId = String(req.params?.strategyId || '').toLowerCase();
   return LIVE_STRATEGIES[strategyId] || null;
 }
 

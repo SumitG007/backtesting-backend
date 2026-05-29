@@ -445,10 +445,22 @@ async function syncEngineTradeStateFromDb(clock) {
 
   if (openInDb) {
     const openId = openInDb._id.toString();
-    if (engineState.openTradeId !== openId) {
+    const newlyAdopted = engineState.openTradeId !== openId;
+    if (newlyAdopted) {
       engineState.openTradeId = openId;
       engineState.tradeDateKey = openInDb.entryDateKey;
+      engineState.signalLockedForDay = true;
+      logEntry('ENGINE_SYNC_ADOPTED_OPEN_TRADE', {
+        ist: istClockLabel(clock),
+        tradeId: openId,
+        entryDateKey: openInDb.entryDateKey,
+      });
       await subscribeOpenStraddle(openInDb);
+      startPositionPoll();
+      checkOpenTrade().catch((err) => {
+        engineState.lastError = `Strategy 3 sync exit check: ${err.message}`;
+      });
+    } else if (!engineState.positionPollTimer) {
       startPositionPoll();
     }
     return;
@@ -924,8 +936,14 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
       engineState.tradeDateKey = orphan.entryDateKey;
+      engineState.signalLockedForDay = true;
+      logEntry('ENGINE_ADOPTED_OPEN_TRADE', {
+        tradeId: orphan._id.toString(),
+        entryDateKey: orphan.entryDateKey,
+      });
       await subscribeOpenStraddle(orphan);
       startPositionPoll();
+      await checkOpenTrade();
     }
   } catch (err) {
     engineState.lastError = `Setup: ${err.message}`;
@@ -995,12 +1013,44 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
   }
 }
 
+/** Re-read Mongo open trade, re-subscribe Dhan WS, run SL/target/EOD logic (after token/server gap). */
+async function resumeOpenPositionFromDb() {
+  if (!engineState.running) {
+    return { ok: false, reason: 'ENGINE_OFFLINE' };
+  }
+  const clock = getIstClock(new Date());
+  try {
+    await syncEngineTradeStateFromDb(clock);
+    if (!engineState.openTradeId) {
+      return { ok: true, resumed: false, state: getEngineSnapshot() };
+    }
+    const trade = await LivePaperTrade.findById(engineState.openTradeId);
+    if (!trade || trade.exitTime) {
+      clearOpenTrade();
+      return { ok: true, resumed: false, state: getEngineSnapshot() };
+    }
+    engineState.signalLockedForDay = true;
+    await subscribeOpenStraddle(trade);
+    if (!engineState.positionPollTimer) startPositionPoll();
+    await checkOpenTrade();
+    logEntry('ENGINE_RESUMED_OPEN_TRADE', {
+      ist: istClockLabel(clock),
+      tradeId: trade._id.toString(),
+      entryDateKey: trade.entryDateKey,
+    });
+  } catch (err) {
+    engineState.lastError = `Strategy 3 resume open position: ${err.message}`;
+  }
+  return { ok: true, resumed: Boolean(engineState.openTradeId), state: getEngineSnapshot() };
+}
+
 /** Keeps paper-live running whenever the backend is up (idempotent). */
 async function ensureEngineRunning() {
-  if (engineState.running) {
-    return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  if (!engineState.running) {
+    return bootEngineFromDb();
   }
-  return bootEngineFromDb();
+  await resumeOpenPositionFromDb();
+  return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
 }
 
 function getEngineSnapshot() {
@@ -1088,5 +1138,6 @@ module.exports = {
   ensureWallet,
   recalcWalletFromTrades,
   reconcileOpenTrades,
+  resumeOpenPositionFromDb,
   closeOpenPosition,
 };

@@ -2,7 +2,7 @@
  * Backtest / market-data HTTP surface. Per-strategy handlers stay in small sibling files.
  */
 
-const { health, getCandles, getCandlesDay, runBacktestStub } = require('./candlesAndHealth');
+const { health, getCandles, getCandlesDay } = require('./candlesAndHealth');
 const {
   runStrategyOne,
   getStrategyOneRunTrades,
@@ -45,5 +45,4 @@ module.exports = {
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
   postStrategyFiveValidation,
-  runBacktestStub,
 };

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const apiRoutes = require('./routes');
+const { requireAuth } = require('./middleware/requireAuth');
 
 const app = express();
 
@@ -23,6 +24,6 @@ function normalizeCorsOrigin(value) {
 
 app.use(cors({ origin: normalizeCorsOrigin(process.env.CORS_ORIGIN) }));
 app.use(express.json());
-app.use('/api', apiRoutes);
+app.use('/api', requireAuth, apiRoutes);
 
 module.exports = app;

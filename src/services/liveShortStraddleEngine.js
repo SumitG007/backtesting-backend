@@ -380,7 +380,8 @@ async function syncEngineTradeStateFromDb(clock) {
 
   if (openInDb) {
     const openId = openInDb._id.toString();
-    if (engineState.openTradeId !== openId) {
+    const newlyAdopted = engineState.openTradeId !== openId;
+    if (newlyAdopted) {
       engineState.openTradeId = openId;
       engineState.tradeDateKey = openInDb.entryDateKey;
       logEntry('ENGINE_SYNC_ADOPTED_OPEN_TRADE', {
@@ -389,6 +390,11 @@ async function syncEngineTradeStateFromDb(clock) {
         entryDateKey: openInDb.entryDateKey,
       });
       await subscribeOpenStraddle(openInDb);
+      startPositionPoll();
+      checkOpenTrade().catch((err) => {
+        engineState.lastError = `Strategy 4 sync exit check: ${err.message}`;
+      });
+    } else if (!engineState.positionPollTimer) {
       startPositionPoll();
     }
     return;
@@ -872,11 +878,43 @@ function getEngineSnapshot() {
   };
 }
 
-async function ensureEngineRunning() {
-  if (engineState.running) {
-    return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+/** Re-read Mongo open trade, re-subscribe Dhan WS, run scheduled exit logic (after token/server gap). */
+async function resumeOpenPositionFromDb() {
+  if (!engineState.running) {
+    return { ok: false, reason: 'ENGINE_OFFLINE' };
   }
-  return bootEngineFromDb();
+  const clock = getIstClock(new Date());
+  try {
+    await syncEngineTradeStateFromDb(clock);
+    if (!engineState.openTradeId) {
+      return { ok: true, resumed: false, state: getEngineSnapshot() };
+    }
+    const trade = await LivePaperTrade.findById(engineState.openTradeId);
+    if (!trade || trade.exitTime) {
+      clearOpenTrade();
+      return { ok: true, resumed: false, state: getEngineSnapshot() };
+    }
+    await subscribeOpenStraddle(trade);
+    if (!engineState.positionPollTimer) startPositionPoll();
+    await checkOpenTrade();
+    await refreshOpenPositionMark({ tradeDoc: trade });
+    logEntry('ENGINE_RESUMED_OPEN_TRADE', {
+      ist: istClockLabel(clock),
+      tradeId: trade._id.toString(),
+      entryDateKey: trade.entryDateKey,
+    });
+  } catch (err) {
+    engineState.lastError = `Strategy 4 resume open position: ${err.message}`;
+  }
+  return { ok: true, resumed: Boolean(engineState.openTradeId), state: getEngineSnapshot() };
+}
+
+async function ensureEngineRunning() {
+  if (!engineState.running) {
+    return bootEngineFromDb();
+  }
+  await resumeOpenPositionFromDb();
+  return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
 }
 
 async function recalcWalletFromTrades() {
@@ -938,5 +976,6 @@ module.exports = {
   ensureWallet,
   recalcWalletFromTrades,
   reconcileOpenTrades,
+  resumeOpenPositionFromDb,
   closeOpenPosition,
 };

@@ -1,7 +1,13 @@
 const { getCandlesWithCache, fetchTradingDayCandles } = require('../../services/dhanDataService');
 
+const { isPlatformReady } = require('../../serverState');
+
 function health(_req, res) {
-  res.json({ ok: true, service: 'backtesting-api' });
+  res.json({
+    ok: true,
+    service: 'backtesting-api',
+    ready: isPlatformReady(),
+  });
 }
 
 async function getCandles(req, res) {
@@ -75,20 +81,8 @@ async function getCandlesDay(req, res) {
   }
 }
 
-function runBacktestStub(req, res) {
-  const { symbol, from, to } = req.body || {};
-  if (!symbol || !from || !to) {
-    return res.status(400).json({ error: 'symbol, from, and to (ISO dates) are required' });
-  }
-  return res.json({
-    message: 'Backtest runner not implemented yet — add strategy logic next.',
-    received: { symbol, from, to },
-  });
-}
-
 module.exports = {
   health,
   getCandles,
   getCandlesDay,
-  runBacktestStub,
 };

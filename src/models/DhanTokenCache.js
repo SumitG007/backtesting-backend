@@ -9,6 +9,8 @@ const dhanTokenCacheSchema = new mongoose.Schema(
     /** From Dhan RenewToken response (server-side validity window). */
     renewCreateTime: { type: Date, default: null },
     renewExpiryTime: { type: Date, default: null },
+    /** Set whenever RenewToken succeeds — used for ~20h proactive refresh. */
+    lastRenewedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

@@ -19,8 +19,8 @@ const {
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
   postStrategyFiveValidation,
-  runBacktestStub,
 } = require('../controllers/backtestController');
+const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
 const {
@@ -38,6 +38,10 @@ const {
 const router = express.Router();
 
 router.get('/health', health);
+router.post('/auth/login', postLogin);
+router.get('/auth/config', getAuthConfig);
+router.get('/auth/me', getMe);
+router.post('/auth/logout', postLogout);
 router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
@@ -74,6 +78,5 @@ router.post('/live/:strategyId/wallet/reset', resetLiveWallet);
 router.get('/live/:strategyId/trades', listLiveTrades);
 router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 router.post('/live/:strategyId/close', closeLivePosition);
-router.post('/backtest/run', runBacktestStub);
 
 module.exports = router;
