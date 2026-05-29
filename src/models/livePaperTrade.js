@@ -40,6 +40,9 @@ const livePaperTradeSchema = new mongoose.Schema(
     medianIvProxy: { type: Number, default: null },
     highSinceEntry: { type: Number, default: null },
     lowSinceEntry: { type: Number, default: null },
+    /** Latest open MTM snapshot (refreshed ~every 6s while position is open). */
+    openPositionMark: { type: mongoose.Schema.Types.Mixed, default: null },
+    openPositionMarkAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

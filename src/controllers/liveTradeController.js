@@ -12,6 +12,32 @@ const {
 } = require('../services/dhanLiveService');
 const { getIstClock } = require('../utils/dateTime');
 
+function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine }) {
+  if (openTrade) return null;
+  const closedToday = (todayTrades || []).filter((t) => t.exitTime);
+  if (closedToday.length > 0) {
+    const t = closedToday[0];
+    const reason = t.reason || 'CLOSED';
+    return `Paper-live entered today but the position is already closed (${reason}). See the Closed tab.`;
+  }
+  if ((todayTrades || []).length > 0) {
+    return null;
+  }
+  if (latestTrade?.exitTime) {
+    const entryDay = latestTrade.entryDateKey || '—';
+    const reason = latestTrade.reason || 'CLOSED';
+    return `No open position. Last paper-live trade: entry ${entryDay}, closed (${reason}). Today's auto-entry window is 9:20–9:22 IST (Mon–Fri) while the backend is running.`;
+  }
+  const dbg = engine?.lastEntryDebug;
+  if (dbg?.line === 'ENTRY_SUCCESS') {
+    return 'Engine logged an entry today but no open row was found — try refreshing or check MongoDB.';
+  }
+  if (dbg?.reason === 'ALREADY_TRADED_TODAY' || dbg?.reason === 'ALREADY_TRADED_TODAY_IN_DB') {
+    return 'Engine will not enter again today (one entry per day). No open row in DB — check Closed tab or wallet reset.';
+  }
+  return 'No paper-live trade recorded for today. Auto-entry runs only Mon–Fri 9:20–9:22 IST with backend + Dhan connected. A backtest run at 9:20 is separate and does not appear here.';
+}
+
 const LIVE_STRATEGIES = {
   'strategy-4': {
     strategyId: 'strategy-4',
@@ -25,6 +51,7 @@ const LIVE_STRATEGIES = {
     ensureRunning: strategyTwoEngine.ensureEngineRunning,
     reconcileOpenTrades: strategyTwoEngine.reconcileOpenTrades,
     closeOpenPosition: strategyTwoEngine.closeOpenPosition,
+    refreshOpenMark: strategyTwoEngine.refreshOpenPositionMarkForStatus,
   },
   'strategy-3': {
     strategyId: 'strategy-3',
@@ -57,12 +84,20 @@ async function getStatus(req, res) {
     if (typeof ctx.reconcileOpenTrades === 'function') {
       await ctx.reconcileOpenTrades();
     }
-    const openTrade = await LivePaperTrade.findOne({
+    let openTrade = await LivePaperTrade.findOne({
       strategyKey: ctx.strategyKey,
       exitTime: null,
     })
       .sort({ entryTime: -1 })
       .lean();
+    if (openTrade && typeof ctx.refreshOpenMark === 'function') {
+      try {
+        await ctx.refreshOpenMark();
+        openTrade = await LivePaperTrade.findById(openTrade._id).lean();
+      } catch (markErr) {
+        // Keep last DB mark on refresh failure
+      }
+    }
     const [chargesAgg] = await LivePaperTrade.aggregate([
       { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
       { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
@@ -72,12 +107,42 @@ async function getStatus(req, res) {
       { $group: { _id: null, netPnl: { $sum: '$pnl' }, wins: { $sum: { $cond: [{ $gt: ['$pnl', 0] }, 1, 0] } } } },
     ]);
     const snapshot = ctx.getEngineSnapshot();
+    const openPositionMark =
+      snapshot.openPositionMark
+      || openTrade?.openPositionMark
+      || null;
+    const clock = getIstClock(new Date());
+    const todayTrades = await LivePaperTrade.find({
+      strategyKey: ctx.strategyKey,
+      entryDateKey: clock.dateKey,
+    })
+      .sort({ entryTime: -1 })
+      .lean();
+    const latestTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey })
+      .sort({ entryTime: -1 })
+      .lean();
+    const orphanOpen = !openTrade
+      ? await LivePaperTrade.findOne({ exitTime: null, optionType: 'STRADDLE' })
+          .sort({ entryTime: -1 })
+          .lean()
+      : null;
+    const positionHint = buildPaperLiveHint({
+      openTrade,
+      todayTrades,
+      latestTrade,
+      engine: snapshot,
+    });
     return res.json({
       ok: true,
       strategyId: ctx.strategyId,
       strategyKey: ctx.strategyKey,
       engine: snapshot,
-      openPositionMark: snapshot.openPositionMark || null,
+      openPositionMark,
+      todayTrades,
+      latestTrade: latestTrade || null,
+      orphanOpen: orphanOpen && orphanOpen.strategyKey !== ctx.strategyKey ? orphanOpen : null,
+      positionHint,
+      istDateKey: clock.dateKey,
       wallet: {
         startingBalance: wallet.startingBalance,
         balance: wallet.balance,

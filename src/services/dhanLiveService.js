@@ -274,12 +274,44 @@ function pickLegLowMark(leg) {
   return Math.min(...candidates);
 }
 
+/** Best-effort LTP from chain leg (last traded, else bid/ask mid). */
+function pickLegLtp(leg) {
+  if (!leg || typeof leg !== 'object') return null;
+  const last = Number(leg.last_price);
+  if (Number.isFinite(last) && last > 0) return last;
+  const bid = Number(leg.top_bid_price);
+  const ask = Number(leg.top_ask_price);
+  if (Number.isFinite(bid) && bid > 0 && Number.isFinite(ask) && ask > 0) {
+    return Number(((bid + ask) / 2).toFixed(2));
+  }
+  if (Number.isFinite(ask) && ask > 0) return ask;
+  if (Number.isFinite(bid) && bid > 0) return bid;
+  return null;
+}
+
+function findStrikeRow(strikes, strike) {
+  const target = Number(strike);
+  if (!Number.isFinite(target)) return null;
+  const keys = Object.keys(strikes || {});
+  let bestKey = null;
+  let bestDiff = Infinity;
+  for (const k of keys) {
+    const diff = Math.abs(Number(k) - target);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      bestKey = k;
+    }
+  }
+  if (bestKey == null || bestDiff > 1) return null;
+  return strikes[bestKey];
+}
+
 async function getAtmPremiums({ symbol, strike, expiry }) {
   const chain = await fetchOptionChainCached({ symbol, expiry });
   const spot = Number(chain.last_price);
   const strikes = chain.oc || {};
-  const strikeKey = Object.keys(strikes).find((k) => Math.abs(Number(k) - Number(strike)) < 0.5);
-  if (!strikeKey) {
+  const row = findStrikeRow(strikes, strike);
+  if (!row) {
     return {
       spot,
       ceLtp: null,
@@ -291,11 +323,10 @@ async function getAtmPremiums({ symbol, strike, expiry }) {
       chainSpot: spot,
     };
   }
-  const row = strikes[strikeKey] || {};
   const ce = row.ce || {};
   const pe = row.pe || {};
-  const ceLast = Number(ce.last_price) || null;
-  const peLast = Number(pe.last_price) || null;
+  const ceLast = pickLegLtp(ce);
+  const peLast = pickLegLtp(pe);
   return {
     spot,
     ceLtp: ceLast,
