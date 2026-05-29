@@ -3,7 +3,41 @@ const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategyTwoEngine = require('../services/liveShortStraddleEngine');
 const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
-const { STRATEGY_THREE_IV_LIVE_KEY } = require('../strategies/keys');
+const {
+  STRATEGY_THREE_IV_LIVE_KEY,
+  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+} = require('../strategies/keys');
+
+const KNOWN_PAPER_LIVE_KEYS = [
+  STRATEGY_THREE_IV_LIVE_KEY,
+  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+];
+
+/** Old rows saved with schema default or wrong key — auto-close so they do not alarm the UI. */
+async function closeLegacyOrphanStraddles(clock) {
+  const rows = await LivePaperTrade.find({
+    exitTime: null,
+    optionType: 'STRADDLE',
+    strategyKey: { $nin: KNOWN_PAPER_LIVE_KEYS },
+  });
+  let closed = 0;
+  for (const trade of rows) {
+    trade.status = 'CLOSED';
+    trade.exitTime = new Date();
+    trade.exitDateKey = clock.dateKey;
+    trade.reason = 'LEGACY_ORPHAN_CLOSE';
+    trade.openPositionMark = null;
+    trade.openPositionMarkAt = null;
+    trade.pnl = 0;
+    trade.pnlPct = 0;
+    trade.notes = [trade.notes, `auto-closed legacy key ${trade.strategyKey} at ${clock.dateKey}`]
+      .filter(Boolean)
+      .join('; ');
+    await trade.save();
+    closed += 1;
+  }
+  return closed;
+}
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
@@ -18,7 +52,10 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine }) {
   if (closedToday.length > 0) {
     const t = closedToday[0];
     const reason = t.reason || 'CLOSED';
-    return `Paper-live entered today but the position is already closed (${reason}). See the Closed tab.`;
+    if (reason === 'MANUAL_CLOSE') {
+      return 'Position closed manually. Realized P/L is in the Closed tab. Strategy 4 will not auto-enter again today (one entry per day).';
+    }
+    return `Today's paper-live entry is closed (${reason}). See the Closed tab.`;
   }
   if ((todayTrades || []).length > 0) {
     return null;
@@ -84,6 +121,8 @@ async function getStatus(req, res) {
     if (typeof ctx.reconcileOpenTrades === 'function') {
       await ctx.reconcileOpenTrades();
     }
+    const clock = getIstClock(new Date());
+    await closeLegacyOrphanStraddles(clock);
     let openTrade = await LivePaperTrade.findOne({
       strategyKey: ctx.strategyKey,
       exitTime: null,
@@ -111,7 +150,6 @@ async function getStatus(req, res) {
       snapshot.openPositionMark
       || openTrade?.openPositionMark
       || null;
-    const clock = getIstClock(new Date());
     const todayTrades = await LivePaperTrade.find({
       strategyKey: ctx.strategyKey,
       entryDateKey: clock.dateKey,
@@ -121,11 +159,6 @@ async function getStatus(req, res) {
     const latestTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey })
       .sort({ entryTime: -1 })
       .lean();
-    const orphanOpen = !openTrade
-      ? await LivePaperTrade.findOne({ exitTime: null, optionType: 'STRADDLE' })
-          .sort({ entryTime: -1 })
-          .lean()
-      : null;
     const positionHint = buildPaperLiveHint({
       openTrade,
       todayTrades,
@@ -140,7 +173,6 @@ async function getStatus(req, res) {
       openPositionMark,
       todayTrades,
       latestTrade: latestTrade || null,
-      orphanOpen: orphanOpen && orphanOpen.strategyKey !== ctx.strategyKey ? orphanOpen : null,
       positionHint,
       istDateKey: clock.dateKey,
       wallet: {

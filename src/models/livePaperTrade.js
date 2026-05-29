@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const livePaperTradeSchema = new mongoose.Schema(
   {
-    strategyKey: { type: String, required: true, index: true, default: 'strategy3_short_straddle' },
+    strategyKey: { type: String, required: true, index: true },
     symbol: { type: String, required: true, index: true },
     side: { type: String, enum: ['LONG', 'SHORT', 'SELL'], required: true },
     optionType: { type: String, enum: ['CE', 'PE', 'STRADDLE'], required: true },
