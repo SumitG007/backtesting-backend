@@ -16,6 +16,12 @@ async function start() {
 
   await mongoose.connect(mongoUri);
   console.log('MongoDB connected');
+  try {
+    const { reconcileOpenTrades } = require('./services/liveShortStraddleEngine');
+    await reconcileOpenTrades();
+  } catch (err) {
+    console.warn('Strategy 4 open-trade reconcile:', err.message);
+  }
   await hydrateDhanTokenFromMongo();
   scheduleDhanTokenMaintenance();
   scheduleNseHolidayRefresh();

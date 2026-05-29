@@ -82,7 +82,7 @@ async function getCurrentLotSize(underlying) {
     // ignore and fall back below
   }
   // Sensible 2025+ SEBI defaults if master file is unavailable.
-  if (upper === 'NIFTY') return 75;
+  if (upper === 'NIFTY') return 65;
   if (upper === 'BANKNIFTY') return 30;
   return 1;
 }
@@ -368,8 +368,9 @@ async function postWithAuthRetry(path, body, authContext) {
 }
 
 /**
- * Calculate short straddle margin from Dhan margin calculator API.
- * Falls back by throwing if endpoint rejects payload; caller should fallback.
+ * Calculate short straddle margin from Dhan margin calculator API (multi-leg / straddle).
+ * Uses MARGIN (NRML) by default for overnight holds; pass INTRADAY for same-day strategies.
+ * @returns {{ margin: number, source: 'dhan_multi' }}
  */
 async function estimateShortStraddleMargin({
   symbol,
@@ -379,6 +380,7 @@ async function estimateShortStraddleMargin({
   lots = 1,
   cePrice,
   pePrice,
+  productType = 'MARGIN',
 }) {
   const resolved = resolveSymbolConfig(symbol);
   const clientId = getDhanClientId();
@@ -397,11 +399,12 @@ async function estimateShortStraddleMargin({
     optionType: 'PE',
   });
   const segment = ceInstrument.exchangeSegment || resolved.exchangeSegment || 'NSE_FNO';
+  const safeProductType = String(productType || 'MARGIN').toUpperCase() === 'INTRADAY' ? 'INTRADAY' : 'MARGIN';
   const mkOrder = (securityId, price) => ({
     exchangeSegment: segment,
     transactionType: 'SELL',
     quantity: qty,
-    productType: 'INTRADAY',
+    productType: safeProductType,
     securityId: String(securityId),
     price: Number.isFinite(Number(price)) ? Number(price) : 0,
     triggerPrice: 0,
@@ -417,40 +420,12 @@ async function estimateShortStraddleMargin({
     ],
   };
 
-  try {
-    const resp = await postWithAuthRetry('/margincalculator/multi', multiBody, 'margin-calc-multi');
-    const margin = parseMarginFromPayload(resp.data);
-    if (Number.isFinite(margin) && margin > 0) return Number(margin.toFixed(2));
-  } catch {
-    // Try single-order endpoints and add.
+  const resp = await postWithAuthRetry('/margincalculator/multi', multiBody, 'margin-calc-multi');
+  const margin = parseMarginFromPayload(resp.data);
+  if (Number.isFinite(margin) && margin > 0) {
+    return { margin: Number(margin.toFixed(2)), source: 'dhan_multi' };
   }
-
-  const singleCeBody = {
-    dhanClientId: clientId,
-    exchangeSegment: segment,
-    transactionType: 'SELL',
-    quantity: qty,
-    productType: 'INTRADAY',
-    securityId: String(ceInstrument.securityId),
-    price: Number.isFinite(Number(cePrice)) ? Number(cePrice) : 0,
-    triggerPrice: 0,
-  };
-  const singlePeBody = {
-    ...singleCeBody,
-    securityId: String(peInstrument.securityId),
-    price: Number.isFinite(Number(pePrice)) ? Number(pePrice) : 0,
-  };
-
-  const [ceResp, peResp] = await Promise.all([
-    postWithAuthRetry('/margincalculator', singleCeBody, 'margin-calc-ce'),
-    postWithAuthRetry('/margincalculator', singlePeBody, 'margin-calc-pe'),
-  ]);
-  const ceMargin = parseMarginFromPayload(ceResp.data);
-  const peMargin = parseMarginFromPayload(peResp.data);
-  if (Number.isFinite(ceMargin) && ceMargin > 0 && Number.isFinite(peMargin) && peMargin > 0) {
-    return Number((ceMargin + peMargin).toFixed(2));
-  }
-  throw new Error('Margin calculator response missing margin values');
+  throw new Error('Margin calculator multi response missing margin values');
 }
 
 // ----------------- WebSocket (Live Index Ticker) -----------------

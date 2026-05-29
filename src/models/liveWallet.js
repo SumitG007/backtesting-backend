@@ -32,6 +32,7 @@ const liveWalletSchema = new mongoose.Schema(
       perTradeCost: { type: Number, default: 100 },
     },
     strategy3EngineSettings: {
+      symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 1 },
       perTradeCost: { type: Number, default: 100 },
       ivLookbackDays: { type: Number, default: 20 },
@@ -46,9 +47,8 @@ const liveWalletSchema = new mongoose.Schema(
       ivExpandStopMult: { type: Number, default: 1.5 },
     },
     strategy4EngineSettings: {
+      symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 1 },
-      targetPct: { type: Number, default: null },
-      stopLossPct: { type: Number, default: null },
       entryTime: { type: String, default: '09:20' },
       entryWindowMinutes: { type: Number, default: 2 },
       dayCloseTime: { type: String, default: '15:15' },

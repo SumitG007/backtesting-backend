@@ -9,7 +9,9 @@ const {
   parseDateOnly,
   addDays,
   formatDateOnly,
+  isWeekendDateKey,
 } = require('../../utils/dateTime');
+const { isNseCashTradingDay } = require('../../services/nseHolidayService');
 const { getLotSize, getStrikeStep, getOptionPremiumFromSpotMove } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
 const { computeSessionHighLow } = require('../shared/sessionRange');
@@ -349,6 +351,31 @@ function resolveNextExpiryDateKey(entryDateKey, expiryWeekday) {
   return formatDateOnly(addDays(parsed, daysAhead));
 }
 
+/** First NSE trading day after entry — matches live paper engine exit schedule. */
+function resolveFirstTradingDayAfter(entryDateKey) {
+  const parsed = parseDateOnly(entryDateKey);
+  if (Number.isNaN(parsed.getTime())) return null;
+  for (let d = 1; d <= 10; d += 1) {
+    const key = formatDateOnly(addDays(parsed, d));
+    if (isWeekendDateKey(key)) continue;
+    if (!isNseCashTradingDay(key)) continue;
+    return key;
+  }
+  return null;
+}
+
+/** Candle day to exit on: planned exit day, or next available session if that day has no bars. */
+function findExitDayInCandleData(entryDateKey, sortedKeys) {
+  const plannedExitDay = resolveFirstTradingDayAfter(entryDateKey);
+  if (!plannedExitDay) return null;
+  for (const key of sortedKeys) {
+    if (key <= entryDateKey) continue;
+    if (key < plannedExitDay) continue;
+    return key;
+  }
+  return null;
+}
+
 function runShortStraddleNextDay({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
@@ -357,12 +384,6 @@ function runShortStraddleNextDay({ candles, settings }) {
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));
   const strikeMode = String(settings.strikeMode || 'ATM');
-  const rawSl = Number(settings.stopLossPoints);
-  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
-  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSl)) : 0;
-  const rawTarget = Number(settings.targetProfitPoints);
-  const hasTarget = Number.isFinite(rawTarget) && rawTarget > 0;
-  const targetProfitPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTarget)) : 0;
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
@@ -379,9 +400,15 @@ function runShortStraddleNextDay({ candles, settings }) {
   const sortedKeys = Array.from(intraByDay.keys()).sort();
   const trades = [];
 
-  for (let i = 0; i < sortedKeys.length - 1; i += 1) {
-    const entryBars = intraByDay.get(sortedKeys[i]) || [];
-    const exitBars = intraByDay.get(sortedKeys[i + 1]) || [];
+  for (let i = 0; i < sortedKeys.length; i += 1) {
+    const entryDateKey = sortedKeys[i];
+    if (isWeekendDateKey(entryDateKey) || !isNseCashTradingDay(entryDateKey)) continue;
+
+    const exitDateKey = findExitDayInCandleData(entryDateKey, sortedKeys);
+    if (!exitDateKey) continue;
+
+    const entryBars = intraByDay.get(entryDateKey) || [];
+    const exitBars = intraByDay.get(exitDateKey) || [];
     if (entryBars.length < 2 || exitBars.length < 2) continue;
 
     let entryIdx = null;
@@ -402,7 +429,7 @@ function runShortStraddleNextDay({ candles, settings }) {
     if (!Number.isFinite(entrySpot) || entrySpot <= 0 || !Number.isFinite(exitSpot) || exitSpot <= 0) continue;
 
     const strike = pickStrike({ entrySpot, strikeStep, optionType: 'CE', strikeMode });
-    const expiryDate = resolveNextExpiryDateKey(sortedKeys[i], expiryWeekday);
+    const expiryDate = resolveNextExpiryDateKey(entryDateKey, expiryWeekday);
     const ceEntryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
     const peEntryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
 
@@ -426,81 +453,19 @@ function runShortStraddleNextDay({ candles, settings }) {
     });
 
     const entryCredit = ceEntryPremium + peEntryPremium;
-    let exitBuyback = ceExitPremium + peExitPremium;
-    const stopCombined = hasStopLoss ? entryCredit + stopLossPoints : null;
-    const targetCombined = hasTarget ? Math.max(0.05, entryCredit - targetProfitPoints) : null;
     const qty = lotSize * lotCount;
-    let exitTime = exitBars[nextDayExitIdx][0];
-    let exitSpotChosen = exitSpot;
-    let reason = 'NEXT_DAY_EXIT';
+    const exitTime = exitBars[nextDayExitIdx][0];
+    const exitSpotChosen = exitSpot;
+    const reason = 'NEXT_DAY_EXIT';
 
     const entryTs = new Date(entryBars[entryIdx][0]).getTime();
-    const evalCombinedPremium = (spot, barIsoTime) => {
-      const ce = getOptionPremiumFromSpotMove({
-        side: 'LONG',
-        entrySpot,
-        currentSpot: spot,
-        entryPremium: ceEntryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
-      const pe = getOptionPremiumFromSpotMove({
-        side: 'SHORT',
-        entrySpot,
-        currentSpot: spot,
-        entryPremium: peEntryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
-      const barTs = new Date(barIsoTime).getTime();
-      const elapsedDays =
-        Number.isFinite(entryTs) && Number.isFinite(barTs) && barTs > entryTs
-          ? (barTs - entryTs) / (1000 * 60 * 60 * 24)
-          : 0;
-      const decayFactor = Math.max(0.35, 1 - (thetaDecayPerDayPct / 100) * elapsedDays);
-      return (ce + pe) * decayFactor;
-    };
-
-    const scanBars = [
-      ...entryBars.slice(entryIdx + 1).map((row) => ({ row, isFinalForcedBar: false })),
-      ...exitBars.slice(0, nextDayExitIdx + 1).map((row, idx) => ({ row, isFinalForcedBar: idx === nextDayExitIdx })),
-    ];
-
-    for (const item of scanBars) {
-      const row = item.row;
-      const h = Number(row[2]);
-      const l = Number(row[3]);
-      const c = Number(row[4]);
-      if (![h, l, c].every(Number.isFinite)) continue;
-
-      const combinedAtHigh = evalCombinedPremium(h, row[0]);
-      const combinedAtLow = evalCombinedPremium(l, row[0]);
-      const adverseCombined = Math.max(combinedAtHigh, combinedAtLow);
-      const favorableCombined = Math.min(combinedAtHigh, combinedAtLow);
-
-      if (hasStopLoss && stopCombined != null && adverseCombined >= stopCombined) {
-        exitBuyback = stopCombined;
-        exitTime = row[0];
-        exitSpotChosen = adverseCombined === combinedAtHigh ? h : l;
-        reason = 'STOP_LOSS';
-        break;
-      }
-      if (hasTarget && targetCombined != null && favorableCombined <= targetCombined) {
-        exitBuyback = targetCombined;
-        exitTime = row[0];
-        exitSpotChosen = favorableCombined === combinedAtLow ? l : h;
-        reason = 'TARGET';
-        break;
-      }
-      if (item.isFinalForcedBar) {
-        exitBuyback = evalCombinedPremium(c, row[0]);
-        exitTime = row[0];
-        exitSpotChosen = c;
-        reason = 'NEXT_DAY_EXIT';
-      }
-    }
+    const exitBarTs = new Date(exitTime).getTime();
+    const elapsedDays =
+      Number.isFinite(entryTs) && Number.isFinite(exitBarTs) && exitBarTs > entryTs
+        ? (exitBarTs - entryTs) / (1000 * 60 * 60 * 24)
+        : 0;
+    const decayFactor = Math.max(0.35, 1 - (thetaDecayPerDayPct / 100) * elapsedDays);
+    const exitBuyback = (ceExitPremium + peExitPremium) * decayFactor;
 
     const credit = entryCredit * qty;
     const buyback = exitBuyback * qty;
@@ -528,15 +493,15 @@ function runShortStraddleNextDay({ candles, settings }) {
       exitTime,
       entryPrice: Number(entrySpot.toFixed(2)),
       exitPrice: Number(exitSpotChosen.toFixed(2)),
-      stopLoss: hasStopLoss && stopCombined != null ? Number(stopCombined.toFixed(2)) : null,
-      target: hasTarget && targetCombined != null ? Number(targetCombined.toFixed(2)) : null,
+      stopLoss: null,
+      target: null,
       qty,
       premium: Number(entryCredit.toFixed(2)),
       lotCount,
       creditReceived: Number(credit.toFixed(2)),
       investmentAmount: Number(totalMarginBlocked.toFixed(2)),
-      stopLossAmount: hasStopLoss ? Number((stopLossPoints * qty).toFixed(2)) : null,
-      targetAmount: hasTarget ? Number((targetProfitPoints * qty).toFixed(2)) : null,
+      stopLossAmount: null,
+      targetAmount: null,
       grossPnl: Number(rawPnl.toFixed(2)),
       charges: perTradeCost,
       pnl: Number(pnl.toFixed(2)),

@@ -7,8 +7,10 @@ const { STRATEGY_THREE_IV_LIVE_KEY } = require('../strategies/keys');
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
+  getTradableWeeklyExpiry,
   getAtmPremiums,
 } = require('../services/dhanLiveService');
+const { getIstClock } = require('../utils/dateTime');
 
 const LIVE_STRATEGIES = {
   'strategy-2': {
@@ -21,6 +23,8 @@ const LIVE_STRATEGIES = {
     ensureWallet: strategyTwoEngine.ensureWallet,
     recalcWallet: strategyTwoEngine.recalcWalletFromTrades,
     ensureRunning: strategyTwoEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyTwoEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyTwoEngine.closeOpenPosition,
   },
   'strategy-4': {
     strategyId: 'strategy-4',
@@ -32,17 +36,21 @@ const LIVE_STRATEGIES = {
     ensureWallet: strategyTwoEngine.ensureWallet,
     recalcWallet: strategyTwoEngine.recalcWalletFromTrades,
     ensureRunning: strategyTwoEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyTwoEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyTwoEngine.closeOpenPosition,
   },
   'strategy-3': {
     strategyId: 'strategy-3',
     strategyKey: STRATEGY_THREE_IV_LIVE_KEY,
-    startEngine: strategyThreeEngine.ensureEngineRunning,
-    stopEngine: strategyThreeEngine.ensureEngineRunning,
+    startEngine: strategyThreeEngine.startEngine,
+    stopEngine: strategyThreeEngine.stopEngine,
     updateEngineSettings: strategyThreeEngine.updateEngineSettings,
     getEngineSnapshot: strategyThreeEngine.getEngineSnapshot,
     ensureWallet: strategyThreeEngine.ensureWallet,
     recalcWallet: strategyThreeEngine.recalcWalletFromTrades,
     ensureRunning: strategyThreeEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyThreeEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyThreeEngine.closeOpenPosition,
   },
 };
 
@@ -59,6 +67,9 @@ async function getStatus(req, res) {
       await ctx.ensureRunning();
     }
     const wallet = await ctx.ensureWallet();
+    if (typeof ctx.reconcileOpenTrades === 'function') {
+      await ctx.reconcileOpenTrades();
+    }
     const openTrade = await LivePaperTrade.findOne({
       strategyKey: ctx.strategyKey,
       exitTime: null,
@@ -135,6 +146,9 @@ function coerceLiveEngineSetting(key, value) {
   if (key === 'skipExpiryDay') {
     return value !== false && value !== 'false' && value !== 0 && value !== '0';
   }
+  if (key === 'symbol') {
+    return String(value || 'NIFTY').trim().toUpperCase();
+  }
   const n = Number(value);
   return Number.isFinite(n) ? n : value;
 }
@@ -177,6 +191,9 @@ async function listTrades(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
+    if (typeof ctx.reconcileOpenTrades === 'function') {
+      await ctx.reconcileOpenTrades();
+    }
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize) || 25));
     const statusQ = String(req.query.status || '').toUpperCase();
@@ -262,11 +279,42 @@ async function exportTradesExcel(req, res) {
   }
 }
 
+async function closeLivePosition(req, res) {
+  try {
+    const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
+    if (typeof ctx.closeOpenPosition !== 'function') {
+      return res.status(400).json({ ok: false, error: 'Manual close not supported for this strategy' });
+    }
+    if (typeof ctx.ensureRunning === 'function') {
+      await ctx.ensureRunning();
+    }
+    const result = await ctx.closeOpenPosition({ reason: 'MANUAL_CLOSE' });
+    return res.json(result);
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
 async function getLiveMeta(req, res) {
   try {
-    const symbol = String(req.query.symbol || 'NIFTY').toUpperCase();
+    const ctx = getLiveContext(req);
+    const snapshot = ctx?.getEngineSnapshot?.() || null;
+    const symbol = String(
+      req.query.symbol || snapshot?.settings?.symbol || snapshot?.symbol || 'NIFTY',
+    ).toUpperCase();
+    const skipExpiryDay = req.query.skipExpiryDay !== 'false' && req.query.skipExpiryDay !== '0';
+    const clock = getIstClock(new Date());
     const lotSize = await getCurrentLotSize(symbol);
-    const expiry = await getNearestWeeklyExpiry(symbol);
+    let expiry = null;
+    if (ctx?.strategyId === 'strategy-4') {
+      expiry = skipExpiryDay
+        ? await getTradableWeeklyExpiry(symbol, clock.dateKey)
+        : await getNearestWeeklyExpiry(symbol);
+      if (snapshot?.expiry) expiry = snapshot.expiry;
+    } else {
+      expiry = await getNearestWeeklyExpiry(symbol);
+    }
     let chainSpot = null;
     let ceLtp = null;
     let peLtp = null;
@@ -295,4 +343,5 @@ module.exports = {
   listTrades,
   exportTradesExcel,
   getLiveMeta,
+  closeLivePosition,
 };

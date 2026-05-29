@@ -61,7 +61,7 @@ const engineState = {
   symbol: 'NIFTY',
   startedAt: null,
   settings: normalizeIvSettings({}),
-  lotSize: 75,
+  lotSize: 65,
   expiry: null,
   lastSpot: null,
   lastOptionTicks: { CE: null, PE: null },
@@ -93,6 +93,14 @@ function logEntry(line, payload = {}) {
   const entry = { at: new Date().toISOString(), line, ...payload };
   engineState.lastEntryDebug = entry;
   console.log(`[Strategy3PaperLive] ${line}`, JSON.stringify(entry));
+}
+
+function getEngineSymbol() {
+  return String(engineState.symbol || 'NIFTY').toUpperCase();
+}
+
+function walletSettingsPayload() {
+  return { ...engineState.settings, symbol: getEngineSymbol() };
 }
 
 async function withRetry(label, fn, { maxAttempts = RETRY_MAX, baseDelayMs = RETRY_BASE_MS } = {}) {
@@ -404,11 +412,36 @@ async function getCurrentExpiry(symbol, dateKey) {
   return engineState.expiry;
 }
 
-async function syncEngineTradeStateFromDb(clock) {
-  const openInDb = await LivePaperTrade.findOne({
+/** Close duplicate OPEN rows — keep the newest entry only. */
+async function dedupeOpenTradesInDb(clock) {
+  const openRows = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     exitTime: null,
   }).sort({ entryTime: -1 });
+
+  if (openRows.length <= 1) return openRows[0] || null;
+
+  const [keep, ...duplicates] = openRows;
+  for (const dup of duplicates) {
+    dup.status = 'CLOSED';
+    dup.exitTime = new Date();
+    dup.exitDateKey = clock.dateKey;
+    dup.reason = 'DUPLICATE_ENTRY';
+    dup.notes = [dup.notes, `auto-closed duplicate at ${clock.dateKey}`].filter(Boolean).join('; ');
+    dup.pnl = 0;
+    dup.pnlPct = 0;
+    await dup.save();
+    logEntry('ENGINE_SYNC_CLOSED_DUPLICATE_OPEN_TRADE', {
+      ist: istClockLabel(clock),
+      tradeId: dup._id.toString(),
+      keptTradeId: keep._id.toString(),
+    });
+  }
+  return keep;
+}
+
+async function syncEngineTradeStateFromDb(clock) {
+  const openInDb = await dedupeOpenTradesInDb(clock);
 
   if (openInDb) {
     const openId = openInDb._id.toString();
@@ -466,7 +499,7 @@ async function getEntryGate(clock) {
     return { ok: false, reason: signal.reason, signal };
   }
   try {
-    const expiry = await getCurrentExpiry(engineState.symbol, clock.dateKey);
+    const expiry = await getCurrentExpiry(getEngineSymbol(), clock.dateKey);
     if (!expiry) return { ok: false, reason: 'NO_EXPIRY' };
   } catch (err) {
     return { ok: false, reason: 'EXPIRY_FETCH_FAILED', error: err.message };
@@ -479,7 +512,36 @@ async function placeShortStraddle(clock) {
   engineState.enteringTrade = true;
   try {
     await withRetry('ENTRY_STRADDLE', async () => {
-      const symbol = engineState.symbol;
+      await syncEngineTradeStateFromDb(clock);
+      const existingOpen = await LivePaperTrade.findOne({
+        strategyKey: STRATEGY_KEY,
+        exitTime: null,
+      }).sort({ entryTime: -1 });
+      if (existingOpen) {
+        engineState.openTradeId = existingOpen._id.toString();
+        engineState.tradeDateKey = existingOpen.entryDateKey;
+        logEntry('ENTRY_SKIP', {
+          ist: istClockLabel(clock),
+          reason: 'OPEN_TRADE_EXISTS_IN_DB',
+          tradeId: existingOpen._id.toString(),
+        });
+        return;
+      }
+      const tradedToday = await LivePaperTrade.exists({
+        strategyKey: STRATEGY_KEY,
+        entryDateKey: clock.dateKey,
+      });
+      if (tradedToday) {
+        engineState.tradeDateKey = clock.dateKey;
+        engineState.signalLockedForDay = true;
+        logEntry('ENTRY_SKIP', {
+          ist: istClockLabel(clock),
+          reason: 'ALREADY_TRADED_TODAY_IN_DB',
+        });
+        return;
+      }
+
+      const symbol = getEngineSymbol();
       const signal = engineState.todaySignal || evaluateTodaySignal(clock);
       if (!signal?.ok) {
         logEntry('ENTRY_ABORT_SIGNAL', { signal });
@@ -508,8 +570,9 @@ async function placeShortStraddle(clock) {
       const { targetPremium, stopLossPremium } = premiumTargetsFromCredit(entryCredit, engineState.settings);
       const charges = engineState.settings.perTradeCost;
       let marginBlocked = null;
+      let marginSource = 'formula';
       try {
-        marginBlocked = await estimateShortStraddleMargin({
+        const marginResult = await estimateShortStraddleMargin({
           symbol,
           expiry,
           strike,
@@ -517,7 +580,10 @@ async function placeShortStraddle(clock) {
           lots,
           cePrice: ceEntry,
           pePrice: peEntry,
+          productType: 'INTRADAY',
         });
+        marginBlocked = marginResult.margin;
+        marginSource = marginResult.source || 'dhan_multi';
       } catch (err) {
         engineState.lastError = `Strategy 3 margin API fallback: ${err.message}`;
       }
@@ -559,7 +625,7 @@ async function placeShortStraddle(clock) {
           { optionType: 'CE', entryPremium: Number(ceEntry.toFixed(2)) },
           { optionType: 'PE', entryPremium: Number(peEntry.toFixed(2)) },
         ],
-        notes: `ivLive; spike=${signal.reason}; lotSize=${lotSize}; qty=${qty}; expiry=${expiry}; dhanLtp=1`,
+        notes: `ivLive; spike=${signal.reason}; marginSource=${marginSource}; lotSize=${lotSize}; qty=${qty}; expiry=${expiry}; dhanLtp=1`,
       });
 
       engineState.openTradeId = tradeDoc._id.toString();
@@ -827,24 +893,30 @@ function startPoll() {
 
 async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   engineState.settings = normalizeIvSettings({ ...engineState.settings, ...settings });
-  engineState.symbol = String(symbol).toUpperCase();
+  engineState.symbol = String(settings.symbol || symbol || getEngineSymbol()).toUpperCase();
   if (engineState.running) {
-    logEntry('ENGINE_ALREADY_RUNNING');
+    if (settings && Object.keys(settings).length > 0) {
+      logEntry('ENGINE_ALREADY_RUNNING_SETTINGS_MERGED', {
+        symbol: getEngineSymbol(),
+        settings: engineState.settings,
+      });
+    }
     return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
   }
   engineState.lastError = null;
   engineState.todayBars = [];
   engineState.todaySignal = null;
   engineState.signalLockedForDay = false;
-  logEntry('ENGINE_START', { symbol: engineState.symbol, settings: engineState.settings });
+  logEntry('ENGINE_START', { symbol: getEngineSymbol(), settings: engineState.settings });
   try {
     await loadOrHistoryFromWallet();
     await backfillOrHistoryIfNeeded();
-    engineState.lotSize = await getCurrentLotSize(engineState.symbol);
+    engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
     const clock = getIstClock(new Date());
-    engineState.expiry = await getTradableWeeklyExpiry(engineState.symbol, clock.dateKey);
+    await dedupeOpenTradesInDb(clock);
+    engineState.expiry = await getTradableWeeklyExpiry(getEngineSymbol(), clock.dateKey);
     if (!engineState.expiry) {
-      engineState.expiry = await getNearestWeeklyExpiry(engineState.symbol);
+      engineState.expiry = await getNearestWeeklyExpiry(getEngineSymbol());
     }
     const orphan = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({
       entryTime: -1,
@@ -877,14 +949,27 @@ function stopEngine() {
 }
 
 async function updateEngineSettings(partial = {}) {
+  const prevSymbol = getEngineSymbol();
+  if (partial.symbol != null && partial.symbol !== '') {
+    engineState.symbol = String(partial.symbol).toUpperCase();
+  }
   engineState.settings = normalizeIvSettings({ ...engineState.settings, ...partial });
+  if (getEngineSymbol() !== prevSymbol) {
+    try {
+      engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
+      engineState.expiry = null;
+    } catch (err) {
+      engineState.lastError = `Strategy 3 symbol change: ${err.message}`;
+    }
+  }
   try {
     const wallet = await ensureWallet();
-    wallet.strategy3EngineSettings = engineState.settings;
+    wallet.strategy3EngineSettings = walletSettingsPayload();
     await wallet.save();
   } catch (err) {
     engineState.lastError = `Settings persist: ${err.message}`;
   }
+  logEntry('SETTINGS_UPDATED', { symbol: getEngineSymbol(), settings: engineState.settings });
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -898,9 +983,10 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     const seeded =
       withDefaults.targetVolCrushPct !== persisted.targetVolCrushPct
       || withDefaults.stopVolExpandPct !== persisted.stopVolExpandPct;
-    const result = await startEngine({ symbol, settings: withDefaults });
+    const bootSymbol = String(persisted.symbol || symbol).toUpperCase();
+    const result = await startEngine({ symbol: bootSymbol, settings: withDefaults });
     if (seeded) {
-      wallet.strategy3EngineSettings = engineState.settings;
+      wallet.strategy3EngineSettings = walletSettingsPayload();
       await wallet.save();
     }
     return result;
@@ -920,7 +1006,7 @@ async function ensureEngineRunning() {
 function getEngineSnapshot() {
   return {
     running: engineState.running,
-    symbol: engineState.symbol,
+    symbol: getEngineSymbol(),
     startedAt: engineState.startedAt,
     lotSize: engineState.lotSize,
     expiry: engineState.expiry,
@@ -960,6 +1046,37 @@ async function recalcWalletFromTrades() {
   return wallet;
 }
 
+async function closeOpenPosition({ reason = 'MANUAL_CLOSE' } = {}) {
+  if (!engineState.running) {
+    throw new Error('Engine is not running');
+  }
+  await ensureNseHolidaysLoaded();
+  const clock = getIstClock(new Date());
+  await syncEngineTradeStateFromDb(clock);
+  if (!engineState.openTradeId) {
+    throw new Error('No open position to close');
+  }
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) {
+    clearOpenTrade();
+    throw new Error('No open position to close');
+  }
+  const mark = await resolveMarkForOpenTrade(trade, { allowChain: true, forceChain: true });
+  await finalizeTrade(trade, {
+    exitCombined: mark.combined,
+    mark,
+    reason,
+    forceChain: true,
+  });
+  logEntry('MANUAL_CLOSE', { ist: istClockLabel(clock), tradeId: trade._id.toString(), reason });
+  return { ok: true, state: getEngineSnapshot() };
+}
+
+async function reconcileOpenTrades() {
+  const clock = getIstClock(new Date());
+  return dedupeOpenTradesInDb(clock);
+}
+
 module.exports = {
   STRATEGY_KEY,
   startEngine,
@@ -970,4 +1087,6 @@ module.exports = {
   getEngineSnapshot,
   ensureWallet,
   recalcWalletFromTrades,
+  reconcileOpenTrades,
+  closeOpenPosition,
 };

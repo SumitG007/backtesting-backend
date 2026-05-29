@@ -46,6 +46,11 @@ const livePaperTradeSchema = new mongoose.Schema(
 
 livePaperTradeSchema.index({ entryTime: -1 });
 livePaperTradeSchema.index({ strategyKey: 1, exitTime: 1 });
+// At most one open paper trade per strategy at a time.
+livePaperTradeSchema.index(
+  { strategyKey: 1 },
+  { unique: true, partialFilterExpression: { exitTime: null } },
+);
 
 module.exports =
   mongoose.models.LivePaperTrade || mongoose.model('LivePaperTrade', livePaperTradeSchema);
