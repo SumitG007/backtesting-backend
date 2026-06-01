@@ -70,7 +70,7 @@ function buildShortStraddleSettings(req) {
   const { symbol = 'NIFTY', year = 2026 } = req.body || {};
   const rawIv = String(parseStringInput(req.body?.interval, TIER_SHORT_STRADDLE.defaultInterval));
   const interval = ['1', '5', '15'].includes(rawIv) ? rawIv : TIER_SHORT_STRADDLE.defaultInterval;
-  const entryTime = parseStringInput(req.body?.entryTime, '09:20');
+  const entryTime = parseStringInput(req.body?.entryTime, '15:20');
 
   return {
     settings: {

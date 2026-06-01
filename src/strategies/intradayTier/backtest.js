@@ -18,11 +18,12 @@ const { computeSessionHighLow } = require('../shared/sessionRange');
 const { shortStraddleMarginBlocked } = require('../shared/shortStraddleMargin');
 
 const M915 = 555;
-const M920 = 560;
+const M920 = 560; // 09:20 IST
+const M1520 = 920; // 15:20 IST — short straddle same-day entry default
 const M1000 = 600; // 10:00
 const M1100 = 660;
 const EOD_EXIT = 920; // 15:20 IST
-const NEXT_DAY_EOD_EXIT = 915; // 15:15 IST
+const NEXT_DAY_EOD_EXIT = 915; // 15:15 IST — next-day exit default
 const SESSION_END = 930;
 
 function buildIntradayByDay(rows) {
@@ -388,7 +389,7 @@ function runShortStraddleNextDay({ candles, settings }) {
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
       : 100;
-  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, M920);
+  const entryFromMinutes = parseClockMinutes(settings.entryFromTime, M1520);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, entryFromMinutes);
   const normalizedEntryFrom = Math.min(entryFromMinutes, entryToMinutes);
   const normalizedEntryTo = Math.max(entryFromMinutes, entryToMinutes);
