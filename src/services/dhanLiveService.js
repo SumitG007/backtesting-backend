@@ -3,6 +3,7 @@ const WebSocket = require('ws');
 const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
 const { getDhanClientId } = require('./dhanTokenStore');
 const { resolveSymbolConfig } = require('../utils/market');
+const { parseDateOnly, formatDateOnly, addDays } = require('../utils/dateTime');
 
 const DHAN_BASE = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
 const DHAN_WS_URL = 'wss://api-feed.dhan.co';
@@ -238,18 +239,36 @@ async function getNearestWeeklyExpiry(symbol) {
   return sorted[sorted.length - 1];
 }
 
+/** Last expiry date (YYYY-MM-DD) still blocked for new entries on `dateKey` (today + tomorrow series). */
+function getNearExpiryCutoffDateKey(dateKey) {
+  const today = String(dateKey || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+    return new Date().toISOString().slice(0, 10);
+  }
+  return formatDateOnly(addDays(parseDateOnly(today), 1));
+}
+
+/** True when weekly expiry is today or tomorrow (IST) — use next expiry for new trades. */
+function isExpiryTooSoonForNewEntry(expiry, dateKey) {
+  const e = String(expiry || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e)) return true;
+  return e <= getNearExpiryCutoffDateKey(dateKey);
+}
+
 async function getTradableWeeklyExpiry(symbol, dateKey) {
   const list = await fetchExpiryList(symbol);
   if (list.length === 0) return null;
   const today = String(dateKey || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const cutoff = getNearExpiryCutoffDateKey(today);
   const sorted = [...list].sort();
   for (const expiry of sorted) {
-    if (String(expiry).slice(0, 10) > today) return expiry;
+    const e = String(expiry).slice(0, 10);
+    if (e > cutoff) return e;
   }
   for (const expiry of sorted) {
-    if (String(expiry).slice(0, 10) >= today) return expiry;
+    if (String(expiry).slice(0, 10) >= today) return String(expiry).slice(0, 10);
   }
-  return sorted[sorted.length - 1];
+  return String(sorted[sorted.length - 1]).slice(0, 10);
 }
 
 function pickLegHighMark(leg) {
@@ -728,6 +747,8 @@ module.exports = {
   fetchOptionChain,
   getNearestWeeklyExpiry,
   getTradableWeeklyExpiry,
+  getNearExpiryCutoffDateKey,
+  isExpiryTooSoonForNewEntry,
   getAtmPremiums,
   resolveOptionInstrument,
   estimateShortStraddleMargin,

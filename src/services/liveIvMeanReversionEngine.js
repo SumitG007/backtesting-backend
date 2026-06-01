@@ -38,6 +38,7 @@ const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
   getTradableWeeklyExpiry,
+  isExpiryTooSoonForNewEntry,
   resolveOptionInstrument,
   estimateShortStraddleMargin,
   subscribeLiveInstrument,
@@ -401,8 +402,7 @@ async function subscribeOpenStraddle(trade) {
 
 async function getCurrentExpiry(symbol, dateKey) {
   const cachedExpiry = String(engineState.expiry || '').slice(0, 10);
-  // On weekly expiry day, avoid opening new positions in the expiring series.
-  const isStale = !cachedExpiry || cachedExpiry <= dateKey;
+  const isStale = !cachedExpiry || isExpiryTooSoonForNewEntry(cachedExpiry, dateKey);
   if (isStale) {
     engineState.expiry = await getTradableWeeklyExpiry(symbol, dateKey);
     if (!engineState.expiry) {
