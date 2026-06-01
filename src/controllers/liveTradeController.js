@@ -137,14 +137,34 @@ async function getStatus(req, res) {
         // Keep last DB mark on refresh failure
       }
     }
-    const [chargesAgg] = await LivePaperTrade.aggregate([
-      { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
-      { $group: { _id: null, totalCharges: { $sum: '$charges' } } },
+    const closedTradeMatch = {
+      strategyKey: ctx.strategyKey,
+      $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
+    };
+    const [statsAgg] = await LivePaperTrade.aggregate([
+      { $match: closedTradeMatch },
+      {
+        $group: {
+          _id: null,
+          netPnl: { $sum: { $ifNull: ['$pnl', 0] } },
+          wins: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0] } },
+          losses: { $sum: { $cond: [{ $lt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0] } },
+          totalTrades: { $sum: 1 },
+          totalCharges: { $sum: { $ifNull: ['$charges', 0] } },
+        },
+      },
     ]);
-    const [pnlAgg] = await LivePaperTrade.aggregate([
-      { $match: { strategyKey: ctx.strategyKey, exitTime: { $ne: null } } },
-      { $group: { _id: null, netPnl: { $sum: '$pnl' }, wins: { $sum: { $cond: [{ $gt: ['$pnl', 0] }, 1, 0] } } } },
-    ]);
+    const stats = statsAgg?.[0] || {};
+    const strategyNetPnl = Number(Number(stats.netPnl || 0).toFixed(2));
+    const strategyTotalTrades = Number(stats.totalTrades || 0);
+    if (
+      typeof ctx.recalcWallet === 'function'
+      && (wallet.totalTrades !== strategyTotalTrades
+        || Number(Number(wallet.realizedPnl || 0).toFixed(2)) !== strategyNetPnl)
+    ) {
+      await ctx.recalcWallet();
+      wallet = await ctx.ensureWallet();
+    }
     const snapshot = ctx.getEngineSnapshot();
     const openPositionMark =
       snapshot.openPositionMark
@@ -179,12 +199,14 @@ async function getStatus(req, res) {
         startingBalance: wallet.startingBalance,
         balance: wallet.balance,
         realizedPnl: wallet.realizedPnl,
-        totalTrades: wallet.totalTrades,
-        wins: wallet.wins,
-        losses: wallet.losses,
-        strategyNetPnl: Number(Number(pnlAgg?.[0]?.netPnl || 0).toFixed(2)),
-        strategyWins: Number(pnlAgg?.[0]?.wins || 0),
-        totalCharges: Number(Number(chargesAgg?.totalCharges || 0).toFixed(2)),
+        totalTrades: strategyTotalTrades,
+        wins: Number(stats.wins || 0),
+        losses: Number(stats.losses || 0),
+        strategyNetPnl,
+        strategyWins: Number(stats.wins || 0),
+        strategyLosses: Number(stats.losses || 0),
+        strategyTotalTrades,
+        totalCharges: Number(Number(stats.totalCharges || 0).toFixed(2)),
         lastResetAt: wallet.lastResetAt,
       },
       openTrade: openTrade || null,
@@ -284,8 +306,9 @@ async function listTrades(req, res) {
     const filter = { strategyKey: ctx.strategyKey };
     if (statusQ === 'OPEN') {
       filter.exitTime = null;
+      filter.status = { $ne: 'CLOSED' };
     } else if (statusQ === 'CLOSED') {
-      filter.exitTime = { $ne: null };
+      filter.$or = [{ exitTime: { $ne: null } }, { status: 'CLOSED' }];
     } else if (statusQ === 'ALL') {
       // include open + closed
     } else {
@@ -374,6 +397,9 @@ async function closeLivePosition(req, res) {
       await ctx.ensureRunning();
     }
     const result = await ctx.closeOpenPosition({ reason: 'MANUAL_CLOSE' });
+    if (typeof ctx.recalcWallet === 'function') {
+      await ctx.recalcWallet();
+    }
     return res.json(result);
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });

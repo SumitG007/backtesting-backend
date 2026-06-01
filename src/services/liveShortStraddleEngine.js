@@ -497,6 +497,9 @@ async function dedupeOpenTradesInDb(clock) {
       keptTradeId: keep._id.toString(),
     });
   }
+  if (duplicates.length > 0) {
+    await recalcWalletFromTrades();
+  }
   await backfillOpenTradeNotes(keep);
   return keep;
 }
@@ -809,7 +812,9 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
 }
 
 async function finalizeTrade(trade, { exitCombined, mark, reason }) {
-  if (engineState.closingTrade) return;
+  if (engineState.closingTrade) {
+    throw new Error('Another close is already in progress — try again in a few seconds');
+  }
   engineState.closingTrade = true;
   try {
     const safeExitCombined = Math.max(0.05, Number(exitCombined) || 0.05);
