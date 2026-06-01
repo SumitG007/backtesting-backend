@@ -21,7 +21,9 @@ const {
   getLastPrice,
   getOptionChainRateLimitStatus,
 } = require('./dhanLiveService');
-const { STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } = require('../strategies/keys');
+const { STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY, STRATEGY_SIX_KEY } = require('../strategies/keys');
+
+const STRATEGY_PAPER_LIVE_KEYS = [STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY, STRATEGY_SIX_KEY];
 
 const STRATEGY_KEY = STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY;
 const CE_SUBSCRIPTION_KEY = 'engine:strategy4:ce';
@@ -1068,7 +1070,10 @@ async function ensureEngineRunning() {
 
 async function recalcWalletFromTrades() {
   const wallet = await ensureWallet();
-  const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: { $ne: null } }).lean();
+  const rows = await LivePaperTrade.find({
+    strategyKey: { $in: STRATEGY_PAPER_LIVE_KEYS },
+    exitTime: { $ne: null },
+  }).lean();
   let realizedPnl = 0;
   let wins = 0;
   let losses = 0;
@@ -1087,25 +1092,79 @@ async function recalcWalletFromTrades() {
   return wallet;
 }
 
+async function resolveExitMarkForClose(trade) {
+  const mark = await resolveMarkForOpenTrade(trade, {
+    preferTicks: true,
+    allowChain: true,
+    forceChain: true,
+  });
+  if (Number.isFinite(mark?.combined) && mark.combined > 0) {
+    return mark;
+  }
+  const opm = trade.openPositionMark || engineState.openPositionMark;
+  if (opm && Number.isFinite(Number(opm.combinedPremium)) && Number(opm.combinedPremium) > 0) {
+    return {
+      combined: Number(opm.combinedPremium),
+      ce: Number(opm.ceLtp),
+      pe: Number(opm.peLtp),
+      spot: Number(opm.spot) || trade.entrySpot,
+      source: 'open_position_mark',
+    };
+  }
+  return mark;
+}
+
+async function findOpenTradeForClose() {
+  await syncEngineTradeStateFromDb(getIstClock(new Date()));
+  if (engineState.openTradeId) {
+    const fromEngine = await LivePaperTrade.findById(engineState.openTradeId);
+    if (fromEngine && !fromEngine.exitTime) return fromEngine;
+  }
+  return LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    exitTime: null,
+    status: { $ne: 'CLOSED' },
+  }).sort({ entryTime: -1 });
+}
+
 async function closeOpenPosition({ reason = 'MANUAL_CLOSE' } = {}) {
   if (!engineState.running) {
-    throw new Error('Engine is not running');
+    await bootEngineFromDb();
+  }
+  if (!engineState.running) {
+    throw new Error('Paper-live engine is not running — wait a few seconds and try again');
   }
   await ensureNseHolidaysLoaded();
   const clock = getIstClock(new Date());
-  await syncEngineTradeStateFromDb(clock);
-  if (!engineState.openTradeId) {
-    throw new Error('No open position to close');
-  }
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.exitTime) {
+  const trade = await findOpenTradeForClose();
+  if (!trade) {
     clearOpenTrade();
     throw new Error('No open position to close');
   }
-  const mark = await resolveMarkForOpenTrade(trade, { preferTicks: false, allowChain: true });
+  engineState.openTradeId = trade._id.toString();
+  engineState.tradeDateKey = trade.entryDateKey;
+  logEntry('MANUAL_CLOSE_START', {
+    ist: istClockLabel(clock),
+    tradeId: trade._id.toString(),
+    reason,
+  });
+  try {
+    await subscribeOpenStraddle(trade);
+  } catch (subErr) {
+    engineState.lastError = `Strategy 4 manual close subscribe: ${subErr.message}`;
+  }
+  const mark = await resolveExitMarkForClose(trade);
   await finalizeTrade(trade, { exitCombined: mark.combined, mark, reason });
-  logEntry('MANUAL_CLOSE', { ist: istClockLabel(clock), tradeId: trade._id.toString(), reason });
-  return { ok: true, state: getEngineSnapshot() };
+  const closed = await LivePaperTrade.findById(trade._id).lean();
+  logEntry('MANUAL_CLOSE', {
+    ist: istClockLabel(clock),
+    tradeId: trade._id.toString(),
+    reason,
+    pnl: closed?.pnl,
+    exitCombined: mark?.combined,
+    markSource: mark?.source,
+  });
+  return { ok: true, trade: closed, state: getEngineSnapshot() };
 }
 
 async function reconcileOpenTrades() {

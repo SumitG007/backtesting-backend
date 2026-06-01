@@ -6,12 +6,55 @@ const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
 const {
   STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SIX_KEY,
 } = require('../strategies/keys');
+
+const STRATEGY_FOUR_PAPER_LIVE_KEYS = [
+  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SIX_KEY,
+];
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_THREE_IV_LIVE_KEY,
-  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+  ...STRATEGY_FOUR_PAPER_LIVE_KEYS,
 ];
+
+function buildPaperLiveKeyFilter(ctx) {
+  if (ctx.strategyId === 'strategy-4') {
+    return { strategyKey: { $in: STRATEGY_FOUR_PAPER_LIVE_KEYS } };
+  }
+  return { strategyKey: ctx.strategyKey };
+}
+
+function computeClosedTradeStats(rows) {
+  let netPnl = 0;
+  let wins = 0;
+  let losses = 0;
+  let totalCharges = 0;
+  for (const t of rows) {
+    const pnl = Number(t.pnl);
+    const p = Number.isFinite(pnl) ? pnl : 0;
+    netPnl += p;
+    totalCharges += Number(t.charges) || 0;
+    if (p > 0) wins += 1;
+    else if (p < 0) losses += 1;
+  }
+  return {
+    netPnl: Number(netPnl.toFixed(2)),
+    wins,
+    losses,
+    totalTrades: rows.length,
+    totalCharges: Number(totalCharges.toFixed(2)),
+  };
+}
+
+/** Older paper rows used the backtest strategy6 key — fold into Strategy 4 live. */
+async function normalizeLegacyStrategy4PaperKeys() {
+  await LivePaperTrade.updateMany(
+    { strategyKey: STRATEGY_SIX_KEY, optionType: 'STRADDLE' },
+    { $set: { strategyKey: STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } },
+  );
+}
 
 /** Old rows saved with schema default or wrong key — auto-close so they do not alarm the UI. */
 async function closeLegacyOrphanStraddles(clock) {
@@ -117,15 +160,35 @@ async function getStatus(req, res) {
     if (typeof ctx.ensureRunning === 'function') {
       await ctx.ensureRunning();
     }
-    const wallet = await ctx.ensureWallet();
+    let wallet = await ctx.ensureWallet();
+    if (ctx.strategyId === 'strategy-4') {
+      await normalizeLegacyStrategy4PaperKeys();
+    }
     if (typeof ctx.reconcileOpenTrades === 'function') {
       await ctx.reconcileOpenTrades();
     }
     const clock = getIstClock(new Date());
     await closeLegacyOrphanStraddles(clock);
+    const keyFilter = buildPaperLiveKeyFilter(ctx);
+    const closedFilter = {
+      ...keyFilter,
+      $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
+    };
+    const closedRows = await LivePaperTrade.find(closedFilter).lean();
+    const stats = computeClosedTradeStats(closedRows);
+    const strategyNetPnl = stats.netPnl;
+    const strategyTotalTrades = stats.totalTrades;
+    if (typeof ctx.recalcWallet === 'function') {
+      const walletPnl = Number(Number(wallet.realizedPnl || 0).toFixed(2));
+      if (Number(wallet.totalTrades || 0) !== strategyTotalTrades || walletPnl !== strategyNetPnl) {
+        await ctx.recalcWallet();
+        wallet = await ctx.ensureWallet();
+      }
+    }
     let openTrade = await LivePaperTrade.findOne({
-      strategyKey: ctx.strategyKey,
+      ...keyFilter,
       exitTime: null,
+      status: { $ne: 'CLOSED' },
     })
       .sort({ entryTime: -1 })
       .lean();
@@ -137,46 +200,18 @@ async function getStatus(req, res) {
         // Keep last DB mark on refresh failure
       }
     }
-    const closedTradeMatch = {
-      strategyKey: ctx.strategyKey,
-      $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
-    };
-    const [statsAgg] = await LivePaperTrade.aggregate([
-      { $match: closedTradeMatch },
-      {
-        $group: {
-          _id: null,
-          netPnl: { $sum: { $ifNull: ['$pnl', 0] } },
-          wins: { $sum: { $cond: [{ $gt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0] } },
-          losses: { $sum: { $cond: [{ $lt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0] } },
-          totalTrades: { $sum: 1 },
-          totalCharges: { $sum: { $ifNull: ['$charges', 0] } },
-        },
-      },
-    ]);
-    const stats = statsAgg?.[0] || {};
-    const strategyNetPnl = Number(Number(stats.netPnl || 0).toFixed(2));
-    const strategyTotalTrades = Number(stats.totalTrades || 0);
-    if (
-      typeof ctx.recalcWallet === 'function'
-      && (wallet.totalTrades !== strategyTotalTrades
-        || Number(Number(wallet.realizedPnl || 0).toFixed(2)) !== strategyNetPnl)
-    ) {
-      await ctx.recalcWallet();
-      wallet = await ctx.ensureWallet();
-    }
     const snapshot = ctx.getEngineSnapshot();
     const openPositionMark =
       snapshot.openPositionMark
       || openTrade?.openPositionMark
       || null;
     const todayTrades = await LivePaperTrade.find({
-      strategyKey: ctx.strategyKey,
+      ...keyFilter,
       entryDateKey: clock.dateKey,
     })
       .sort({ entryTime: -1 })
       .lean();
-    const latestTrade = await LivePaperTrade.findOne({ strategyKey: ctx.strategyKey })
+    const latestTrade = await LivePaperTrade.findOne(keyFilter)
       .sort({ entryTime: -1 })
       .lean();
     const positionHint = buildPaperLiveHint({
@@ -200,13 +235,13 @@ async function getStatus(req, res) {
         balance: wallet.balance,
         realizedPnl: wallet.realizedPnl,
         totalTrades: strategyTotalTrades,
-        wins: Number(stats.wins || 0),
-        losses: Number(stats.losses || 0),
+        wins: stats.wins,
+        losses: stats.losses,
         strategyNetPnl,
-        strategyWins: Number(stats.wins || 0),
-        strategyLosses: Number(stats.losses || 0),
+        strategyWins: stats.wins,
+        strategyLosses: stats.losses,
         strategyTotalTrades,
-        totalCharges: Number(Number(stats.totalCharges || 0).toFixed(2)),
+        totalCharges: stats.totalCharges,
         lastResetAt: wallet.lastResetAt,
       },
       openTrade: openTrade || null,
@@ -279,7 +314,10 @@ async function resetWallet(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    await LivePaperTrade.deleteMany({ strategyKey: ctx.strategyKey });
+    const deleteFilter = ctx.strategyId === 'strategy-4'
+      ? { strategyKey: { $in: STRATEGY_FOUR_PAPER_LIVE_KEYS } }
+      : { strategyKey: ctx.strategyKey };
+    await LivePaperTrade.deleteMany(deleteFilter);
     if (typeof ctx.recalcWallet === 'function') {
       await ctx.recalcWallet();
     } else {
@@ -303,16 +341,14 @@ async function listTrades(req, res) {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(200, Math.max(10, Number(req.query.pageSize) || 25));
     const statusQ = String(req.query.status || '').toUpperCase();
-    const filter = { strategyKey: ctx.strategyKey };
+    const filter = buildPaperLiveKeyFilter(ctx);
     if (statusQ === 'OPEN') {
       filter.exitTime = null;
       filter.status = { $ne: 'CLOSED' };
     } else if (statusQ === 'CLOSED') {
       filter.$or = [{ exitTime: { $ne: null } }, { status: 'CLOSED' }];
-    } else if (statusQ === 'ALL') {
-      // include open + closed
     } else {
-      filter.exitTime = { $ne: null };
+      // ALL (default) — open + closed
     }
     const totalRows = await LivePaperTrade.countDocuments(filter);
     const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
@@ -400,7 +436,13 @@ async function closeLivePosition(req, res) {
     if (typeof ctx.recalcWallet === 'function') {
       await ctx.recalcWallet();
     }
-    return res.json(result);
+    return res.json({
+      ...result,
+      ok: true,
+      message: result?.trade?.pnl != null
+        ? `Position closed. Realized P/L ₹${Number(result.trade.pnl).toFixed(2)}`
+        : 'Position closed',
+    });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
   }
