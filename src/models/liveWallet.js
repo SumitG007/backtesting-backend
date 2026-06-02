@@ -34,6 +34,15 @@ const liveWalletSchema = new mongoose.Schema(
       skipExpiryDay: { type: Boolean, default: true },
       perTradeCost: { type: Number, default: 100 },
     },
+    strategy6EngineSettings: {
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 1 },
+      entryTime: { type: String, default: '09:20' },
+      entryWindowMinutes: { type: Number, default: 2 },
+      dayCloseTime: { type: String, default: '15:15' },
+      skipExpiryDay: { type: Boolean, default: true },
+      perTradeCost: { type: Number, default: 100 },
+    },
     strategy3OrHistory: {
       type: [{ dateKey: String, orIv: Number }],
       default: [],

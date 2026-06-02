@@ -8,13 +8,16 @@ const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence')
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 const strategyThreePaperEngine = require('./services/liveIvMeanReversionEngine');
 const strategyFourPaperEngine = require('./services/liveShortStraddleEngine');
+const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 
 async function bootBackgroundServices() {
   try {
     const s4 = require('./services/liveShortStraddleEngine');
+    const s6 = require('./services/liveShortStraddleEngineStrategy6');
     const s3 = require('./services/liveIvMeanReversionEngine');
     await s3.reconcileOpenTrades();
     await s4.reconcileOpenTrades();
+    await s6.reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
   }
@@ -46,9 +49,20 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const boot = await strategySixPaperEngine.ensureEngineRunning();
+    if (boot.ok) {
+      console.log('Strategy 6 paper-live engine started (always on)');
+    } else {
+      console.warn('Strategy 6 paper-live engine boot:', boot.error || 'unknown');
+    }
+  } catch (err) {
+    console.warn('Strategy 6 paper-live engine boot failed:', err.message);
+  }
+
+  try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
-    if (resume.strategy3?.resumed || resume.strategy4?.resumed) {
+    if (resume.strategy3?.resumed || resume.strategy4?.resumed || resume.strategy6?.resumed) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }
   } catch (err) {

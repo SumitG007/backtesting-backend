@@ -1,5 +1,5 @@
 const LivePaperTrade = require('../models/livePaperTrade');
-/** Strategy 4 live paper engine — short straddle BTST (entry same day, exit next trading day). */
+/** Strategy 6 live paper engine — short straddle BTST (entry same day, exit next trading day). */
 const LiveWallet = require('../models/liveWallet');
 const { getIstClock, parseClockMinutes, isWeekendDateKey, parseDateOnly, addDays, formatDateOnly } = require('../utils/dateTime');
 const {
@@ -22,11 +22,11 @@ const {
   getLastPrice,
   getOptionChainRateLimitStatus,
 } = require('./dhanLiveService');
-const { STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } = require('../strategies/keys');
+const { STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY } = require('../strategies/keys');
 
-const STRATEGY_KEY = STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY;
-const CE_SUBSCRIPTION_KEY = 'engine:strategy4:ce';
-const PE_SUBSCRIPTION_KEY = 'engine:strategy4:pe';
+const STRATEGY_KEY = STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY;
+const CE_SUBSCRIPTION_KEY = 'engine:strategy6:ce';
+const PE_SUBSCRIPTION_KEY = 'engine:strategy6:pe';
 const POLL_INTERVAL_MS = 8000;
 const POSITION_POLL_MS = 6000;
 const OPEN_MARK_CHAIN_MIN_GAP_MS = 10000;
@@ -44,7 +44,7 @@ const engineState = {
   settings: {
     symbol: 'NIFTY',
     lotCount: 1,
-    entryTime: '15:20',
+    entryTime: '09:20',
     entryWindowMinutes: 2,
     dayCloseTime: '15:15',
     skipExpiryDay: true,
@@ -118,7 +118,7 @@ function logEntry(line, payload = {}) {
     ...payload,
   };
   engineState.lastEntryDebug = entry;
-  console.log(`[Strategy4Live] ${line}`, JSON.stringify(entry));
+  console.log(`[Strategy6Live] ${line}`, JSON.stringify(entry));
 }
 
 function normalizeSettings(settings = {}) {
@@ -129,9 +129,9 @@ function normalizeSettings(settings = {}) {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
     entryTime: (() => {
-      const raw = String(settings.entryTime || settings.entryFromTime || '15:20').trim();
+      const raw = String(settings.entryTime || settings.entryFromTime || '09:20').trim();
       const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
-      if (!m) return '15:20';
+      if (!m) return '09:20';
       return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
     })(),
     entryWindowMinutes: Number.isFinite(rawEntryWindow)
@@ -220,7 +220,7 @@ async function persistOpenMarkToDb(trade, positionMark) {
       },
     );
   } catch (err) {
-    engineState.lastError = `Strategy 4 MTM save: ${err.message}`;
+    engineState.lastError = `Strategy 6 MTM save: ${err.message}`;
   }
 }
 
@@ -304,7 +304,7 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain 
         if (rl.coolingDown) {
           engineState.lastError = 'Dhan option chain cooling down — using last live / WS prices';
         } else if (!premiums?.ceLtp && !premiums?.peLtp) {
-          engineState.lastError = `Strategy 4: no chain LTP for strike ${trade.strike} exp ${trade.expiryDate}`;
+          engineState.lastError = `Strategy 6: no chain LTP for strike ${trade.strike} exp ${trade.expiryDate}`;
         }
       }
     } catch (err) {
@@ -312,7 +312,7 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain 
       if (msg.includes('429') || /rate\s*limit/i.test(msg)) {
         engineState.lastError = 'Dhan rate limit — using last live / websocket prices';
       } else {
-        engineState.lastError = `Strategy 4 mark refresh: ${msg}`;
+        engineState.lastError = `Strategy 6 mark refresh: ${msg}`;
       }
     }
   }
@@ -388,7 +388,7 @@ async function refreshOpenPositionMarkForStatus() {
 }
 
 async function ensureWallet() {
-  const walletKey = 'paper_live_strategy4';
+  const walletKey = 'paper_live_strategy6';
   let wallet = await LiveWallet.findOne({ walletKey });
   if (!wallet) wallet = await LiveWallet.create({ walletKey });
   if (wallet.startingBalance !== 0 || wallet.balance !== wallet.realizedPnl) {
@@ -420,7 +420,7 @@ async function subscribeOpenStraddle(trade) {
         onTick: (tick) => onOptionTick(leg.optionType, tick),
       });
     } catch (err) {
-      engineState.lastError = `Strategy 4 option WS subscribe failed: ${err.message}`;
+      engineState.lastError = `Strategy 6 option WS subscribe failed: ${err.message}`;
     }
   }
 }
@@ -523,7 +523,7 @@ async function syncEngineTradeStateFromDb(clock) {
       await subscribeOpenStraddle(openInDb);
       startPositionPoll();
       checkOpenTrade().catch((err) => {
-        engineState.lastError = `Strategy 4 sync exit check: ${err.message}`;
+        engineState.lastError = `Strategy 6 sync exit check: ${err.message}`;
       });
     } else if (!engineState.positionPollTimer) {
       startPositionPoll();
@@ -674,7 +674,7 @@ async function placeShortStraddle(clock) {
     const chainForSpot = await getAtmPremiums({ symbol, strike: 0, expiry });
     const spot = Number(chainForSpot.chainSpot || chainForSpot.spot);
     if (!Number.isFinite(spot) || spot <= 0) {
-      engineState.lastError = 'Strategy 4 entry skipped: live spot unavailable';
+      engineState.lastError = 'Strategy 6 entry skipped: live spot unavailable';
       logEntry('ENTRY_FAILED', { ist: istClockLabel(clock), reason: 'NO_SPOT' });
       return;
     }
@@ -684,7 +684,7 @@ async function placeShortStraddle(clock) {
     const ceEntry = Number(premiums.ceLtp);
     const peEntry = Number(premiums.peLtp);
     if (!Number.isFinite(ceEntry) || ceEntry <= 0 || !Number.isFinite(peEntry) || peEntry <= 0) {
-      engineState.lastError = `Strategy 4 entry skipped: missing CE/PE premium for ${strike}`;
+      engineState.lastError = `Strategy 6 entry skipped: missing CE/PE premium for ${strike}`;
       logEntry('ENTRY_FAILED', {
         ist: istClockLabel(clock),
         reason: 'MISSING_CE_PE',
@@ -719,7 +719,7 @@ async function placeShortStraddle(clock) {
       marginBlocked = marginResult.margin;
       marginSource = marginResult.source;
     } catch (err) {
-      engineState.lastError = `Strategy 4 margin API fallback: ${err.message}`;
+      engineState.lastError = `Strategy 6 margin API fallback: ${err.message}`;
     }
     if (!Number.isFinite(marginBlocked) || marginBlocked <= 0) {
       marginBlocked = shortStraddleMarginBlocked({
@@ -882,7 +882,7 @@ function startPositionPoll() {
   if (!engineState.openTradeId) return;
   const tick = () => {
     checkOpenTrade().catch((err) => {
-      engineState.lastError = `Strategy 4 position poll: ${err.message}`;
+      engineState.lastError = `Strategy 6 position poll: ${err.message}`;
     });
   };
   tick();
@@ -893,10 +893,10 @@ function startPoll() {
   if (engineState.pollTimer) clearInterval(engineState.pollTimer);
   const tick = () => {
     evaluateEntry().catch((err) => {
-      engineState.lastError = `Strategy 4 entry poll: ${err.message}`;
+      engineState.lastError = `Strategy 6 entry poll: ${err.message}`;
     });
     checkOpenTrade().catch((err) => {
-      engineState.lastError = `Strategy 4 exit poll: ${err.message}`;
+      engineState.lastError = `Strategy 6 exit poll: ${err.message}`;
     });
   };
   tick();
@@ -925,7 +925,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
       ? await getTradableWeeklyExpiry(getEngineSymbol(), clock.dateKey, 2)
       : await getNearestWeeklyExpiry(getEngineSymbol());
   } catch (err) {
-    engineState.lastError = `Strategy 4 setup: ${err.message}`;
+    engineState.lastError = `Strategy 6 setup: ${err.message}`;
   }
   try {
     const clock = getIstClock(new Date());
@@ -943,7 +943,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
       await refreshOpenPositionMark({ tradeDoc: orphan });
     }
   } catch (err) {
-    engineState.lastError = `Strategy 4 adopt open trade failed: ${err.message}`;
+    engineState.lastError = `Strategy 6 adopt open trade failed: ${err.message}`;
   }
   engineState.running = true;
   engineState.startedAt = new Date();
@@ -972,16 +972,16 @@ async function updateEngineSettings(partial = {}) {
       engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
       engineState.expiry = null;
     } catch (err) {
-      engineState.lastError = `Strategy 4 symbol change: ${err.message}`;
+      engineState.lastError = `Strategy 6 symbol change: ${err.message}`;
     }
   }
   logEntry('SETTINGS_UPDATED', { settings: next, running: engineState.running });
   try {
     const wallet = await ensureWallet();
-    wallet.strategy4EngineSettings = next;
+    wallet.strategy6EngineSettings = next;
     await wallet.save();
   } catch (err) {
-    engineState.lastError = `Strategy 4 settings persist failed: ${err.message}`;
+    engineState.lastError = `Strategy 6 settings persist failed: ${err.message}`;
   }
   return { ok: true, state: getEngineSnapshot() };
 }
@@ -989,12 +989,12 @@ async function updateEngineSettings(partial = {}) {
 async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
   try {
     const wallet = await ensureWallet();
-    const persisted = wallet.strategy4EngineSettings
-      ? wallet.strategy4EngineSettings.toObject?.() || wallet.strategy4EngineSettings
+    const persisted = wallet.strategy6EngineSettings
+      ? wallet.strategy6EngineSettings.toObject?.() || wallet.strategy6EngineSettings
       : {};
     return startEngine({ symbol: persisted.symbol || symbol, settings: persisted });
   } catch (err) {
-    engineState.lastError = `Strategy 4 boot failed: ${err.message}`;
+    engineState.lastError = `Strategy 6 boot failed: ${err.message}`;
     return { ok: false, error: err.message };
   }
 }
@@ -1044,7 +1044,7 @@ async function resumeOpenPositionFromDb() {
       entryDateKey: trade.entryDateKey,
     });
   } catch (err) {
-    engineState.lastError = `Strategy 4 resume open position: ${err.message}`;
+    engineState.lastError = `Strategy 6 resume open position: ${err.message}`;
   }
   return { ok: true, resumed: Boolean(engineState.openTradeId), state: getEngineSnapshot() };
 }
@@ -1069,10 +1069,7 @@ async function ensureEngineRunning() {
 
 async function recalcWalletFromTrades() {
   const wallet = await ensureWallet();
-  const rows = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
-    exitTime: { $ne: null },
-  }).lean();
+  const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: { $ne: null } }).lean();
   let realizedPnl = 0;
   let wins = 0;
   let losses = 0;
@@ -1150,7 +1147,7 @@ async function closeOpenPosition({ reason = 'MANUAL_CLOSE' } = {}) {
   try {
     await subscribeOpenStraddle(trade);
   } catch (subErr) {
-    engineState.lastError = `Strategy 4 manual close subscribe: ${subErr.message}`;
+    engineState.lastError = `Strategy 6 manual close subscribe: ${subErr.message}`;
   }
   const mark = await resolveExitMarkForClose(trade);
   await finalizeTrade(trade, { exitCombined: mark.combined, mark, reason });

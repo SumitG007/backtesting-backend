@@ -1,28 +1,23 @@
 const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
-const strategyTwoEngine = require('../services/liveShortStraddleEngine');
+const strategyFourEngine = require('../services/liveShortStraddleEngine');
+const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
 const {
   STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
+  STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
 } = require('../strategies/keys');
-
-const STRATEGY_FOUR_PAPER_LIVE_KEYS = [
-  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
-  STRATEGY_SIX_KEY,
-];
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_THREE_IV_LIVE_KEY,
-  ...STRATEGY_FOUR_PAPER_LIVE_KEYS,
+  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
-  if (ctx.strategyId === 'strategy-4') {
-    return { strategyKey: { $in: STRATEGY_FOUR_PAPER_LIVE_KEYS } };
-  }
   return { strategyKey: ctx.strategyKey };
 }
 
@@ -89,14 +84,26 @@ const {
 } = require('../services/dhanLiveService');
 const { getIstClock } = require('../utils/dateTime');
 
-function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine }) {
+function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strategyLabel }) {
+  const label = strategyLabel || 'Paper-live';
+  const entryTime = engine?.settings?.entryTime || '09:20';
+  const entryWindowMinutes = Math.max(0, Number(engine?.settings?.entryWindowMinutes) || 2);
+  const parts = String(entryTime).split(':');
+  const hh = Number(parts[0]);
+  const mm = Number(parts[1]);
+  const startMinutes = Number.isFinite(hh) && Number.isFinite(mm) ? (hh * 60 + mm) : (9 * 60 + 20);
+  const endMinutes = startMinutes + entryWindowMinutes;
+  const endH = String(Math.floor(endMinutes / 60)).padStart(2, '0');
+  const endM = String(endMinutes % 60).padStart(2, '0');
+  const entryWindowLabel = `${entryTime}–${endH}:${endM}`;
+
   if (openTrade) return null;
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
   if (closedToday.length > 0) {
     const t = closedToday[0];
     const reason = t.reason || 'CLOSED';
     if (reason === 'MANUAL_CLOSE') {
-      return 'Position closed manually. Realized P/L is in the Closed tab. Strategy 4 will not auto-enter again today (one entry per day).';
+      return `Position closed manually. Realized P/L is in the Closed tab. ${label} will not auto-enter again today (one entry per day).`;
     }
     return `Today's paper-live entry is closed (${reason}). See the Closed tab.`;
   }
@@ -115,23 +122,37 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine }) {
   if (dbg?.reason === 'ALREADY_TRADED_TODAY' || dbg?.reason === 'ALREADY_TRADED_TODAY_IN_DB') {
     return 'Engine will not enter again today (one entry per day). No open row in DB — check Closed tab or wallet reset.';
   }
-  return 'No paper-live trade recorded for today. Auto-entry runs only Mon–Fri 9:20–9:22 IST with backend + Dhan connected. A backtest run at 9:20 is separate and does not appear here.';
+  return `No paper-live trade recorded for today. Auto-entry runs only Mon–Fri ${entryWindowLabel} IST with backend + Dhan connected. Backtest entries are separate and do not appear here.`;
 }
 
 const LIVE_STRATEGIES = {
   'strategy-4': {
     strategyId: 'strategy-4',
-    strategyKey: strategyTwoEngine.STRATEGY_KEY,
-    startEngine: strategyTwoEngine.startEngine,
-    stopEngine: strategyTwoEngine.stopEngine,
-    updateEngineSettings: strategyTwoEngine.updateEngineSettings,
-    getEngineSnapshot: strategyTwoEngine.getEngineSnapshot,
-    ensureWallet: strategyTwoEngine.ensureWallet,
-    recalcWallet: strategyTwoEngine.recalcWalletFromTrades,
-    ensureRunning: strategyTwoEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyTwoEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyTwoEngine.closeOpenPosition,
-    refreshOpenMark: strategyTwoEngine.refreshOpenPositionMarkForStatus,
+    strategyKey: strategyFourEngine.STRATEGY_KEY,
+    startEngine: strategyFourEngine.startEngine,
+    stopEngine: strategyFourEngine.stopEngine,
+    updateEngineSettings: strategyFourEngine.updateEngineSettings,
+    getEngineSnapshot: strategyFourEngine.getEngineSnapshot,
+    ensureWallet: strategyFourEngine.ensureWallet,
+    recalcWallet: strategyFourEngine.recalcWalletFromTrades,
+    ensureRunning: strategyFourEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyFourEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyFourEngine.closeOpenPosition,
+    refreshOpenMark: strategyFourEngine.refreshOpenPositionMarkForStatus,
+  },
+  'strategy-6': {
+    strategyId: 'strategy-6',
+    strategyKey: strategySixEngine.STRATEGY_KEY,
+    startEngine: strategySixEngine.startEngine,
+    stopEngine: strategySixEngine.stopEngine,
+    updateEngineSettings: strategySixEngine.updateEngineSettings,
+    getEngineSnapshot: strategySixEngine.getEngineSnapshot,
+    ensureWallet: strategySixEngine.ensureWallet,
+    recalcWallet: strategySixEngine.recalcWalletFromTrades,
+    ensureRunning: strategySixEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategySixEngine.reconcileOpenTrades,
+    closeOpenPosition: strategySixEngine.closeOpenPosition,
+    refreshOpenMark: strategySixEngine.refreshOpenPositionMarkForStatus,
   },
   'strategy-3': {
     strategyId: 'strategy-3',
@@ -219,6 +240,7 @@ async function getStatus(req, res) {
       todayTrades,
       latestTrade,
       engine: snapshot,
+      strategyLabel: ctx.strategyId === 'strategy-6' ? 'Strategy 6' : (ctx.strategyId === 'strategy-4' ? 'Strategy 4' : 'Paper-live'),
     });
     return res.json({
       ok: true,
@@ -314,9 +336,7 @@ async function resetWallet(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    const deleteFilter = ctx.strategyId === 'strategy-4'
-      ? { strategyKey: { $in: STRATEGY_FOUR_PAPER_LIVE_KEYS } }
-      : { strategyKey: ctx.strategyKey };
+    const deleteFilter = buildPaperLiveKeyFilter(ctx);
     await LivePaperTrade.deleteMany(deleteFilter);
     if (typeof ctx.recalcWallet === 'function') {
       await ctx.recalcWallet();
@@ -373,7 +393,7 @@ async function exportTradesExcel(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    const trades = await LivePaperTrade.find({ strategyKey: ctx.strategyKey }).sort({ entryTime: -1 }).lean();
+    const trades = await LivePaperTrade.find(buildPaperLiveKeyFilter(ctx)).sort({ entryTime: -1 }).lean();
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Paper Live Trades');
     sheet.columns = [
@@ -459,9 +479,9 @@ async function getLiveMeta(req, res) {
     const clock = getIstClock(new Date());
     const lotSize = await getCurrentLotSize(symbol);
     let expiry = null;
-    if (ctx?.strategyId === 'strategy-4') {
+    if (ctx?.strategyId === 'strategy-4' || ctx?.strategyId === 'strategy-6') {
       expiry = skipExpiryDay
-        ? await getTradableWeeklyExpiry(symbol, clock.dateKey)
+        ? await getTradableWeeklyExpiry(symbol, clock.dateKey, 2)
         : await getNearestWeeklyExpiry(symbol);
       if (snapshot?.expiry) expiry = snapshot.expiry;
     } else {

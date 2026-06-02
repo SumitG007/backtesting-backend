@@ -4,6 +4,7 @@ const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken
 const { getDhanClientId } = require('./dhanTokenStore');
 const { resolveSymbolConfig } = require('../utils/market');
 const { parseDateOnly, formatDateOnly, addDays } = require('../utils/dateTime');
+const { ensureNseHolidaysLoaded, isNseCashTradingDay } = require('./nseHolidayService');
 
 const DHAN_BASE = process.env.DHAN_API_BASE_URL || 'https://api.dhan.co/v2';
 const DHAN_WS_URL = 'wss://api-feed.dhan.co';
@@ -239,27 +240,54 @@ async function getNearestWeeklyExpiry(symbol) {
   return sorted[sorted.length - 1];
 }
 
-/** Last expiry date (YYYY-MM-DD) still blocked for new entries on `dateKey` (today + tomorrow series). */
-function getNearExpiryCutoffDateKey(dateKey) {
-  const today = String(dateKey || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) {
+/**
+ * Last expiry date (YYYY-MM-DD) still blocked for new entries on `dateKey`.
+ *
+ * When tradingDaysAhead=1, this matches the old behavior: "skip expiry day + 1 day before"
+ * using trading-day aware counting.
+ */
+function getNearExpiryCutoffDateKey(dateKey, tradingDaysAhead = 1) {
+  const base = String(dateKey || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(base)) {
     return new Date().toISOString().slice(0, 10);
   }
-  return formatDateOnly(addDays(parseDateOnly(today), 1));
+
+  let cursor = parseDateOnly(base);
+  if (Number.isNaN(cursor.getTime())) {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  // Move forward day-by-day and count only cash trading days.
+  const target = Math.max(0, Number(tradingDaysAhead) || 0);
+  let remaining = target;
+  // Worst case: keep it bounded even if the holiday cache is stale.
+  for (let guard = 0; guard < 60 && remaining > 0; guard += 1) {
+    cursor = addDays(cursor, 1);
+    const key = formatDateOnly(cursor);
+    if (isNseCashTradingDay(key)) {
+      remaining -= 1;
+      if (remaining <= 0) return key;
+    }
+  }
+
+  return formatDateOnly(cursor);
 }
 
-/** True when weekly expiry is today or tomorrow (IST) — use next expiry for new trades. */
-function isExpiryTooSoonForNewEntry(expiry, dateKey) {
+/** True when weekly expiry is within `tradingDaysAhead` (IST) — use next expiry for new trades. */
+function isExpiryTooSoonForNewEntry(expiry, dateKey, tradingDaysAhead = 1) {
   const e = String(expiry || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e)) return true;
-  return e <= getNearExpiryCutoffDateKey(dateKey);
+  return e <= getNearExpiryCutoffDateKey(dateKey, tradingDaysAhead);
 }
 
-async function getTradableWeeklyExpiry(symbol, dateKey) {
+async function getTradableWeeklyExpiry(symbol, dateKey, tradingDaysAhead = 1) {
+  // Ensure holiday cache is ready so trading-day aware cutoff works correctly.
+  await ensureNseHolidaysLoaded();
+
   const list = await fetchExpiryList(symbol);
   if (list.length === 0) return null;
   const today = String(dateKey || new Date().toISOString().slice(0, 10)).slice(0, 10);
-  const cutoff = getNearExpiryCutoffDateKey(today);
+  const cutoff = getNearExpiryCutoffDateKey(today, tradingDaysAhead);
   const sorted = [...list].sort();
   for (const expiry of sorted) {
     const e = String(expiry).slice(0, 10);
