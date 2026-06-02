@@ -28,7 +28,7 @@ const liveWalletSchema = new mongoose.Schema(
     strategy4EngineSettings: {
       symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 1 },
-      entryTime: { type: String, default: '09:20' },
+      entryTime: { type: String, default: '15:20' },
       entryWindowMinutes: { type: Number, default: 2 },
       dayCloseTime: { type: String, default: '15:15' },
       skipExpiryDay: { type: Boolean, default: true },

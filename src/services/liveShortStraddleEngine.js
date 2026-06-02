@@ -46,7 +46,7 @@ const engineState = {
   settings: {
     symbol: 'NIFTY',
     lotCount: 1,
-    entryTime: '09:20',
+    entryTime: '15:20',
     entryWindowMinutes: 2,
     dayCloseTime: '15:15',
     skipExpiryDay: true,
@@ -131,9 +131,9 @@ function normalizeSettings(settings = {}) {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
     entryTime: (() => {
-      const raw = String(settings.entryTime || settings.entryFromTime || '09:20').trim();
+      const raw = String(settings.entryTime || settings.entryFromTime || '15:20').trim();
       const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
-      if (!m) return '09:20';
+      if (!m) return '15:20';
       return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
     })(),
     entryWindowMinutes: Number.isFinite(rawEntryWindow)
@@ -442,7 +442,7 @@ async function getCurrentExpiry(symbol, dateKey) {
 }
 
 function isNearEntryWindow(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 920);
   const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
   return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + entryWindowMinutes + 10;
 }
@@ -571,7 +571,7 @@ async function getEntryGate(clock) {
     };
   }
   await syncEngineTradeStateFromDb(clock);
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 570);
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, 920);
   const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
   const windowEnd = entryMinutes + entryWindowMinutes;
   if (clock.minutes < entryMinutes) {
