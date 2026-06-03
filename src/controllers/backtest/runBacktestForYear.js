@@ -1,6 +1,5 @@
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { STRATEGY_ONE_KEY } = require('../../strategies/keys');
 
 /**
  * Same candle fetch + worker invoke as single-year run, for one calendar year.
@@ -8,22 +7,6 @@ const { STRATEGY_ONE_KEY } = require('../../strategies/keys');
  * @returns {(year: number, settings: Record<string, unknown>) => Promise<{ trades: unknown[], summary?: unknown }>}
  */
 function createRunBacktestForYear(strategyKey) {
-  if (strategyKey === STRATEGY_ONE_KEY) {
-    return async (year, settings) => {
-      const symbol = settings.symbol;
-      const interval = String(settings.interval);
-      const [dailyPayload, execPayload] = await Promise.all([
-        fetchWithRateLimitRetry({ symbol, interval: '1', year }),
-        fetchWithRateLimitRetry({ symbol, interval, year }),
-      ]);
-      return runBacktestInWorker(STRATEGY_ONE_KEY, {
-        dailyCandles: dailyPayload.rows,
-        execCandles: execPayload.rows,
-        settings,
-      });
-    };
-  }
-
   return async (year, settings) => {
     const payload = await fetchWithRateLimitRetry({
       symbol: settings.symbol,

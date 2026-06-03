@@ -5,18 +5,9 @@ const { parentPort, workerData } = require('worker_threads');
 
 function run() {
   const { strategyKey, payload } = workerData || {};
-  if (strategyKey === 'strategy1_prev_day_close_retest') {
-    const { runStrategyOneBacktest } = require('../strategies/strategy1/backtest');
-    return runStrategyOneBacktest(payload);
-  }
   const { runIntradayTierBacktest } = require('../strategies/intradayTier/backtest');
-  const INTRADAY_TIER_VARIANT = {
-    strategy4_first_hour_pe_ce: 'first_hour_pe_ce',
-    strategy6_short_straddle_next_day: 'short_straddle_next_day',
-  };
-  const variant = INTRADAY_TIER_VARIANT[strategyKey];
-  if (variant) {
-    return runIntradayTierBacktest({ ...payload, variant });
+  if (strategyKey === 'strategy6_short_straddle_next_day') {
+    return runIntradayTierBacktest({ ...payload, variant: 'short_straddle_next_day' });
   }
   if (strategyKey === 'strategy5_iv_mean_reversion') {
     const { runIvMeanReversionBacktest } = require('../strategies/strategy5/ivMeanReversionBacktest');
