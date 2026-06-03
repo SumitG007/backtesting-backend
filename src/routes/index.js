@@ -44,21 +44,21 @@ router.get('/data/candles', getCandles);
 router.get('/data/candles/day', getCandlesDay);
 router.get('/market-analysis/meta', getMarketAnalysisMeta);
 router.post('/market-analysis/run', runMarketAnalysis);
-// Strategy 3 — IV mean reversion
-router.post('/strategy3/run', runStrategyFive);
-router.post('/strategy3/validation', postStrategyFiveValidation);
-router.get('/strategy3/runs/:runId/trades', getStrategyFiveRunTrades);
-router.get('/strategy3/runs/:runId/validation', getStrategyFiveValidation);
-// Strategy 4 — short straddle (entry day + next day exit)
-router.post('/strategy4/run', runStrategyShortStraddleNextDay);
-router.post('/strategy4/validation', postStrategyShortStraddleValidation);
-router.get('/strategy4/runs/:runId/trades', getStrategyShortStraddleRunTrades);
-router.get('/strategy4/runs/:runId/validation', getStrategyShortStraddleValidation);
-// Strategy 5 — timed put buy (long PE)
-router.post('/strategy5/run', runStrategySeven);
-router.post('/strategy5/validation', postStrategySevenValidation);
-router.get('/strategy5/runs/:runId/trades', getStrategySevenRunTrades);
-router.get('/strategy5/runs/:runId/validation', getStrategySevenValidation);
+// Strategy 1 — IV mean reversion
+router.post('/strategy1/run', runStrategyFive);
+router.post('/strategy1/validation', postStrategyFiveValidation);
+router.get('/strategy1/runs/:runId/trades', getStrategyFiveRunTrades);
+router.get('/strategy1/runs/:runId/validation', getStrategyFiveValidation);
+// Strategy 2 — short straddle (entry day + next day exit)
+router.post('/strategy2/run', runStrategyShortStraddleNextDay);
+router.post('/strategy2/validation', postStrategyShortStraddleValidation);
+router.get('/strategy2/runs/:runId/trades', getStrategyShortStraddleRunTrades);
+router.get('/strategy2/runs/:runId/validation', getStrategyShortStraddleValidation);
+// Strategy 3 — timed put buy (long PE)
+router.post('/strategy3/run', runStrategySeven);
+router.post('/strategy3/validation', postStrategySevenValidation);
+router.get('/strategy3/runs/:runId/trades', getStrategySevenRunTrades);
+router.get('/strategy3/runs/:runId/validation', getStrategySevenValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

@@ -43,7 +43,7 @@ function computeClosedTradeStats(rows) {
   };
 }
 
-/** Older paper rows used the backtest strategy6 key — fold into Strategy 4 live. */
+/** Older paper rows used the backtest strategy6 key — fold into Strategy 2 live. */
 async function normalizeLegacyStrategy4PaperKeys() {
   await LivePaperTrade.updateMany(
     { strategyKey: STRATEGY_SIX_KEY, optionType: 'STRADDLE' },
@@ -125,37 +125,9 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   return `No paper-live trade recorded for today. Auto-entry runs only Mon–Fri ${entryWindowLabel} IST with backend + Dhan connected. Backtest entries are separate and do not appear here.`;
 }
 
-const LIVE_STRATEGIES = {
-  'strategy-4': {
-    strategyId: 'strategy-4',
-    strategyKey: strategyFourEngine.STRATEGY_KEY,
-    startEngine: strategyFourEngine.startEngine,
-    stopEngine: strategyFourEngine.stopEngine,
-    updateEngineSettings: strategyFourEngine.updateEngineSettings,
-    getEngineSnapshot: strategyFourEngine.getEngineSnapshot,
-    ensureWallet: strategyFourEngine.ensureWallet,
-    recalcWallet: strategyFourEngine.recalcWalletFromTrades,
-    ensureRunning: strategyFourEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyFourEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyFourEngine.closeOpenPosition,
-    refreshOpenMark: strategyFourEngine.refreshOpenPositionMarkForStatus,
-  },
-  'strategy-6': {
-    strategyId: 'strategy-6',
-    strategyKey: strategySixEngine.STRATEGY_KEY,
-    startEngine: strategySixEngine.startEngine,
-    stopEngine: strategySixEngine.stopEngine,
-    updateEngineSettings: strategySixEngine.updateEngineSettings,
-    getEngineSnapshot: strategySixEngine.getEngineSnapshot,
-    ensureWallet: strategySixEngine.ensureWallet,
-    recalcWallet: strategySixEngine.recalcWalletFromTrades,
-    ensureRunning: strategySixEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategySixEngine.reconcileOpenTrades,
-    closeOpenPosition: strategySixEngine.closeOpenPosition,
-    refreshOpenMark: strategySixEngine.refreshOpenPositionMarkForStatus,
-  },
-  'strategy-3': {
-    strategyId: 'strategy-3',
+function ivPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
     strategyKey: STRATEGY_THREE_IV_LIVE_KEY,
     startEngine: strategyThreeEngine.startEngine,
     stopEngine: strategyThreeEngine.stopEngine,
@@ -166,7 +138,36 @@ const LIVE_STRATEGIES = {
     ensureRunning: strategyThreeEngine.ensureEngineRunning,
     reconcileOpenTrades: strategyThreeEngine.reconcileOpenTrades,
     closeOpenPosition: strategyThreeEngine.closeOpenPosition,
-  },
+  };
+}
+
+function straddlePaperLiveCtx(strategyId, engine) {
+  return {
+    strategyId,
+    strategyKey: engine.STRATEGY_KEY,
+    startEngine: engine.startEngine,
+    stopEngine: engine.stopEngine,
+    updateEngineSettings: engine.updateEngineSettings,
+    getEngineSnapshot: engine.getEngineSnapshot,
+    ensureWallet: engine.ensureWallet,
+    recalcWallet: engine.recalcWalletFromTrades,
+    ensureRunning: engine.ensureEngineRunning,
+    reconcileOpenTrades: engine.reconcileOpenTrades,
+    closeOpenPosition: engine.closeOpenPosition,
+    refreshOpenMark: engine.refreshOpenPositionMarkForStatus,
+  };
+}
+
+function isStraddleLiveStrategyId(strategyId) {
+  return strategyId === 'strategy-2' || strategyId === 'strategy-4' || strategyId === 'strategy-6';
+}
+
+const LIVE_STRATEGIES = {
+  'strategy-1': ivPaperLiveCtx('strategy-1'),
+  'strategy-3': ivPaperLiveCtx('strategy-3'),
+  'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
+  'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
+  'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
 };
 
 function getLiveContext(req) {
@@ -182,7 +183,7 @@ async function getStatus(req, res) {
       await ctx.ensureRunning();
     }
     let wallet = await ctx.ensureWallet();
-    if (ctx.strategyId === 'strategy-4') {
+    if (isStraddleLiveStrategyId(ctx.strategyId)) {
       await normalizeLegacyStrategy4PaperKeys();
     }
     if (typeof ctx.reconcileOpenTrades === 'function') {
@@ -240,7 +241,14 @@ async function getStatus(req, res) {
       todayTrades,
       latestTrade,
       engine: snapshot,
-      strategyLabel: ctx.strategyId === 'strategy-6' ? 'Strategy 6' : (ctx.strategyId === 'strategy-4' ? 'Strategy 4' : 'Paper-live'),
+      strategyLabel:
+        ctx.strategyId === 'strategy-6'
+          ? 'Strategy 2 (panel B)'
+          : isStraddleLiveStrategyId(ctx.strategyId)
+            ? 'Strategy 2'
+            : ctx.strategyId === 'strategy-1' || ctx.strategyId === 'strategy-3'
+              ? 'Strategy 1'
+              : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -479,7 +487,7 @@ async function getLiveMeta(req, res) {
     const clock = getIstClock(new Date());
     const lotSize = await getCurrentLotSize(symbol);
     let expiry = null;
-    if (ctx?.strategyId === 'strategy-4' || ctx?.strategyId === 'strategy-6') {
+    if (isStraddleLiveStrategyId(ctx?.strategyId)) {
       expiry = skipExpiryDay
         ? await getTradableWeeklyExpiry(symbol, clock.dateKey, 2)
         : await getNearestWeeklyExpiry(symbol);

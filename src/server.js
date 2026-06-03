@@ -29,23 +29,23 @@ async function bootBackgroundServices() {
   try {
     const boot = await strategyThreePaperEngine.ensureEngineRunning();
     if (boot.ok) {
-      console.log('Strategy 3 paper-live engine started (always on)');
+      console.log('Strategy 1 paper-live engine started (always on)');
     } else {
-      console.warn('Strategy 3 paper-live engine boot:', boot.error || 'unknown');
+      console.warn('Strategy 1 paper-live engine boot:', boot.error || 'unknown');
     }
   } catch (err) {
-    console.warn('Strategy 3 paper-live engine boot failed:', err.message);
+    console.warn('Strategy 1 paper-live engine boot failed:', err.message);
   }
 
   try {
     const boot = await strategyFourPaperEngine.ensureEngineRunning();
     if (boot.ok) {
-      console.log('Strategy 4 paper-live engine started (always on)');
+      console.log('Strategy 2 paper-live engine started (always on)');
     } else {
-      console.warn('Strategy 4 paper-live engine boot:', boot.error || 'unknown');
+      console.warn('Strategy 2 paper-live engine boot:', boot.error || 'unknown');
     }
   } catch (err) {
-    console.warn('Strategy 4 paper-live engine boot failed:', err.message);
+    console.warn('Strategy 2 paper-live engine boot failed:', err.message);
   }
 
   try {

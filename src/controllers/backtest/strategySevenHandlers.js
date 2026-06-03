@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for Strategy 5 (UI) — timed put buy (long PE).
+ * HTTP handlers for Strategy 3 (UI) — timed put buy (long PE).
  */
 
 const StrategyRun = require('../../models/strategyRun');
@@ -15,7 +15,7 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 
 const TIER = {
   key: STRATEGY_SEVEN_KEY,
-  runName: 'Strategy 5 - Put buy',
+  runName: 'Strategy 3 - Put buy',
   defaultInterval: '5',
 };
 

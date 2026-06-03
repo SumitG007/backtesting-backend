@@ -1,5 +1,5 @@
 /**
- * Strategy 5 — Intraday IV mean reversion (short vol).
+ * Strategy 1 — Intraday IV mean reversion (short vol).
  * IV proxy = 09:15–09:45 range vs lookback median. Short ATM straddle on spike.
  * Exits: optional vol-crush target / vol-expand stop; post-entry IV expand; 15:20 day close.
  */

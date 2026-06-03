@@ -1,5 +1,5 @@
 /**
- * Strategy 5 (UI) — timed put buy: long PE at entry time (default 09:20 IST).
+ * Strategy 3 (UI) — timed put buy: long PE at entry time (default 09:20 IST).
  * Optional premium SL / target (blank target = hold to 15:20).
  */
 

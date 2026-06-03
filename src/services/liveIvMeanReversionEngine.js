@@ -1,5 +1,5 @@
 /**
- * Strategy 3 — IV mean reversion paper live (real CE/PE LTP from Dhan).
+ * Strategy 1 — IV mean reversion paper live (real CE/PE LTP from Dhan).
  * Entry: 09:15–09:45 OR spike vs median → short ATM straddle 10:00–11:00.
  * Exit same day: optional target/stop %, IV expand on spot range, 15:20 flat.
  */
@@ -176,7 +176,7 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain 
     if (Number.isFinite(mark.spot)) engineState.lastSpot = mark.spot;
     return mark;
   } catch (err) {
-    engineState.lastError = `Strategy 3 mark: ${err.message}`;
+    engineState.lastError = `Strategy 1 mark: ${err.message}`;
     return getCombinedFromTrade(trade, null);
   }
 }
@@ -458,7 +458,7 @@ async function syncEngineTradeStateFromDb(clock) {
       await subscribeOpenStraddle(openInDb);
       startPositionPoll();
       checkOpenTrade().catch((err) => {
-        engineState.lastError = `Strategy 3 sync exit check: ${err.message}`;
+        engineState.lastError = `Strategy 1 sync exit check: ${err.message}`;
       });
     } else if (!engineState.positionPollTimer) {
       startPositionPoll();
@@ -597,7 +597,7 @@ async function placeShortStraddle(clock) {
         marginBlocked = marginResult.margin;
         marginSource = marginResult.source || 'dhan_multi';
       } catch (err) {
-        engineState.lastError = `Strategy 3 margin API fallback: ${err.message}`;
+        engineState.lastError = `Strategy 1 margin API fallback: ${err.message}`;
       }
       if (!Number.isFinite(marginBlocked) || marginBlocked <= 0) {
         marginBlocked = shortStraddleMarginBlocked({
@@ -734,7 +734,7 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
 
   // Never exit on stale entry-premium fallback — wait for real Dhan LTP (chain or WS).
   if (mark.source === 'entry' && !isEodExitTime(clock.minutes)) {
-    engineState.lastError = 'Strategy 3 mark: waiting for live CE/PE LTP from Dhan';
+    engineState.lastError = 'Strategy 1 mark: waiting for live CE/PE LTP from Dhan';
     return;
   }
 
@@ -784,7 +784,7 @@ async function finalizeTrade(trade, { exitCombined, mark, reason, forceChain = f
         throw new Error('Exit blocked — no live Dhan CE/PE LTP yet');
       }
       if (!liveExitMark && forceChain) {
-        engineState.lastError = `Strategy 3 exit: used last available mark (${markSource}) — Dhan LTP unavailable`;
+        engineState.lastError = `Strategy 1 exit: used last available mark (${markSource}) — Dhan LTP unavailable`;
       }
       const safeExitCombined = Math.max(
         0.05,
@@ -977,7 +977,7 @@ async function updateEngineSettings(partial = {}) {
       engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
       engineState.expiry = null;
     } catch (err) {
-      engineState.lastError = `Strategy 3 symbol change: ${err.message}`;
+      engineState.lastError = `Strategy 1 symbol change: ${err.message}`;
     }
   }
   try {
@@ -1039,7 +1039,7 @@ async function resumeOpenPositionFromDb() {
       entryDateKey: trade.entryDateKey,
     });
   } catch (err) {
-    engineState.lastError = `Strategy 3 resume open position: ${err.message}`;
+    engineState.lastError = `Strategy 1 resume open position: ${err.message}`;
   }
   return { ok: true, resumed: Boolean(engineState.openTradeId), state: getEngineSnapshot() };
 }

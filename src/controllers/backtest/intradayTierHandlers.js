@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for Strategy 4 UI — short straddle next day backtest.
+ * HTTP handlers for Strategy 2 UI — short straddle next day backtest.
  */
 
 const StrategyRun = require('../../models/strategyRun');
@@ -15,7 +15,7 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 
 const TIER_SHORT_STRADDLE = {
   key: STRATEGY_SIX_KEY,
-  runName: 'Strategy 4 - Short Straddle (Next Day Exit)',
+  runName: 'Strategy 2 - Short Straddle (Next Day Exit)',
   defaultInterval: '5',
 };
 

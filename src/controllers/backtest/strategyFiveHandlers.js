@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for Strategy 5 — IV mean reversion (intraday short straddle).
+ * HTTP handlers for Strategy 1 — IV mean reversion (intraday short straddle).
  */
 
 const StrategyRun = require('../../models/strategyRun');
@@ -90,7 +90,7 @@ async function runStrategyFive(req, res) {
     return res.json({
       ok: true,
       runId: runDoc._id,
-      strategy: 'Strategy 5 - IV Mean Reversion',
+      strategy: 'Strategy 1 - IV Mean Reversion',
       year: yearNum,
       symbol: settings.symbol,
       interval: settings.interval,
