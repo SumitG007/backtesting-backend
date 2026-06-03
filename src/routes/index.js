@@ -19,6 +19,10 @@ const {
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
   postStrategyFiveValidation,
+  runStrategySeven,
+  getStrategySevenRunTrades,
+  getStrategySevenValidation,
+  postStrategySevenValidation,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -68,6 +72,11 @@ router.post('/strategy4/run', runStrategyShortStraddleNextDay);
 router.post('/strategy4/validation', postStrategyShortStraddleValidation);
 router.get('/strategy4/runs/:runId/trades', getStrategyShortStraddleRunTrades);
 router.get('/strategy4/runs/:runId/validation', getStrategyShortStraddleValidation);
+// Strategy 5 — timed put buy (long PE)
+router.post('/strategy5/run', runStrategySeven);
+router.post('/strategy5/validation', postStrategySevenValidation);
+router.get('/strategy5/runs/:runId/trades', getStrategySevenRunTrades);
+router.get('/strategy5/runs/:runId/validation', getStrategySevenValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

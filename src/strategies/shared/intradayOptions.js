@@ -69,6 +69,7 @@ function simulateLongOptionExit({
   useIndexExits,
   stopIndex,
   targetIndex,
+  eodExitMinutes = 930,
 }) {
   const premiumSide = premiumSideForLongOption(optionType);
   let exitIdx = dayBars.length - 1;
@@ -169,7 +170,7 @@ function simulateLongOptionExit({
     }
 
     const kClock = getIstClock(dayBars[k][0]);
-    if (kClock.minutes >= 930) {
+    if (kClock.minutes >= eodExitMinutes) {
       exitIdx = k;
       exitSpot = cl;
       exitPremium = getOptionPremiumFromSpotMove({

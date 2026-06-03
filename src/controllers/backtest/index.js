@@ -25,6 +25,12 @@ const {
   getStrategyFiveValidation,
   postStrategyFiveValidation,
 } = require('./strategyFiveHandlers');
+const {
+  runStrategySeven,
+  getStrategySevenRunTrades,
+  getStrategySevenValidation,
+  postStrategySevenValidation,
+} = require('./strategySevenHandlers');
 module.exports = {
   health,
   getCandles,
@@ -45,4 +51,8 @@ module.exports = {
   getStrategyFiveRunTrades,
   getStrategyFiveValidation,
   postStrategyFiveValidation,
+  runStrategySeven,
+  getStrategySevenRunTrades,
+  getStrategySevenValidation,
+  postStrategySevenValidation,
 };

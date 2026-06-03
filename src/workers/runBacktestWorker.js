@@ -22,6 +22,10 @@ function run() {
     const { runIvMeanReversionBacktest } = require('../strategies/strategy5/ivMeanReversionBacktest');
     return runIvMeanReversionBacktest(payload);
   }
+  if (strategyKey === 'strategy7_simple_920_market') {
+    const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
+    return runSimple920Backtest(payload);
+  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
