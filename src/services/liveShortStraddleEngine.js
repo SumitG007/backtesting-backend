@@ -22,6 +22,7 @@ const {
   getLastPrice,
   getOptionChainRateLimitStatus,
 } = require('./dhanLiveService');
+const { applyExitLegPremiums } = require('./liveStraddleExitLegs');
 const { STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } = require('../strategies/keys');
 
 const STRATEGY_KEY = STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY;
@@ -843,6 +844,7 @@ async function finalizeTrade(trade, { exitCombined, mark, reason }) {
       settings: engineState.settings,
     });
     trade.pnlPct = marginBlocked > 0 ? Number(((pnl / marginBlocked) * 100).toFixed(2)) : 0;
+    applyExitLegPremiums(trade, mark, safeExitCombined);
     trade.openPositionMark = null;
     trade.openPositionMarkAt = null;
     await trade.save();
