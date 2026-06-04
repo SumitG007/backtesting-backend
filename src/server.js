@@ -10,6 +10,25 @@ const strategyThreePaperEngine = require('./services/liveIvMeanReversionEngine')
 const strategyFourPaperEngine = require('./services/liveShortStraddleEngine');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 
+/** One-shot DB restore when REOPEN_STRATEGY_A_TRADE_ID is set (see npm run reopen:strategy-a). */
+async function runPendingStrategyAReopenFromEnv() {
+  const tradeId = String(process.env.REOPEN_STRATEGY_A_TRADE_ID || '').trim();
+  if (!tradeId) return;
+  const exitTime = String(process.env.REOPEN_STRATEGY_A_EXIT_TIME || '09:20').trim();
+  console.log(`[REOPEN] Restoring Strategy A trade ${tradeId} (exit ${exitTime} IST on next valid day)…`);
+  const { reopenStrategyATrade } = require('./services/reopenStrategyATradeService');
+  const result = await reopenStrategyATrade(tradeId, { exitTime });
+  console.log('[REOPEN] Done:', {
+    tradeId: result.tradeId,
+    status: result.trade?.status,
+    hasExitTime: Boolean(result.trade?.exitTime),
+    plannedExitDateKey: result.plannedExitDateKey,
+    nextDayExit: result.nextDayExit,
+    walletRealizedPnl: result.walletRealizedPnl,
+  });
+  delete process.env.REOPEN_STRATEGY_A_TRADE_ID;
+}
+
 async function bootBackgroundServices() {
   try {
     const s4 = require('./services/liveShortStraddleEngine');
@@ -81,6 +100,8 @@ async function start() {
 
   await mongoose.connect(mongoUri);
   console.log('MongoDB connected');
+
+  await runPendingStrategyAReopenFromEnv();
 
   try {
     const { syncAdminFromEnv } = require('./services/adminAuthService');

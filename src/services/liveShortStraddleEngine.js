@@ -1,5 +1,5 @@
 const LivePaperTrade = require('../models/livePaperTrade');
-/** Strategy 2 live paper engine — short straddle BTST (entry same day, exit next trading day). */
+/** Strategy A paper-live — short straddle BTST (entry same day, exit on 2nd trading day after entry). */
 const LiveWallet = require('../models/liveWallet');
 const { getIstClock, parseClockMinutes, isWeekendDateKey, parseDateOnly, addDays, formatDateOnly } = require('../utils/dateTime');
 const {
@@ -73,13 +73,20 @@ function syncEngineSymbolFromSettings() {
   engineState.symbol = getEngineSymbol();
 }
 
-/** First NSE trading day after entry date (exit day). */
-function resolveFirstExitDateKey(entryDateKey) {
+const EXIT_TRADING_DAYS_AFTER_ENTRY = 2;
+
+/** Nth NSE trading day after entry (Strategy A: 2 = exit day-after-next trading day). */
+function resolvePlannedExitDateKey(entryDateKey, tradingDaysAfter = EXIT_TRADING_DAYS_AFTER_ENTRY) {
   const parsed = parseDateOnly(entryDateKey);
   if (Number.isNaN(parsed.getTime())) return null;
-  for (let i = 1; i <= 10; i += 1) {
+  const need = Math.max(1, Number(tradingDaysAfter) || EXIT_TRADING_DAYS_AFTER_ENTRY);
+  let found = 0;
+  for (let i = 1; i <= 20; i += 1) {
     const key = formatDateOnly(addDays(parsed, i));
-    if (isNseCashTradingDay(key)) return key;
+    if (isNseCashTradingDay(key)) {
+      found += 1;
+      if (found >= need) return key;
+    }
   }
   return null;
 }
@@ -95,13 +102,14 @@ function getTradePlannedExitTime(trade) {
   return parseTradeNote(trade?.notes, 'nextDayExit') || engineState.settings.dayCloseTime;
 }
 
-/** Exit on first trading day after entry at/after exit time; force exit if that day was missed. */
+/** Exit on planned trading day at/after exit time; force exit if that day was missed. */
 function shouldForceExitStraddle(trade, clock) {
   if (!trade?.entryDateKey || clock.dateKey <= trade.entryDateKey) return false;
   if (!isNseCashTradingDay(clock.dateKey)) return false;
-  const exitDayKey = resolveFirstExitDateKey(trade.entryDateKey);
+  const exitDayKey = resolvePlannedExitDateKey(trade.entryDateKey);
   if (!exitDayKey) return false;
   if (clock.dateKey > exitDayKey) return true;
+  if (clock.dateKey < exitDayKey) return false;
   const exitMinutes = parseClockMinutes(getTradePlannedExitTime(trade), 915);
   return clock.minutes >= exitMinutes;
 }
@@ -258,11 +266,15 @@ function buildOpenPositionMark(trade, mark, clock) {
       ? Number((spot - entrySpot).toFixed(2))
       : null,
     isProfitable: unrealizedPnl > 0,
-    phase: clock.dateKey === trade.entryDateKey
-      ? 'ENTRY_DAY_HOLD'
-      : (isNseCashTradingDay(clock.dateKey)
-        ? 'EXIT_DAY_MONITOR'
-        : (isWeekendDateKey(clock.dateKey) ? 'WEEKEND_HOLD' : 'HOLIDAY_HOLD')),
+    phase: (() => {
+      if (!isNseCashTradingDay(clock.dateKey)) {
+        return isWeekendDateKey(clock.dateKey) ? 'WEEKEND_HOLD' : 'HOLIDAY_HOLD';
+      }
+      if (clock.dateKey === trade.entryDateKey) return 'ENTRY_DAY_HOLD';
+      const exitDayKey = resolvePlannedExitDateKey(trade.entryDateKey);
+      if (exitDayKey && clock.dateKey === exitDayKey) return 'EXIT_DAY_MONITOR';
+      return 'INTERMEDIATE_HOLD';
+    })(),
     nextDayExitTime: getTradePlannedExitTime(trade),
   };
 }
@@ -461,6 +473,10 @@ async function backfillOpenTradeNotes(trade) {
     const m = entryClock.minutes % 60;
     const lockedEntryTime = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     notes = [notes, `lockedEntryTime=${lockedEntryTime}`].filter(Boolean).join('; ');
+    changed = true;
+  }
+  if (!parseTradeNote(notes, 'holdTradingDaysAfter')) {
+    notes = [notes, `holdTradingDaysAfter=${EXIT_TRADING_DAYS_AFTER_ENTRY}`].filter(Boolean).join('; ');
     changed = true;
   }
   if (changed) {
@@ -754,7 +770,7 @@ async function placeShortStraddle(clock) {
         { optionType: 'CE', entryPremium: Number(ceEntry.toFixed(2)) },
         { optionType: 'PE', entryPremium: Number(peEntry.toFixed(2)) },
       ],
-      notes: `btstEntry=${clock.dateKey}; nextDayExit=${engineState.settings.dayCloseTime}; lockedEntryTime=${engineState.settings.entryTime}; marginSource=${marginSource}; ceEntry=${ceEntry.toFixed(2)}; peEntry=${peEntry.toFixed(2)}`,
+      notes: `btstEntry=${clock.dateKey}; nextDayExit=${engineState.settings.dayCloseTime}; holdTradingDaysAfter=${EXIT_TRADING_DAYS_AFTER_ENTRY}; lockedEntryTime=${engineState.settings.entryTime}; marginSource=${marginSource}; ceEntry=${ceEntry.toFixed(2)}; peEntry=${peEntry.toFixed(2)}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -808,8 +824,8 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
   await ensureNseHolidaysLoaded();
   if (!shouldForceExitStraddle(trade, clock)) return;
 
-  const exitDayKey = resolveFirstExitDateKey(trade.entryDateKey);
-  const exitReason = exitDayKey && clock.dateKey > exitDayKey ? 'MISSED_EXIT_RECOVERY' : 'NEXT_DAY_EXIT';
+  const exitDayKey = resolvePlannedExitDateKey(trade.entryDateKey);
+  const exitReason = exitDayKey && clock.dateKey > exitDayKey ? 'MISSED_EXIT_RECOVERY' : 'UP_NEXT_DAY_EXIT';
   await finalizeTrade(trade, { exitCombined: mark.combined, mark, reason: exitReason });
 }
 

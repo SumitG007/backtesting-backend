@@ -84,18 +84,52 @@ const {
 } = require('../services/dhanLiveService');
 const { getIstClock } = require('../utils/dateTime');
 
-function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strategyLabel }) {
-  const label = strategyLabel || 'Paper-live';
-  const entryTime = engine?.settings?.entryTime || '09:20';
-  const entryWindowMinutes = Math.max(0, Number(engine?.settings?.entryWindowMinutes) || 2);
+function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
   const parts = String(entryTime).split(':');
   const hh = Number(parts[0]);
   const mm = Number(parts[1]);
+  const windowMins = Math.max(0, Number(entryWindowMinutes) || 0);
   const startMinutes = Number.isFinite(hh) && Number.isFinite(mm) ? (hh * 60 + mm) : (9 * 60 + 20);
-  const endMinutes = startMinutes + entryWindowMinutes;
+  const endMinutes = startMinutes + windowMins;
   const endH = String(Math.floor(endMinutes / 60)).padStart(2, '0');
   const endM = String(endMinutes % 60).padStart(2, '0');
-  const entryWindowLabel = `${entryTime}–${endH}:${endM}`;
+  return `${entryTime}–${endH}:${endM}`;
+}
+
+/** Engine snapshot first, then persisted wallet settings, then strategy-specific defaults. */
+function resolveHintEntrySettings(engine, strategyId, wallet) {
+  const fromEngine = engine?.settings;
+  if (fromEngine?.entryTime) {
+    return {
+      entryTime: String(fromEngine.entryTime),
+      entryWindowMinutes: Math.max(0, Number(fromEngine.entryWindowMinutes) || 2),
+    };
+  }
+  if (strategyId === 'strategy-6') {
+    const w = wallet?.strategy6EngineSettings;
+    return {
+      entryTime: String(w?.entryTime || '09:20'),
+      entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
+    };
+  }
+  if (strategyId === 'strategy-2' || strategyId === 'strategy-4') {
+    const w = wallet?.strategy4EngineSettings;
+    return {
+      entryTime: String(w?.entryTime || '15:20'),
+      entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
+    };
+  }
+  const w = wallet?.strategy3EngineSettings;
+  return {
+    entryTime: String(w?.entryToTime || w?.entryTime || '09:20'),
+    entryWindowMinutes: 2,
+  };
+}
+
+function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strategyLabel, strategyId, wallet }) {
+  const label = strategyLabel || 'Paper-live';
+  const { entryTime, entryWindowMinutes } = resolveHintEntrySettings(engine, strategyId, wallet);
+  const entryWindowLabel = formatEntryWindowLabel(entryTime, entryWindowMinutes);
 
   if (openTrade) return null;
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
@@ -113,7 +147,7 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   if (latestTrade?.exitTime) {
     const entryDay = latestTrade.entryDateKey || '—';
     const reason = latestTrade.reason || 'CLOSED';
-    return `No open position. Last paper-live trade: entry ${entryDay}, closed (${reason}). Today's auto-entry window is 9:20–9:22 IST (Mon–Fri) while the backend is running.`;
+    return `No open position. Last paper-live trade: entry ${entryDay}, closed (${reason}). Today's auto-entry window is ${entryWindowLabel} IST (Mon–Fri) while the backend is running.`;
   }
   const dbg = engine?.lastEntryDebug;
   if (dbg?.line === 'ENTRY_SUCCESS') {
@@ -241,11 +275,13 @@ async function getStatus(req, res) {
       todayTrades,
       latestTrade,
       engine: snapshot,
+      strategyId: ctx.strategyId,
+      wallet,
       strategyLabel:
         ctx.strategyId === 'strategy-6'
-          ? 'Strategy 2 (panel B)'
-          : isStraddleLiveStrategyId(ctx.strategyId)
-            ? 'Strategy 2'
+          ? 'Strategy B'
+          : ctx.strategyId === 'strategy-2' || ctx.strategyId === 'strategy-4'
+            ? 'Strategy A'
             : ctx.strategyId === 'strategy-1' || ctx.strategyId === 'strategy-3'
               ? 'Strategy 1'
               : 'Paper-live',
@@ -354,6 +390,30 @@ async function resetWallet(req, res) {
     }
     const wallet = await ctx.ensureWallet();
     return res.json({ ok: true, wallet, message: `Cleared paper trades for ${ctx.strategyId}` });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function reopenLiveTrade(req, res) {
+  try {
+    const ctx = getLiveContext(req);
+    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
+    if (ctx.strategyId !== 'strategy-2' && ctx.strategyId !== 'strategy-4') {
+      return res.status(400).json({ ok: false, error: 'Reopen is only supported for Strategy A (strategy-2)' });
+    }
+    const tradeId = String(req.body?.tradeId || '').trim();
+    if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId is required' });
+    const exitTime = String(req.body?.exitTime || '09:20').trim();
+    if (typeof strategyFourEngine.reopenClosedTrade !== 'function') {
+      return res.status(500).json({ ok: false, error: 'Reopen not available on engine' });
+    }
+    const result = await strategyFourEngine.reopenClosedTrade(tradeId, { exitTime });
+    return res.json({
+      ok: true,
+      message: `Trade ${tradeId} reopened. Planned exit ${result.plannedExitDateKey} at ${result.nextDayExit} IST.`,
+      ...result,
+    });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -524,4 +584,5 @@ module.exports = {
   exportTradesExcel,
   getLiveMeta,
   closeLivePosition,
+  reopenLiveTrade,
 };

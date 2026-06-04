@@ -29,6 +29,7 @@ const {
   exportTradesExcel: exportLiveTradesExcel,
   getLiveMeta,
   closeLivePosition,
+  reopenLiveTrade,
 } = require('../controllers/liveTradeController');
 
 const router = express.Router();
@@ -69,5 +70,6 @@ router.post('/live/:strategyId/wallet/reset', resetLiveWallet);
 router.get('/live/:strategyId/trades', listLiveTrades);
 router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 router.post('/live/:strategyId/close', closeLivePosition);
+router.post('/live/:strategyId/reopen-trade', reopenLiveTrade);
 
 module.exports = router;
