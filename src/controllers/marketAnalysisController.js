@@ -1,52 +1,90 @@
-const { runMultiYearAnalysis, DEFAULT_YEARS } = require('../analysis/runMultiYearAnalysis');
+const {
+  runVolumeAnalysis,
+  getVolumeAnalysisMeta,
+  getFutureExpiriesForSymbol,
+  searchInstruments,
+  LOOKBACK_PRESETS,
+} = require('../services/volumeAnalysisService');
 
-function parseYearsInput(raw) {
-  if (Array.isArray(raw) && raw.length) {
-    return raw.map(Number).filter((y) => y >= 2000 && y <= 2100);
-  }
-  if (typeof raw === 'string' && raw.trim()) {
-    return raw
-      .split(/[,;\s]+/)
-      .map(Number)
-      .filter((y) => y >= 2000 && y <= 2100);
-  }
-  return [...DEFAULT_YEARS];
+function parseLookbackDays(raw) {
+  const n = Number(raw);
+  if (LOOKBACK_PRESETS[n]) return n;
+  return 5;
+}
+
+function parseProduct(raw) {
+  const p = String(raw || 'cash').toLowerCase();
+  return p === 'future' ? 'future' : 'cash';
 }
 
 async function runMarketAnalysis(req, res) {
   try {
-    const symbol = String(req.body?.symbol || req.query?.symbol || 'NIFTY').toUpperCase();
-    const interval = String(req.body?.interval || req.query?.interval || '5');
-    if (!['1', '5', '15'].includes(interval)) {
-      return res.status(400).json({ ok: false, error: 'interval must be 1, 5, or 15' });
-    }
-    const years = parseYearsInput(req.body?.years ?? req.query?.years);
+    const symbol = String(req.body?.symbol || req.query?.symbol || 'HDFCBANK').toUpperCase();
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays);
+    const product = parseProduct(req.body?.product ?? req.query?.product);
+    const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
 
-    const result = await runMultiYearAnalysis({ symbol, interval, years });
+    const result = await runVolumeAnalysis({ symbol, lookbackDays, product, expiryDate });
     return res.json({ ok: true, ...result });
   } catch (error) {
-    if (error.response) {
-      return res.status(error.response.status).json({
+    const httpErr = error?.cause || error;
+    if (httpErr.response) {
+      const details = httpErr.response.data;
+      const dhanMsg =
+        (typeof details === 'object' && (details?.errorMessage || details?.message || details?.error))
+        || (typeof details === 'string' ? details : null)
+        || error.message;
+      return res.status(httpErr.response.status).json({
         ok: false,
-        error: 'Dhan API error',
-        details: error.response.data,
+        error: dhanMsg || 'Dhan API error',
+        details,
+        request: error.dhanBody || null,
       });
     }
+    return res.status(500).json({
+      ok: false,
+      error: error.message,
+      request: error.dhanBody || null,
+    });
+  }
+}
+
+async function getMarketAnalysisMeta(_req, res) {
+  try {
+    const meta = await getVolumeAnalysisMeta();
+    return res.json({ ok: true, ...meta });
+  } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
 }
 
-function getMarketAnalysisMeta(req, res) {
-  res.json({
-    ok: true,
-    module: 'market-analysis',
-    defaultYears: DEFAULT_YEARS,
-    description:
-      'Loads multi-year intraday candles, computes per-day behaviour, ranks patterns, and suggests rules with a prototype index-points backtest.',
-  });
+async function searchMarketInstruments(req, res) {
+  try {
+    const q = String(req.query?.q ?? '').trim();
+    const limit = Math.min(50, Math.max(1, Number(req.query?.limit) || 25));
+    const results = await searchInstruments(q, limit);
+    return res.json({ ok: true, query: q, results });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getMarketAnalysisExpiries(req, res) {
+  try {
+    const symbol = String(req.query?.symbol || '').toUpperCase();
+    if (!symbol) {
+      return res.status(400).json({ ok: false, error: 'symbol query is required' });
+    }
+    const data = await getFutureExpiriesForSymbol(symbol);
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 }
 
 module.exports = {
   runMarketAnalysis,
   getMarketAnalysisMeta,
+  searchMarketInstruments,
+  getMarketAnalysisExpiries,
 };

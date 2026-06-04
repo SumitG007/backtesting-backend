@@ -18,7 +18,12 @@ const {
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
-const { runMarketAnalysis, getMarketAnalysisMeta } = require('../controllers/marketAnalysisController');
+const {
+  runMarketAnalysis,
+  getMarketAnalysisMeta,
+  searchMarketInstruments,
+  getMarketAnalysisExpiries,
+} = require('../controllers/marketAnalysisController');
 const {
   getStatus: getLiveStatus,
   startLive,
@@ -44,6 +49,8 @@ router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
 router.get('/data/candles/day', getCandlesDay);
 router.get('/market-analysis/meta', getMarketAnalysisMeta);
+router.get('/market-analysis/search', searchMarketInstruments);
+router.get('/market-analysis/expiries', getMarketAnalysisExpiries);
 router.post('/market-analysis/run', runMarketAnalysis);
 // Strategy 1 — IV mean reversion
 router.post('/strategy1/run', runStrategyFive);

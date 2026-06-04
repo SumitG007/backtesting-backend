@@ -565,6 +565,84 @@ function normalizeExchangeSegment(row) {
   return segment || exch;
 }
 
+function futureInstrumentTypeForUnderlying(underlying) {
+  const upper = String(underlying || '').toUpperCase();
+  return upper === 'NIFTY' || upper === 'BANKNIFTY' ? 'FUTIDX' : 'FUTSTK';
+}
+
+function pickSecurityIdFromRow(row) {
+  const raw = String(pickField(row, ['SEM_SMST_SECURITY_ID', 'SECURITY_ID']) || '').trim();
+  return /^\d+$/.test(raw) ? raw : null;
+}
+
+/** Match futures row to underlying (UNDERLYING_SYMBOL only — not contract trading symbol). */
+function futureRowMatchesUnderlying(row, upper, futInstrument) {
+  const instr = String(pickField(row, ['INSTRUMENT', 'INSTRUMENT_TYPE', 'SEM_INSTRUMENT_NAME']) || '').toUpperCase();
+  if (instr !== futInstrument) return false;
+  const ul = String(pickField(row, ['UNDERLYING_SYMBOL', 'UNDERLYING']) || '').toUpperCase().trim();
+  return ul === upper;
+}
+
+/** List NSE futures expiry dates (YYYY-MM-DD) for an underlying, nearest first. */
+async function listFutureExpiries(underlying, { includePastDays = 0 } = {}) {
+  const upper = String(underlying || '').toUpperCase();
+  const futInstrument = futureInstrumentTypeForUnderlying(upper);
+  const rows = await loadInstrumentMaster();
+  const today = new Date().toISOString().slice(0, 10);
+  const minDate = includePastDays > 0
+    ? formatDateOnly(addDays(parseDateOnly(today), -includePastDays))
+    : today;
+  const byExpiry = new Map();
+
+  for (const r of rows) {
+    if (!futureRowMatchesUnderlying(r, upper, futInstrument)) continue;
+    const exch = normalizeExchangeSegment(r);
+    if (exch !== 'NSE_FNO') continue;
+    const exp = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
+    if (!exp || exp < minDate) continue;
+    const securityId = pickSecurityIdFromRow(r);
+    if (!securityId) continue;
+    const tradingSymbol = pickField(r, ['SYMBOL_NAME', 'DISPLAY_NAME', 'SEM_TRADING_SYMBOL']) || '';
+    const existing = byExpiry.get(exp);
+    if (!existing || String(tradingSymbol).length > String(existing.tradingSymbol).length) {
+      byExpiry.set(exp, { expiry: exp, securityId, tradingSymbol, exchangeSegment: exch });
+    }
+  }
+
+  return [...byExpiry.values()].sort((a, b) => a.expiry.localeCompare(b.expiry));
+}
+
+async function resolveFutureInstrument({ symbol, expiry }) {
+  const upper = String(symbol || '').toUpperCase();
+  const normalizedExpiry = String(expiry || '').slice(0, 10);
+  if (!upper || !normalizedExpiry) {
+    throw new Error('Symbol and futures expiry are required');
+  }
+  const futInstrument = futureInstrumentTypeForUnderlying(upper);
+  const rows = await loadInstrumentMaster();
+  const match = rows.find((r) => {
+    if (!futureRowMatchesUnderlying(r, upper, futInstrument)) return false;
+    const rowExpiry = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
+    return rowExpiry === normalizedExpiry;
+  });
+  if (!match) {
+    throw new Error(`Futures contract not found: ${upper} expiry ${normalizedExpiry}`);
+  }
+  const securityId = pickSecurityIdFromRow(match);
+  if (!securityId) {
+    throw new Error(`Invalid security id for ${upper} future ${normalizedExpiry}`);
+  }
+  return {
+    symbol: upper,
+    securityId,
+    exchangeSegment: normalizeExchangeSegment(match) || 'NSE_FNO',
+    instrument: futInstrument,
+    expiry: normalizedExpiry,
+    tradingSymbol: pickField(match, ['SYMBOL_NAME', 'DISPLAY_NAME', 'SEM_TRADING_SYMBOL']) || '',
+    product: 'future',
+  };
+}
+
 async function resolveOptionInstrument({ symbol, strike, expiry, optionType }) {
   const upperSymbol = String(symbol || '').toUpperCase();
   const normalizedExpiry = String(expiry || '').slice(0, 10);
@@ -778,6 +856,10 @@ module.exports = {
   getNearExpiryCutoffDateKey,
   isExpiryTooSoonForNewEntry,
   getAtmPremiums,
+  pickSecurityIdFromRow,
+  listFutureExpiries,
+  resolveFutureInstrument,
+  futureInstrumentTypeForUnderlying,
   resolveOptionInstrument,
   estimateShortStraddleMargin,
   subscribeLiveInstrument,
