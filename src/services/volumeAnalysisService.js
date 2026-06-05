@@ -34,10 +34,9 @@ const {
 } = require('../utils/dateTime');
 
 const LOOKBACK_PRESETS = {
-  5: { id: 5, label: 'Last 5 trading days', tradingDays: 5, hint: '~1 week' },
-  10: { id: 10, label: 'Last 10 trading days', tradingDays: 10, hint: '~2 weeks' },
-  22: { id: 22, label: 'Last 22 trading days', tradingDays: 22, hint: '~1 month' },
-  44: { id: 44, label: 'Last 44 trading days', tradingDays: 44, hint: '~2 months' },
+  5: { id: 5, label: 'Last 5 trading days', tradingDays: 5, hint: 'Excludes weekends & NSE holidays' },
+  10: { id: 10, label: 'Last 10 trading days', tradingDays: 10, hint: 'Excludes weekends & NSE holidays' },
+  22: { id: 22, label: 'Last 22 trading days', tradingDays: 22, hint: 'Excludes weekends & NSE holidays' },
 };
 
 const analysisCache = new Map();
@@ -403,6 +402,7 @@ function sleep(ms) {
 const SCAN_SYMBOL_DELAY_MS = 900;
 const METRICS_STALE_MS = 20 * 60 * 1000;
 const MAX_LIVE_SYMBOLS = 40;
+const MAX_SCAN_DISPLAY_ROWS = 100;
 const backgroundRefreshJobs = new Map();
 
 function scanCacheKey({ product, lookbackDays, expiryDate, q }) {
@@ -432,6 +432,14 @@ function sortRowsByPctVsAvg(rows) {
     if (bp !== ap) return bp - ap;
     return a.symbol.localeCompare(b.symbol);
   });
+}
+
+function isAboveAverageRow(row) {
+  return row?.ok && row.pctVsAvg != null && Number(row.pctVsAvg) > 0;
+}
+
+function filterAboveAverageRows(rows) {
+  return rows.filter(isAboveAverageRow);
 }
 
 function scheduleBackgroundRefresh(key, task) {
@@ -625,9 +633,6 @@ async function runVolumeAnalysisScan({
     throw new Error('Select a futures expiry');
   }
 
-  const safePage = Math.max(1, Number(page) || 1);
-  const safeSize = Math.max(1, Math.min(50, Number(pageSize) || 25));
-
   const listing = await listAllSymbolsByProduct({ product: prod, q: query });
   const symbols = listing.symbols;
 
@@ -665,14 +670,18 @@ async function runVolumeAnalysisScan({
       lookbackDays,
     }));
   } else if (!wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
-    const staleSymbols = symbols.filter((sym) => {
+    const aboveSymbols = symbols.filter((sym) => {
       const row = metricsMap.get(sym);
-      return !row || isMetricsStale(row.updatedAt);
+      return row && Number(row.pctVsAvg) > 0;
     });
-    if (staleSymbols.length > symbols.length * 0.2) {
+    const staleAbove = aboveSymbols.filter((sym) => {
+      const row = metricsMap.get(sym);
+      return isMetricsStale(row.updatedAt);
+    });
+    if (staleAbove.length > 0) {
       const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
       backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
-        symbols,
+        symbols: staleAbove,
         product: prod,
         expiryDate,
         lookbackDays,
@@ -685,15 +694,12 @@ async function runVolumeAnalysisScan({
     const withData = symbols
       .map((sym) => metricsMap.get(sym))
       .filter(Boolean);
-    sortedRows = sortRowsByPctVsAvg(withData);
+    sortedRows = filterAboveAverageRows(sortRowsByPctVsAvg(withData));
   } else {
-    sortedRows = sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap));
+    sortedRows = filterAboveAverageRows(sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap)));
   }
   const total = sortedRows.length;
-  const totalPages = Math.max(1, Math.ceil(total / safeSize));
-  const pageClamped = Math.min(safePage, totalPages);
-  const start = (pageClamped - 1) * safeSize;
-  const slice = sortedRows.slice(start, start + safeSize);
+  const displayRows = sortedRows.slice(0, MAX_SCAN_DISPLAY_ROWS);
 
   const latestUpdatedAt = await getLatestBatchUpdatedAt({
     product: prod,
@@ -704,34 +710,26 @@ async function runVolumeAnalysisScan({
   const clock = getIstClock(new Date());
 
   let hint = null;
-  if (symbolFilter.mode === 'all' && !liveRefreshed && total < listing.total) {
-    hint = `Showing ${total.toLocaleString('en-IN')} saved symbols (of ${listing.total.toLocaleString('en-IN')}). Background refresh is updating the rest.`;
-  } else if (symbolFilter.mode !== 'all' && symbols.length > MAX_LIVE_SYMBOLS) {
+  if (symbolFilter.mode !== 'all' && symbols.length > MAX_LIVE_SYMBOLS) {
     hint = `Filter matched ${symbols.length} symbols — live refresh capped at ${MAX_LIVE_SYMBOLS}. Narrow your search.`;
-  } else if (backgroundQueued) {
-    hint = 'Background refresh started — data will update in MongoDB shortly.';
   }
 
   return {
-    rows: slice,
+    rows: displayRows,
     lookback: preset,
     todayDate: clock.dateKey,
     product: prod,
     expiryDate: prod === 'future' ? expiryDate : null,
     sortedBy: 'pctVsAvg',
+    aboveAverageOnly: true,
     source: 'mongodb',
     liveRefreshed,
     backgroundQueued,
     hint,
     dbCount,
     universeTotal: listing.total,
-    pagination: {
-      page: pageClamped,
-      pageSize: safeSize,
-      total,
-      totalPages,
-      query: query,
-    },
+    total,
+    query: query,
     fetchedAt: latestUpdatedAt ? latestUpdatedAt.toISOString() : null,
   };
 }

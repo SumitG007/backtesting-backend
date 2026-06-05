@@ -1,19 +1,50 @@
 const { getIstClock } = require('../utils/dateTime');
 const { listAllSymbolsByProduct } = require('./volumeInstrumentCatalog');
+const { loadMetricsMap } = require('./volumeMetricsStore');
 
-const FUTURES_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+const ALLOWED_REFRESH_MINUTES = [5, 10, 15];
+const DEFAULT_REFRESH_MINUTES = 5;
 const BOOT_DELAY_MS = 30 * 1000;
 const EXPIRY_SYMBOL = 'NIFTY';
-const LOOKBACK_CYCLE = [5, 10, 22, 44];
+const LOOKBACK_CYCLE = [5, 10, 22];
+const DEFAULT_LOOKBACK_DAYS = 5;
+const DISCOVERY_EVERY_N_TICKS = 6;
 
 let refreshTimer = null;
 let refreshInFlight = false;
+let currentIntervalMs = DEFAULT_REFRESH_MINUTES * 60 * 1000;
+let tickCount = 0;
 
 function isNseSessionOpen(now = new Date()) {
   const clock = getIstClock(now);
   if (clock.weekday === 'Sat' || clock.weekday === 'Sun') return false;
   const mins = clock.hour * 60 + clock.minute;
   return mins >= 9 * 60 + 15 && mins < 15 * 60 + 30;
+}
+
+function normalizeRefreshMinutes(raw) {
+  const n = Number(raw);
+  return ALLOWED_REFRESH_MINUTES.includes(n) ? n : DEFAULT_REFRESH_MINUTES;
+}
+
+function getRefreshIntervalMinutes() {
+  return Math.round(currentIntervalMs / 60000);
+}
+
+function restartRefreshTimer() {
+  if (!refreshTimer) return;
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(tickFuturesRefresh, currentIntervalMs);
+}
+
+function setRefreshIntervalMinutes(minutes) {
+  const safe = normalizeRefreshMinutes(minutes);
+  const nextMs = safe * 60 * 1000;
+  if (nextMs === currentIntervalMs) return safe;
+  currentIntervalMs = nextMs;
+  restartRefreshTimer();
+  console.log(`[VOLUME SCAN] Live refresh interval set to ${safe} min`);
+  return safe;
 }
 
 async function resolveActiveFutureExpiry() {
@@ -23,7 +54,36 @@ async function resolveActiveFutureExpiry() {
   return list[0]?.expiry || null;
 }
 
-async function refreshFuturesUniverse({ lookbackDays = 10, expiryDate = null } = {}) {
+async function resolveSymbolsToRefresh({ lookbackDays, expiryDate, fullScan = false }) {
+  const listing = await listAllSymbolsByProduct({ product: 'future', q: '' });
+  if (fullScan) {
+    return { symbols: listing.symbols, mode: 'full' };
+  }
+
+  const metricsMap = await loadMetricsMap({
+    product: 'future',
+    expiryDate,
+    lookbackDays,
+    symbols: listing.symbols,
+  });
+
+  const aboveAverage = listing.symbols.filter((sym) => {
+    const row = metricsMap.get(sym);
+    return row && Number(row.pctVsAvg) > 0;
+  });
+
+  if (aboveAverage.length > 0) {
+    return { symbols: aboveAverage, mode: 'above-average' };
+  }
+
+  return { symbols: listing.symbols, mode: 'full-fallback' };
+}
+
+async function refreshFuturesUniverse({
+  lookbackDays = 10,
+  expiryDate = null,
+  fullScan = false,
+} = {}) {
   if (refreshInFlight) return { ok: false, skipped: true, reason: 'refresh already running' };
   refreshInFlight = true;
   try {
@@ -32,25 +92,36 @@ async function refreshFuturesUniverse({ lookbackDays = 10, expiryDate = null } =
     if (!expiry) {
       return { ok: false, error: 'No futures expiry available' };
     }
-    const listing = await listAllSymbolsByProduct({ product: 'future', q: '' });
+
+    const { symbols, mode } = await resolveSymbolsToRefresh({
+      lookbackDays,
+      expiryDate: expiry,
+      fullScan,
+    });
+
     const result = await refreshSymbolsIntoStore({
-      symbols: listing.symbols,
+      symbols,
       product: 'future',
       expiryDate: expiry,
       lookbackDays,
     });
-    return { ok: true, expiryDate: expiry, ...result };
+    return { ok: true, expiryDate: expiry, mode, ...result };
   } finally {
     refreshInFlight = false;
   }
 }
 
-async function refreshAllLookbackPresets({ expiryDate = null } = {}) {
+async function refreshAllLookbackPresets({ expiryDate = null, fullScan = false } = {}) {
   const summary = [];
   for (const lookbackDays of LOOKBACK_CYCLE) {
-    const result = await refreshFuturesUniverse({ lookbackDays, expiryDate });
+    const useFull = fullScan && lookbackDays === DEFAULT_LOOKBACK_DAYS;
+    const result = await refreshFuturesUniverse({
+      lookbackDays,
+      expiryDate,
+      fullScan: useFull,
+    });
     if (result.ok) {
-      summary.push(`${lookbackDays}d:${result.updated}/${result.total}`);
+      summary.push(`${lookbackDays}d:${result.updated}/${result.total} (${result.mode})`);
     }
   }
   return summary;
@@ -58,8 +129,10 @@ async function refreshAllLookbackPresets({ expiryDate = null } = {}) {
 
 async function tickFuturesRefresh() {
   if (!isNseSessionOpen()) return;
+  tickCount += 1;
+  const fullDiscovery = tickCount % DISCOVERY_EVERY_N_TICKS === 0;
   try {
-    const parts = await refreshAllLookbackPresets();
+    const parts = await refreshAllLookbackPresets({ fullScan: fullDiscovery });
     if (parts.length) {
       console.log(`[VOLUME SCAN] Futures refreshed — ${parts.join(', ')}`);
     }
@@ -71,7 +144,7 @@ async function tickFuturesRefresh() {
 function scheduleVolumeScanRefresh() {
   if (refreshTimer) return;
   setTimeout(() => {
-    refreshAllLookbackPresets()
+    refreshAllLookbackPresets({ fullScan: true })
       .then((parts) => {
         if (parts.length) {
           console.log(`[VOLUME SCAN] Boot warm-up done — ${parts.join(', ')}`);
@@ -82,12 +155,18 @@ function scheduleVolumeScanRefresh() {
       });
   }, BOOT_DELAY_MS);
 
-  refreshTimer = setInterval(tickFuturesRefresh, FUTURES_REFRESH_INTERVAL_MS);
-  console.log('[VOLUME SCAN] Scheduled futures refresh every 15 min (5/10/22/44 day lookbacks, market hours).');
+  refreshTimer = setInterval(tickFuturesRefresh, currentIntervalMs);
+  console.log(
+    `[VOLUME SCAN] Scheduled futures refresh every ${getRefreshIntervalMinutes()} min `
+    + '(above-average fast path after boot, market hours).',
+  );
 }
 
 module.exports = {
   scheduleVolumeScanRefresh,
   refreshFuturesUniverse,
   isNseSessionOpen,
+  setRefreshIntervalMinutes,
+  getRefreshIntervalMinutes,
+  ALLOWED_REFRESH_MINUTES,
 };

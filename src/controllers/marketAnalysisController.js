@@ -63,6 +63,12 @@ function parsePageSize(raw, fallback = 25) {
   return Math.max(1, Math.min(50, Math.floor(n)));
 }
 
+function parseRefreshIntervalMin(raw) {
+  const { setRefreshIntervalMinutes, getRefreshIntervalMinutes } = require('../services/volumeScanScheduler');
+  if (raw == null || raw === '') return getRefreshIntervalMinutes();
+  return setRefreshIntervalMinutes(Number(raw));
+}
+
 async function listMarketAnalysisSymbols(req, res) {
   try {
     const product = parseProduct(req.query?.product ?? 'future');
@@ -79,11 +85,14 @@ async function listMarketAnalysisSymbols(req, res) {
 async function scanMarketAnalysis(req, res) {
   try {
     const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
-    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 10);
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 5);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
     const q = String(req.body?.q ?? req.query?.q ?? '').trim();
     const page = parsePage(req.body?.page ?? req.query?.page, 1);
     const pageSize = parsePageSize(req.body?.pageSize ?? req.query?.pageSize, 25);
+    const refreshIntervalMin = parseRefreshIntervalMin(
+      req.body?.refreshIntervalMin ?? req.query?.refreshIntervalMin,
+    );
 
     const result = await runVolumeAnalysisScan({
       product,
@@ -93,7 +102,7 @@ async function scanMarketAnalysis(req, res) {
       page,
       pageSize,
     });
-    return res.json({ ok: true, ...result });
+    return res.json({ ok: true, refreshIntervalMin, ...result });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
