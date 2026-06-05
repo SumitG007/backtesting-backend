@@ -26,6 +26,7 @@ const {
   getMarketAnalysisMeta,
   searchMarketInstruments,
   getMarketAnalysisExpiries,
+  exportMarketAnalysis,
 } = require('../controllers/marketAnalysisController');
 const {
   getStatus: getLiveStatus,
@@ -58,6 +59,7 @@ router.post('/market-analysis/run', runMarketAnalysis);
 router.post('/market-analysis/run-batch', runMarketAnalysisBatch);
 router.get('/market-analysis/symbols', listMarketAnalysisSymbols);
 router.post('/market-analysis/scan', scanMarketAnalysis);
+router.post('/market-analysis/export', exportMarketAnalysis);
 // Strategy 1 — IV mean reversion
 router.post('/strategy1/run', runStrategyFive);
 router.post('/strategy1/validation', postStrategyFiveValidation);

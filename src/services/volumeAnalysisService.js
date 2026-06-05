@@ -821,6 +821,51 @@ async function runVolumeAnalysisBatch({
   };
 }
 
+async function runVolumeAnalysisExport({
+  product = 'future',
+  lookbackDays = 10,
+  expiryDate = null,
+} = {}) {
+  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[DEFAULT_LOOKBACK_DAYS];
+  const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
+
+  if (prod === 'future' && !expiryDate) {
+    throw new Error('Select a futures expiry');
+  }
+
+  const listing = await listAllSymbolsByProduct({ product: prod, q: '' });
+  const symbols = listing.symbols;
+  const metricsMap = await loadMetricsMap({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    symbols,
+  });
+
+  const rows = sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap));
+  const latestUpdatedAt = await getLatestBatchUpdatedAt({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+  });
+  const clock = getIstClock(new Date());
+
+  return {
+    rows,
+    lookback: preset,
+    todayDate: clock.dateKey,
+    product: prod,
+    expiryDate: prod === 'future' ? expiryDate : null,
+    sortedBy: 'pctVsAvg',
+    exportAll: true,
+    source: 'mongodb',
+    dbCount: await countMetrics({ product: prod, expiryDate, lookbackDays }),
+    universeTotal: listing.total,
+    total: rows.length,
+    fetchedAt: latestUpdatedAt ? latestUpdatedAt.toISOString() : null,
+  };
+}
+
 async function getVolumeAnalysisMeta() {
   const catalog = await getCatalogMeta();
   const featured = await getFeaturedInstruments();
@@ -845,6 +890,7 @@ module.exports = {
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
   runVolumeAnalysisScan,
+  runVolumeAnalysisExport,
   refreshSymbolsIntoStore,
   listSymbolsByProduct,
   getVolumeAnalysisMeta,

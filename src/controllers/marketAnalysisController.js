@@ -2,6 +2,7 @@ const {
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
   runVolumeAnalysisScan,
+  runVolumeAnalysisExport,
   listSymbolsByProduct,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,
@@ -108,6 +109,23 @@ async function scanMarketAnalysis(req, res) {
   }
 }
 
+async function exportMarketAnalysis(req, res) {
+  try {
+    const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 30);
+    const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+
+    const result = await runVolumeAnalysisExport({
+      product,
+      lookbackDays,
+      expiryDate,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 async function runMarketAnalysisBatch(req, res) {
   try {
     const symbols = req.body?.symbols ?? req.query?.symbols;
@@ -159,6 +177,7 @@ module.exports = {
   runMarketAnalysis,
   runMarketAnalysisBatch,
   scanMarketAnalysis,
+  exportMarketAnalysis,
   listMarketAnalysisSymbols,
   getMarketAnalysisMeta,
   searchMarketInstruments,
