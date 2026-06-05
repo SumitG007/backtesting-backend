@@ -4,7 +4,9 @@ const {
   buildDhanHistoricalBody,
   buildDhanHistoricalBodyWithExpiryCode,
   isDh905Error,
+  fetchIntradayDayVolume,
 } = require('./dhanDataService');
+const { ensureNseHolidaysLoaded, isNseCashTradingDay } = require('./nseHolidayService');
 const { listFutureExpiries, resolveFutureInstrument } = require('./dhanLiveService');
 const { resolveSymbolConfig } = require('../utils/market');
 const {
@@ -122,8 +124,8 @@ function buildDisplayTable(todayBar, priorBars, compare, todayKey) {
 
   rows.push({
     rowType: 'today',
-    dateKey: todayBar.dateKey,
-    dayLabel: formatIstDateLabel(todayBar.dateKey, { isToday: true }),
+    dateKey: todayKey,
+    dayLabel: formatIstDateLabel(todayKey, { isToday: true }),
     volume: todayBar.volume,
   });
 
@@ -244,6 +246,41 @@ async function fetchDailyBars(resolved, calendarSpanDays) {
   };
 }
 
+/**
+ * Dhan daily historical often omits the current session until EOD.
+ * Use intraday sum for the IST calendar day instead of mislabeling yesterday as today.
+ */
+async function resolveTodayBar(bars, todayKey, resolved) {
+  const fromDaily = bars.find((b) => b.dateKey === todayKey);
+  if (fromDaily) {
+    return { todayBar: fromDaily, partialToday: false };
+  }
+
+  await ensureNseHolidaysLoaded();
+  if (isNseCashTradingDay(todayKey)) {
+    try {
+      const volume = await fetchIntradayDayVolume({
+        dateKey: todayKey,
+        securityId: resolved.securityId,
+        exchangeSegment: resolved.exchangeSegment,
+        instrument: resolved.instrument,
+      });
+      return {
+        todayBar: { dateKey: todayKey, volume, close: null },
+        partialToday: true,
+      };
+    } catch {
+      return {
+        todayBar: { dateKey: todayKey, volume: 0, close: null },
+        partialToday: true,
+      };
+    }
+  }
+
+  const lastBar = bars[bars.length - 1];
+  return { todayBar: lastBar, partialToday: false };
+}
+
 async function getFutureExpiriesForSymbol(symbol) {
   const upper = String(symbol || '').toUpperCase();
   const entry = await getInstrumentEntry(upper);
@@ -258,7 +295,8 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[5];
   const tradingDays = preset.tradingDays;
   const resolved = await resolveAnalysisInstrument({ symbol, product, expiryDate });
-  const cacheKey = `${resolved.symbol}:${resolved.product}:${resolved.expiry || ''}:${tradingDays}`;
+  const { bars, todayKey } = await fetchDailyBars(resolved, tradingDays * 2 + 25);
+  const cacheKey = `${resolved.symbol}:${resolved.product}:${resolved.expiry || ''}:${tradingDays}:${todayKey}`;
   const cached = analysisCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return {
@@ -268,8 +306,6 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
     };
   }
 
-  const { bars, todayKey } = await fetchDailyBars(resolved, tradingDays * 2 + 25);
-
   if (!bars.length) {
     throw new Error(
       resolved.product === 'future'
@@ -278,8 +314,8 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
     );
   }
 
-  const todayBar = bars.find((b) => b.dateKey === todayKey) || bars[bars.length - 1];
-  const priorBars = bars.filter((b) => b.dateKey < todayBar.dateKey).slice(-tradingDays);
+  const { todayBar, partialToday } = await resolveTodayBar(bars, todayKey, resolved);
+  const priorBars = bars.filter((b) => b.dateKey < todayKey).slice(-tradingDays);
   const compare = buildCompareMetrics(todayBar, priorBars);
   compare.requestedSampleDays = tradingDays;
 
@@ -302,7 +338,8 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
       headline: compare.ratio != null
         ? `Today’s volume is ${compare.ratio}× the average of the previous ${compare.sampleDays} trading day${compare.sampleDays === 1 ? '' : 's'} on this contract (${compare.pctVsAvg >= 0 ? '+' : ''}${compare.pctVsAvg}%).`
         : 'Not enough prior days on this contract to compute an average.',
-      todayDate: todayBar.dateKey,
+      todayDate: todayKey,
+      partialToday,
       todayVolume: compare.todayVolume,
       averageVolume: compare.avgVolume,
       averageOfDays: compare.sampleDays,
@@ -315,7 +352,7 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
       bars: chartDays.map((b) => ({
         dateKey: b.dateKey,
         volume: b.volume,
-        isToday: b.dateKey === todayBar.dateKey,
+        isToday: b.dateKey === todayKey,
       })),
     },
     notes: resolved.product === 'future'
@@ -333,6 +370,97 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
 
   analysisCache.set(cacheKey, { fetchedAt: Date.now(), payload });
   return payload;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runVolumeAnalysisBatch({
+  symbols = [],
+  lookbackDays = 10,
+  product = 'cash',
+  expiryDate = null,
+}) {
+  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
+  const unique = [...new Set(
+    (Array.isArray(symbols) ? symbols : [symbols])
+      .map((s) => String(s || '').trim().toUpperCase())
+      .filter(Boolean),
+  )].slice(0, 40);
+
+  if (!unique.length) {
+    throw new Error('Add at least one symbol to the watchlist');
+  }
+
+  const clock = getIstClock(new Date());
+  const rows = [];
+
+  for (let i = 0; i < unique.length; i += 1) {
+    const symbol = unique[i];
+    const entry = await getInstrumentEntry(symbol);
+    const futureSupported = Boolean(entry?.future);
+    const cashSupported = Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId);
+
+    try {
+      if (product === 'future' && !futureSupported) {
+        throw new Error('No futures listed for this symbol');
+      }
+      if (product === 'cash' && !cashSupported) {
+        throw new Error('No cash or index listing for this symbol');
+      }
+
+      const result = await runVolumeAnalysis({
+        symbol,
+        lookbackDays: preset.tradingDays,
+        product,
+        expiryDate,
+      });
+
+      const priorRows = Array.isArray(result.tableRows)
+        ? result.tableRows.filter((r) => r && r.rowType === 'prior')
+        : [];
+
+      rows.push({
+        ok: true,
+        symbol: result.symbol,
+        product: result.product,
+        expiry: result.expiry || null,
+        cashSupported,
+        futureSupported,
+        avgVolume: result.compare?.avgVolume ?? null,
+        todayVolume: result.compare?.todayVolume ?? null,
+        ratio: result.compare?.ratio ?? null,
+        pctVsAvg: result.compare?.pctVsAvg ?? null,
+        signal: result.compare?.signal ?? 'UNAVAILABLE',
+        sampleDays: result.compare?.sampleDays ?? 0,
+        todayDate: result.summary?.todayDate ?? clock.dateKey,
+        partialToday: Boolean(result.summary?.partialToday),
+        priorDays: priorRows.map((r) => ({
+          dateKey: r.dateKey,
+          dayLabel: r.dayLabel,
+          volume: r.volume,
+        })),
+      });
+    } catch (err) {
+      rows.push({
+        ok: false,
+        symbol,
+        cashSupported,
+        futureSupported,
+        error: err.message || 'Failed',
+      });
+    }
+    if (i < unique.length - 1) await sleep(180);
+  }
+
+  return {
+    rows,
+    lookback: preset,
+    todayDate: clock.dateKey,
+    product,
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 async function getVolumeAnalysisMeta() {
@@ -354,6 +482,7 @@ async function getVolumeAnalysisMeta() {
 module.exports = {
   LOOKBACK_PRESETS,
   runVolumeAnalysis,
+  runVolumeAnalysisBatch,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,
   searchInstruments,

@@ -20,6 +20,7 @@ const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const {
   runMarketAnalysis,
+  runMarketAnalysisBatch,
   getMarketAnalysisMeta,
   searchMarketInstruments,
   getMarketAnalysisExpiries,
@@ -52,6 +53,7 @@ router.get('/market-analysis/meta', getMarketAnalysisMeta);
 router.get('/market-analysis/search', searchMarketInstruments);
 router.get('/market-analysis/expiries', getMarketAnalysisExpiries);
 router.post('/market-analysis/run', runMarketAnalysis);
+router.post('/market-analysis/run-batch', runMarketAnalysisBatch);
 // Strategy 1 — IV mean reversion
 router.post('/strategy1/run', runStrategyFive);
 router.post('/strategy1/validation', postStrategyFiveValidation);

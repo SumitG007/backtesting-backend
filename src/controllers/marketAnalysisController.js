@@ -1,5 +1,6 @@
 const {
   runVolumeAnalysis,
+  runVolumeAnalysisBatch,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,
   searchInstruments,
@@ -49,6 +50,20 @@ async function runMarketAnalysis(req, res) {
   }
 }
 
+async function runMarketAnalysisBatch(req, res) {
+  try {
+    const symbols = req.body?.symbols ?? req.query?.symbols;
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 10);
+    const product = parseProduct(req.body?.product ?? req.query?.product);
+    const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+
+    const result = await runVolumeAnalysisBatch({ symbols, lookbackDays, product, expiryDate });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 async function getMarketAnalysisMeta(_req, res) {
   try {
     const meta = await getVolumeAnalysisMeta();
@@ -84,6 +99,7 @@ async function getMarketAnalysisExpiries(req, res) {
 
 module.exports = {
   runMarketAnalysis,
+  runMarketAnalysisBatch,
   getMarketAnalysisMeta,
   searchMarketInstruments,
   getMarketAnalysisExpiries,

@@ -7,6 +7,7 @@ const {
   addDays,
   differenceInDaysInclusive,
   normalizeTimestamp,
+  getIstClock,
   sleep,
 } = require('../utils/dateTime');
 const { resolveSymbolConfig } = require('../utils/market');
@@ -267,6 +268,32 @@ async function fetchYearCandles({ symbol, interval, year }) {
 }
 
 /** Single cash-session calendar day (IST date string YYYY-MM-DD). */
+/** Sum 1-min volumes for a single IST calendar session (used when daily bar for today is not ready yet). */
+async function fetchIntradayDayVolume({ dateKey, securityId, exchangeSegment, instrument }) {
+  const raw = await fetchDhanIntradayChunk({
+    fromDate: dateKey,
+    toDate: dateKey,
+    interval: '1',
+    securityId,
+    exchangeSegment,
+    instrument,
+  });
+  await sleep(150);
+
+  const timestamps = raw.timestamp || [];
+  const volumes = raw.volume || [];
+  let total = 0;
+  for (let i = 0; i < timestamps.length; i += 1) {
+    const ts = normalizeTimestamp(timestamps[i]);
+    if (Number.isNaN(ts.getTime())) continue;
+    const { dateKey: barDay } = getIstClock(ts);
+    if (barDay !== dateKey) continue;
+    const v = Number(volumes[i]);
+    if (Number.isFinite(v)) total += v;
+  }
+  return total;
+}
+
 async function fetchTradingDayCandles({ symbol, interval, dateKey }) {
   const resolved = resolveSymbolConfig(symbol);
   if (!resolved.securityId || !resolved.exchangeSegment) {
@@ -346,6 +373,7 @@ module.exports = {
   isDh905Error,
   extractDhanApiError,
   fetchWithRateLimitRetry,
+  fetchIntradayDayVolume,
   fetchTradingDayCandles,
   getCandlesWithCache,
 };
