@@ -12,7 +12,7 @@ const {
 function parseLookbackDays(raw) {
   const n = Number(raw);
   if (LOOKBACK_PRESETS[n]) return n;
-  return 5;
+  return 30;
 }
 
 function parseProduct(raw) {
@@ -85,7 +85,7 @@ async function listMarketAnalysisSymbols(req, res) {
 async function scanMarketAnalysis(req, res) {
   try {
     const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
-    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 5);
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 30);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
     const q = String(req.body?.q ?? req.query?.q ?? '').trim();
     const page = parsePage(req.body?.page ?? req.query?.page, 1);

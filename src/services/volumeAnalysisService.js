@@ -36,8 +36,10 @@ const {
 const LOOKBACK_PRESETS = {
   5: { id: 5, label: 'Last 5 trading days', tradingDays: 5, hint: 'Excludes weekends & NSE holidays' },
   10: { id: 10, label: 'Last 10 trading days', tradingDays: 10, hint: 'Excludes weekends & NSE holidays' },
-  22: { id: 22, label: 'Last 22 trading days', tradingDays: 22, hint: 'Excludes weekends & NSE holidays' },
+  30: { id: 30, label: 'Last 30 trading days', tradingDays: 30, hint: 'Excludes weekends & NSE holidays' },
 };
+
+const DEFAULT_LOOKBACK_DAYS = 30;
 
 const analysisCache = new Map();
 
@@ -402,7 +404,7 @@ function sleep(ms) {
 const SCAN_SYMBOL_DELAY_MS = 900;
 const METRICS_STALE_MS = 20 * 60 * 1000;
 const MAX_LIVE_SYMBOLS = 40;
-const MAX_SCAN_DISPLAY_ROWS = 100;
+const TOP_SCAN_ROWS = 10;
 const backgroundRefreshJobs = new Map();
 
 function scanCacheKey({ product, lookbackDays, expiryDate, q }) {
@@ -438,8 +440,25 @@ function isAboveAverageRow(row) {
   return row?.ok && row.pctVsAvg != null && Number(row.pctVsAvg) > 0;
 }
 
-function filterAboveAverageRows(rows) {
-  return rows.filter(isAboveAverageRow);
+function isPriceRunningHigh(row) {
+  if (!row?.ok) return false;
+  const pct = row.priceChangePct;
+  if (pct != null && Number.isFinite(Number(pct))) return Number(pct) > 0;
+  const prev = Number(row.prevDayClose);
+  const today = Number(row.todayPrice);
+  return Number.isFinite(prev) && Number.isFinite(today) && today > prev;
+}
+
+function matchesScannerCriteria(row) {
+  return isAboveAverageRow(row) && isPriceRunningHigh(row);
+}
+
+function filterScannerRows(rows) {
+  return rows.filter(matchesScannerCriteria);
+}
+
+function pickTopScannerRows(rows, limit = TOP_SCAN_ROWS) {
+  return filterScannerRows(sortRowsByPctVsAvg(rows)).slice(0, limit);
 }
 
 function scheduleBackgroundRefresh(key, task) {
@@ -623,7 +642,7 @@ async function runVolumeAnalysisScan({
   refresh = false,
   live = false,
 } = {}) {
-  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
+  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[DEFAULT_LOOKBACK_DAYS];
   const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
   const query = String(q || '').trim();
   const symbolFilter = parseSymbolFilter(query);
@@ -662,26 +681,41 @@ async function runVolumeAnalysisScan({
     });
     liveRefreshed = true;
   } else if (wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
-    const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
-    backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
-      symbols,
-      product: prod,
-      expiryDate,
-      lookbackDays,
-    }));
-  } else if (!wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
-    const aboveSymbols = symbols.filter((sym) => {
-      const row = metricsMap.get(sym);
-      return row && Number(row.pctVsAvg) > 0;
-    });
-    const staleAbove = aboveSymbols.filter((sym) => {
-      const row = metricsMap.get(sym);
-      return isMetricsStale(row.updatedAt);
-    });
-    if (staleAbove.length > 0) {
+    const withData = symbols.map((sym) => metricsMap.get(sym)).filter(Boolean);
+    const topSymbols = pickTopScannerRows(withData).map((row) => row.symbol);
+    if (topSymbols.length > 0) {
+      await refreshSymbolsIntoStore({
+        symbols: topSymbols,
+        product: prod,
+        expiryDate,
+        lookbackDays,
+      });
+      metricsMap = await loadMetricsMap({
+        product: prod,
+        expiryDate,
+        lookbackDays,
+        symbols,
+      });
+      liveRefreshed = true;
+    } else {
       const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
       backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
-        symbols: staleAbove,
+        symbols,
+        product: prod,
+        expiryDate,
+        lookbackDays,
+      }));
+    }
+  } else if (!wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
+    const withData = symbols.map((sym) => metricsMap.get(sym)).filter(Boolean);
+    const topRows = pickTopScannerRows(withData);
+    const staleTop = topRows
+      .filter((row) => isMetricsStale(row.updatedAt))
+      .map((row) => row.symbol);
+    if (staleTop.length > 0) {
+      const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
+      backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
+        symbols: staleTop,
         product: prod,
         expiryDate,
         lookbackDays,
@@ -689,17 +723,16 @@ async function runVolumeAnalysisScan({
     }
   }
 
-  let sortedRows;
+  let displayRows;
   if (symbolFilter.mode === 'all' && !liveRefreshed) {
     const withData = symbols
       .map((sym) => metricsMap.get(sym))
       .filter(Boolean);
-    sortedRows = filterAboveAverageRows(sortRowsByPctVsAvg(withData));
+    displayRows = pickTopScannerRows(withData);
   } else {
-    sortedRows = filterAboveAverageRows(sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap)));
+    displayRows = pickTopScannerRows(buildRowsFromMetrics(symbols, metricsMap));
   }
-  const total = sortedRows.length;
-  const displayRows = sortedRows.slice(0, MAX_SCAN_DISPLAY_ROWS);
+  const total = displayRows.length;
 
   const latestUpdatedAt = await getLatestBatchUpdatedAt({
     product: prod,
@@ -721,7 +754,9 @@ async function runVolumeAnalysisScan({
     product: prod,
     expiryDate: prod === 'future' ? expiryDate : null,
     sortedBy: 'pctVsAvg',
+    topN: TOP_SCAN_ROWS,
     aboveAverageOnly: true,
+    priceAbovePrevCloseOnly: true,
     source: 'mongodb',
     liveRefreshed,
     backgroundQueued,
@@ -803,6 +838,10 @@ async function getVolumeAnalysisMeta() {
 
 module.exports = {
   LOOKBACK_PRESETS,
+  DEFAULT_LOOKBACK_DAYS,
+  TOP_SCAN_ROWS,
+  pickTopScannerRows,
+  matchesScannerCriteria,
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
   runVolumeAnalysisScan,

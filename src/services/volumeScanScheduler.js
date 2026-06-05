@@ -6,8 +6,8 @@ const ALLOWED_REFRESH_MINUTES = [5, 10, 15];
 const DEFAULT_REFRESH_MINUTES = 5;
 const BOOT_DELAY_MS = 30 * 1000;
 const EXPIRY_SYMBOL = 'NIFTY';
-const LOOKBACK_CYCLE = [5, 10, 22];
-const DEFAULT_LOOKBACK_DAYS = 5;
+const LOOKBACK_CYCLE = [5, 10, 30];
+const DEFAULT_LOOKBACK_DAYS = 30;
 const DISCOVERY_EVERY_N_TICKS = 6;
 
 let refreshTimer = null;
@@ -67,13 +67,12 @@ async function resolveSymbolsToRefresh({ lookbackDays, expiryDate, fullScan = fa
     symbols: listing.symbols,
   });
 
-  const aboveAverage = listing.symbols.filter((sym) => {
-    const row = metricsMap.get(sym);
-    return row && Number(row.pctVsAvg) > 0;
-  });
+  const { pickTopScannerRows } = require('./volumeAnalysisService');
+  const rows = listing.symbols.map((sym) => metricsMap.get(sym)).filter(Boolean);
+  const topRows = pickTopScannerRows(rows);
 
-  if (aboveAverage.length > 0) {
-    return { symbols: aboveAverage, mode: 'above-average' };
+  if (topRows.length > 0) {
+    return { symbols: topRows.map((row) => row.symbol), mode: 'top-10' };
   }
 
   return { symbols: listing.symbols, mode: 'full-fallback' };
@@ -158,7 +157,7 @@ function scheduleVolumeScanRefresh() {
   refreshTimer = setInterval(tickFuturesRefresh, currentIntervalMs);
   console.log(
     `[VOLUME SCAN] Scheduled futures refresh every ${getRefreshIntervalMinutes()} min `
-    + '(above-average fast path after boot, market hours).',
+    + '(top-10 live refresh after boot, market hours).',
   );
 }
 
