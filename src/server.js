@@ -46,6 +46,13 @@ async function bootBackgroundServices() {
   scheduleNseHolidayRefresh();
 
   try {
+    const { scheduleVolumeScanRefresh } = require('./services/volumeScanScheduler');
+    scheduleVolumeScanRefresh();
+  } catch (err) {
+    console.warn('Volume scan scheduler:', err.message);
+  }
+
+  try {
     const boot = await strategyThreePaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Strategy 1 paper-live engine started (always on)');

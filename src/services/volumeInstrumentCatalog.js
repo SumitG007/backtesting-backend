@@ -192,6 +192,98 @@ async function resolveCashFromCatalog(symbol) {
   throw new Error(`No NSE cash or index listing found for ${upper} in Dhan instrument master`);
 }
 
+function parseSymbolFilter(q = '') {
+  const raw = String(q || '').trim().toUpperCase();
+  if (!raw) return { mode: 'all', terms: [] };
+  const terms = [...new Set(raw.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean))];
+  if (terms.length > 1) return { mode: 'multi', terms };
+  return { mode: 'single', terms: [terms[0]] };
+}
+
+function matchesSymbolFilter(entry, filter) {
+  if (!filter || filter.mode === 'all') return true;
+  const sym = String(entry.symbol || '').toUpperCase();
+  const name = String(entry.displayName || '').toUpperCase();
+  return filter.terms.some((term) => {
+    if (filter.mode === 'multi') {
+      return sym === term || sym.startsWith(term) || name.includes(term);
+    }
+    return sym.includes(term) || name.includes(term);
+  });
+}
+
+async function buildSymbolListForProduct({ product = 'cash', q = '' } = {}) {
+  const map = await buildCatalogMap();
+  const prod = String(product || 'cash').toLowerCase() === 'future' ? 'future' : 'cash';
+  const filter = parseSymbolFilter(q);
+
+  let list = [...map.values()].filter(
+    (e) => !isTestOrMockSymbol(e.symbol, e.displayName),
+  );
+
+  if (prod === 'future') {
+    list = list.filter((e) => e.future);
+  } else {
+    list = list.filter((e) => e.cash);
+    for (const sym of ['NIFTY', 'BANKNIFTY']) {
+      if (list.some((e) => e.symbol === sym)) continue;
+      const preset = resolveSymbolConfig(sym);
+      if (preset.securityId) {
+        list.push({
+          symbol: sym,
+          displayName: sym,
+          cash: true,
+          future: Boolean(map.get(sym)?.future),
+        });
+      }
+    }
+  }
+
+  if (filter.mode !== 'all') {
+    list = list.filter((e) => matchesSymbolFilter(e, filter));
+  }
+
+  list.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return { product: prod, list, filter };
+}
+
+async function listAllSymbolsByProduct({ product = 'cash', q = '' } = {}) {
+  const { product: prod, list } = await buildSymbolListForProduct({ product, q });
+  return {
+    product: prod,
+    symbols: list.map((e) => e.symbol),
+    entries: list.map(toSearchResult),
+    total: list.length,
+  };
+}
+
+async function listSymbolsByProduct({
+  product = 'cash',
+  q = '',
+  page = 1,
+  pageSize = 25,
+} = {}) {
+  const { product: prod, list } = await buildSymbolListForProduct({ product, q });
+  const safePage = Math.max(1, Number(page) || 1);
+  const safeSize = Math.max(1, Math.min(50, Number(pageSize) || 25));
+
+  const total = list.length;
+  const totalPages = Math.max(1, Math.ceil(total / safeSize));
+  const pageClamped = Math.min(safePage, totalPages);
+  const start = (pageClamped - 1) * safeSize;
+  const slice = list.slice(start, start + safeSize);
+
+  return {
+    product: prod,
+    symbols: slice.map((e) => e.symbol),
+    entries: slice.map(toSearchResult),
+    total,
+    page: pageClamped,
+    pageSize: safeSize,
+    totalPages,
+  };
+}
+
 async function getCatalogMeta() {
   const map = await buildCatalogMap();
   let cashCount = 0;
@@ -220,5 +312,8 @@ module.exports = {
   getInstrumentEntry,
   resolveCashFromCatalog,
   getCatalogMeta,
+  listSymbolsByProduct,
+  listAllSymbolsByProduct,
+  parseSymbolFilter,
   isTestOrMockSymbol,
 };

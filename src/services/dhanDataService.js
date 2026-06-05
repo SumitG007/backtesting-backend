@@ -267,9 +267,8 @@ async function fetchYearCandles({ symbol, interval, year }) {
   return { rows: allRows, fromDate, toDate };
 }
 
-/** Single cash-session calendar day (IST date string YYYY-MM-DD). */
-/** Sum 1-min volumes for a single IST calendar session (used when daily bar for today is not ready yet). */
-async function fetchIntradayDayVolume({ dateKey, securityId, exchangeSegment, instrument }) {
+/** Single IST session stats from 1-min candles when the daily bar for today is not ready yet. */
+async function fetchIntradayDayStats({ dateKey, securityId, exchangeSegment, instrument }) {
   const raw = await fetchDhanIntradayChunk({
     fromDate: dateKey,
     toDate: dateKey,
@@ -282,16 +281,32 @@ async function fetchIntradayDayVolume({ dateKey, securityId, exchangeSegment, in
 
   const timestamps = raw.timestamp || [];
   const volumes = raw.volume || [];
-  let total = 0;
+  const closes = raw.close || [];
+  let totalVolume = 0;
+  let lastClose = null;
+  let lastTs = 0;
+
   for (let i = 0; i < timestamps.length; i += 1) {
     const ts = normalizeTimestamp(timestamps[i]);
     if (Number.isNaN(ts.getTime())) continue;
     const { dateKey: barDay } = getIstClock(ts);
     if (barDay !== dateKey) continue;
     const v = Number(volumes[i]);
-    if (Number.isFinite(v)) total += v;
+    if (Number.isFinite(v)) totalVolume += v;
+    const c = Number(closes[i]);
+    if (Number.isFinite(c) && ts.getTime() >= lastTs) {
+      lastTs = ts.getTime();
+      lastClose = c;
+    }
   }
-  return total;
+
+  return { volume: totalVolume, lastClose };
+}
+
+/** Sum 1-min volumes for a single IST calendar session (used when daily bar for today is not ready yet). */
+async function fetchIntradayDayVolume({ dateKey, securityId, exchangeSegment, instrument }) {
+  const stats = await fetchIntradayDayStats({ dateKey, securityId, exchangeSegment, instrument });
+  return stats.volume;
 }
 
 async function fetchTradingDayCandles({ symbol, interval, dateKey }) {
@@ -374,6 +389,7 @@ module.exports = {
   extractDhanApiError,
   fetchWithRateLimitRetry,
   fetchIntradayDayVolume,
+  fetchIntradayDayStats,
   fetchTradingDayCandles,
   getCandlesWithCache,
 };

@@ -4,7 +4,7 @@ const {
   buildDhanHistoricalBody,
   buildDhanHistoricalBodyWithExpiryCode,
   isDh905Error,
-  fetchIntradayDayVolume,
+  fetchIntradayDayStats,
 } = require('./dhanDataService');
 const { ensureNseHolidaysLoaded, isNseCashTradingDay } = require('./nseHolidayService');
 const { listFutureExpiries, resolveFutureInstrument } = require('./dhanLiveService');
@@ -15,7 +15,16 @@ const {
   getInstrumentEntry,
   resolveCashFromCatalog,
   getCatalogMeta,
+  listSymbolsByProduct,
+  listAllSymbolsByProduct,
+  parseSymbolFilter,
 } = require('./volumeInstrumentCatalog');
+const {
+  loadMetricsMap,
+  upsertMetricRow,
+  getLatestBatchUpdatedAt,
+  countMetrics,
+} = require('./volumeMetricsStore');
 const {
   getIstClock,
   normalizeTimestamp,
@@ -259,14 +268,18 @@ async function resolveTodayBar(bars, todayKey, resolved) {
   await ensureNseHolidaysLoaded();
   if (isNseCashTradingDay(todayKey)) {
     try {
-      const volume = await fetchIntradayDayVolume({
+      const stats = await fetchIntradayDayStats({
         dateKey: todayKey,
         securityId: resolved.securityId,
         exchangeSegment: resolved.exchangeSegment,
         instrument: resolved.instrument,
       });
       return {
-        todayBar: { dateKey: todayKey, volume, close: null },
+        todayBar: {
+          dateKey: todayKey,
+          volume: stats.volume,
+          close: Number.isFinite(stats.lastClose) ? stats.lastClose : null,
+        },
         partialToday: true,
       };
     } catch {
@@ -319,6 +332,13 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
   const compare = buildCompareMetrics(todayBar, priorBars);
   compare.requestedSampleDays = tradingDays;
 
+  const lastPriorBar = priorBars[priorBars.length - 1];
+  const prevDayClose = Number.isFinite(lastPriorBar?.close) ? round2(lastPriorBar.close) : null;
+  const todayPrice = Number.isFinite(todayBar?.close) ? round2(todayBar.close) : null;
+  const priceChangePct = prevDayClose > 0 && todayPrice != null
+    ? round2(((todayPrice / prevDayClose) - 1) * 100)
+    : null;
+
   const shortSample = priorBars.length < tradingDays;
   const tableRows = buildDisplayTable(todayBar, priorBars, compare, todayKey);
   const chartDays = [...priorBars, todayBar];
@@ -345,6 +365,10 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
       averageOfDays: compare.sampleDays,
       requestedDays: tradingDays,
       shortSample,
+      prevDayClose,
+      todayPrice,
+      priceChangePct,
+      prevDayDate: lastPriorBar?.dateKey || null,
     },
     tableRows,
     chart: {
@@ -376,6 +400,342 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const SCAN_SYMBOL_DELAY_MS = 900;
+const METRICS_STALE_MS = 20 * 60 * 1000;
+const MAX_LIVE_SYMBOLS = 40;
+const backgroundRefreshJobs = new Map();
+
+function scanCacheKey({ product, lookbackDays, expiryDate, q }) {
+  return JSON.stringify({
+    product: String(product || 'future').toLowerCase(),
+    lookbackDays: Number(lookbackDays) || 10,
+    expiryDate: expiryDate ? String(expiryDate).slice(0, 10) : '',
+    q: String(q || '').trim().toUpperCase(),
+  });
+}
+
+function isMetricsStale(updatedAtIso) {
+  if (!updatedAtIso) return true;
+  const ts = new Date(updatedAtIso).getTime();
+  if (!Number.isFinite(ts)) return true;
+  return Date.now() - ts > METRICS_STALE_MS;
+}
+
+function sortRowsByPctVsAvg(rows) {
+  return [...rows].sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1;
+    const ap = a.pctVsAvg;
+    const bp = b.pctVsAvg;
+    if (ap == null && bp == null) return a.symbol.localeCompare(b.symbol);
+    if (ap == null) return 1;
+    if (bp == null) return -1;
+    if (bp !== ap) return bp - ap;
+    return a.symbol.localeCompare(b.symbol);
+  });
+}
+
+function scheduleBackgroundRefresh(key, task) {
+  if (backgroundRefreshJobs.has(key)) return false;
+  const promise = task()
+    .catch((err) => {
+      console.warn('[VOLUME SCAN] Background refresh failed:', err.message);
+    })
+    .finally(() => {
+      backgroundRefreshJobs.delete(key);
+    });
+  backgroundRefreshJobs.set(key, promise);
+  return true;
+}
+
+async function refreshSymbolsIntoStore({
+  symbols = [],
+  product,
+  expiryDate = null,
+  lookbackDays = 10,
+} = {}) {
+  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
+  const tradingDays = preset.tradingDays;
+  const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
+  const unique = [...new Set(
+    (Array.isArray(symbols) ? symbols : [])
+      .map((s) => String(s || '').trim().toUpperCase())
+      .filter(Boolean),
+  )];
+
+  const clock = getIstClock(new Date());
+  const rows = [];
+  let updated = 0;
+
+  for (let i = 0; i < unique.length; i += 1) {
+    const symbol = unique[i];
+    let row;
+    try {
+      row = await analyzeSymbolRow({
+        symbol,
+        product: prod,
+        expiryDate,
+        tradingDays,
+        clock,
+      });
+    } catch (err) {
+      const entry = await getInstrumentEntry(symbol);
+      row = {
+        ok: false,
+        symbol,
+        cashSupported: Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId),
+        futureSupported: Boolean(entry?.future),
+        error: isRateLimitError(err) ? 'Rate limited — retry' : (err.message || 'Failed'),
+      };
+    }
+    await upsertMetricRow({
+      product: prod,
+      expiryDate,
+      lookbackDays,
+      row,
+    });
+    rows.push(row);
+    updated += 1;
+    if (i < unique.length - 1) await sleep(SCAN_SYMBOL_DELAY_MS);
+  }
+
+  return {
+    rows: sortRowsByPctVsAvg(rows),
+    lookback: preset,
+    todayDate: clock.dateKey,
+    product: prod,
+    expiryDate: prod === 'future' ? expiryDate : null,
+    updated,
+    total: unique.length,
+  };
+}
+
+function buildRowsFromMetrics(symbols, metricsMap) {
+  return symbols.map((symbol) => {
+    const row = metricsMap.get(symbol);
+    if (row) return row;
+    return {
+      ok: false,
+      symbol,
+      error: 'Not in database yet — use Search or Refresh',
+      updatedAt: null,
+    };
+  });
+}
+
+function isRateLimitError(err) {
+  const msg = String(err?.message || err || '');
+  const code = err?.cause?.response?.data?.errorCode || err?.response?.data?.errorCode;
+  return code === 'DH-904' || /rate limit|too many requests/i.test(msg);
+}
+
+async function runVolumeAnalysisWithRetry(args, maxAttempts = 4) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      return await runVolumeAnalysis(args);
+    } catch (err) {
+      lastErr = err;
+      if (isRateLimitError(err) && attempt < maxAttempts - 1) {
+        await sleep((attempt + 1) * 2500);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+function buildBatchRow(result, clock, entryFlags = {}) {
+  const priorRows = Array.isArray(result.tableRows)
+    ? result.tableRows.filter((r) => r && r.rowType === 'prior')
+    : [];
+
+  return {
+    ok: true,
+    symbol: result.symbol,
+    product: result.product,
+    expiry: result.expiry || null,
+    cashSupported: entryFlags.cashSupported,
+    futureSupported: entryFlags.futureSupported,
+    avgVolume: result.compare?.avgVolume ?? null,
+    todayVolume: result.compare?.todayVolume ?? null,
+    ratio: result.compare?.ratio ?? null,
+    pctVsAvg: result.compare?.pctVsAvg ?? null,
+    signal: result.compare?.signal ?? 'UNAVAILABLE',
+    sampleDays: result.compare?.sampleDays ?? 0,
+    todayDate: result.summary?.todayDate ?? clock.dateKey,
+    partialToday: Boolean(result.summary?.partialToday),
+    priorDays: priorRows.map((r) => ({
+      dateKey: r.dateKey,
+      dayLabel: r.dayLabel,
+      volume: r.volume,
+    })),
+    prevDayClose: result.summary?.prevDayClose ?? null,
+    todayPrice: result.summary?.todayPrice ?? null,
+    priceChangePct: result.summary?.priceChangePct ?? null,
+    prevDayDate: result.summary?.prevDayDate ?? null,
+  };
+}
+
+async function analyzeSymbolRow({
+  symbol,
+  product,
+  expiryDate,
+  tradingDays,
+  clock,
+}) {
+  const entry = await getInstrumentEntry(symbol);
+  const futureSupported = Boolean(entry?.future);
+  const cashSupported = Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId);
+  const flags = { cashSupported, futureSupported };
+
+  if (product === 'future' && !futureSupported) {
+    throw new Error('No futures for this symbol');
+  }
+  if (product === 'cash' && !cashSupported) {
+    throw new Error('No cash listing for this symbol');
+  }
+
+  const result = await runVolumeAnalysisWithRetry({
+    symbol,
+    lookbackDays: tradingDays,
+    product,
+    expiryDate,
+  });
+  return buildBatchRow(result, clock, flags);
+}
+
+async function runVolumeAnalysisScan({
+  product = 'future',
+  lookbackDays = 10,
+  expiryDate = null,
+  q = '',
+  page = 1,
+  pageSize = 25,
+  refresh = false,
+  live = false,
+} = {}) {
+  const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
+  const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
+  const query = String(q || '').trim();
+  const symbolFilter = parseSymbolFilter(query);
+  const wantsLive = Boolean(refresh || live);
+
+  if (prod === 'future' && !expiryDate) {
+    throw new Error('Select a futures expiry');
+  }
+
+  const safePage = Math.max(1, Number(page) || 1);
+  const safeSize = Math.max(1, Math.min(50, Number(pageSize) || 25));
+
+  const listing = await listAllSymbolsByProduct({ product: prod, q: query });
+  const symbols = listing.symbols;
+
+  let metricsMap = await loadMetricsMap({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    symbols,
+  });
+
+  let liveRefreshed = false;
+  let backgroundQueued = false;
+
+  if (wantsLive && symbolFilter.mode !== 'all' && symbols.length > 0) {
+    const liveSymbols = symbols.slice(0, MAX_LIVE_SYMBOLS);
+    await refreshSymbolsIntoStore({
+      symbols: liveSymbols,
+      product: prod,
+      expiryDate,
+      lookbackDays,
+    });
+    metricsMap = await loadMetricsMap({
+      product: prod,
+      expiryDate,
+      lookbackDays,
+      symbols,
+    });
+    liveRefreshed = true;
+  } else if (wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
+    const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
+    backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
+      symbols,
+      product: prod,
+      expiryDate,
+      lookbackDays,
+    }));
+  } else if (!wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
+    const staleSymbols = symbols.filter((sym) => {
+      const row = metricsMap.get(sym);
+      return !row || isMetricsStale(row.updatedAt);
+    });
+    if (staleSymbols.length > symbols.length * 0.2) {
+      const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
+      backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
+        symbols,
+        product: prod,
+        expiryDate,
+        lookbackDays,
+      }));
+    }
+  }
+
+  let sortedRows;
+  if (symbolFilter.mode === 'all' && !liveRefreshed) {
+    const withData = symbols
+      .map((sym) => metricsMap.get(sym))
+      .filter(Boolean);
+    sortedRows = sortRowsByPctVsAvg(withData);
+  } else {
+    sortedRows = sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap));
+  }
+  const total = sortedRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / safeSize));
+  const pageClamped = Math.min(safePage, totalPages);
+  const start = (pageClamped - 1) * safeSize;
+  const slice = sortedRows.slice(start, start + safeSize);
+
+  const latestUpdatedAt = await getLatestBatchUpdatedAt({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+  });
+  const dbCount = await countMetrics({ product: prod, expiryDate, lookbackDays });
+  const clock = getIstClock(new Date());
+
+  let hint = null;
+  if (symbolFilter.mode === 'all' && !liveRefreshed && total < listing.total) {
+    hint = `Showing ${total.toLocaleString('en-IN')} saved symbols (of ${listing.total.toLocaleString('en-IN')}). Background refresh is updating the rest.`;
+  } else if (symbolFilter.mode !== 'all' && symbols.length > MAX_LIVE_SYMBOLS) {
+    hint = `Filter matched ${symbols.length} symbols — live refresh capped at ${MAX_LIVE_SYMBOLS}. Narrow your search.`;
+  } else if (backgroundQueued) {
+    hint = 'Background refresh started — data will update in MongoDB shortly.';
+  }
+
+  return {
+    rows: slice,
+    lookback: preset,
+    todayDate: clock.dateKey,
+    product: prod,
+    expiryDate: prod === 'future' ? expiryDate : null,
+    sortedBy: 'pctVsAvg',
+    source: 'mongodb',
+    liveRefreshed,
+    backgroundQueued,
+    hint,
+    dbCount,
+    universeTotal: listing.total,
+    pagination: {
+      page: pageClamped,
+      pageSize: safeSize,
+      total,
+      totalPages,
+      query: query,
+    },
+    fetchedAt: latestUpdatedAt ? latestUpdatedAt.toISOString() : null,
+  };
+}
+
 async function runVolumeAnalysisBatch({
   symbols = [],
   lookbackDays = 10,
@@ -398,60 +758,25 @@ async function runVolumeAnalysisBatch({
 
   for (let i = 0; i < unique.length; i += 1) {
     const symbol = unique[i];
-    const entry = await getInstrumentEntry(symbol);
-    const futureSupported = Boolean(entry?.future);
-    const cashSupported = Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId);
-
     try {
-      if (product === 'future' && !futureSupported) {
-        throw new Error('No futures listed for this symbol');
-      }
-      if (product === 'cash' && !cashSupported) {
-        throw new Error('No cash or index listing for this symbol');
-      }
-
-      const result = await runVolumeAnalysis({
+      rows.push(await analyzeSymbolRow({
         symbol,
-        lookbackDays: preset.tradingDays,
         product,
         expiryDate,
-      });
-
-      const priorRows = Array.isArray(result.tableRows)
-        ? result.tableRows.filter((r) => r && r.rowType === 'prior')
-        : [];
-
-      rows.push({
-        ok: true,
-        symbol: result.symbol,
-        product: result.product,
-        expiry: result.expiry || null,
-        cashSupported,
-        futureSupported,
-        avgVolume: result.compare?.avgVolume ?? null,
-        todayVolume: result.compare?.todayVolume ?? null,
-        ratio: result.compare?.ratio ?? null,
-        pctVsAvg: result.compare?.pctVsAvg ?? null,
-        signal: result.compare?.signal ?? 'UNAVAILABLE',
-        sampleDays: result.compare?.sampleDays ?? 0,
-        todayDate: result.summary?.todayDate ?? clock.dateKey,
-        partialToday: Boolean(result.summary?.partialToday),
-        priorDays: priorRows.map((r) => ({
-          dateKey: r.dateKey,
-          dayLabel: r.dayLabel,
-          volume: r.volume,
-        })),
-      });
+        tradingDays: preset.tradingDays,
+        clock,
+      }));
     } catch (err) {
+      const entry = await getInstrumentEntry(symbol);
       rows.push({
         ok: false,
         symbol,
-        cashSupported,
-        futureSupported,
+        cashSupported: Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId),
+        futureSupported: Boolean(entry?.future),
         error: err.message || 'Failed',
       });
     }
-    if (i < unique.length - 1) await sleep(180);
+    if (i < unique.length - 1) await sleep(SCAN_SYMBOL_DELAY_MS);
   }
 
   return {
@@ -471,8 +796,7 @@ async function getVolumeAnalysisMeta() {
     featured,
     lookbackPresets: Object.values(LOOKBACK_PRESETS),
     products: [
-      { id: 'cash', label: 'Cash (equity)', hint: 'NSE share volume' },
-      { id: 'future', label: 'Futures', hint: 'Choose expiry from live list' },
+      { id: 'future', label: 'Futures', hint: 'NSE futures volume by expiry' },
     ],
     module: 'volume-analysis',
     description: 'Search any NSE symbol from Dhan. Volume and expiries are live.',
@@ -483,6 +807,9 @@ module.exports = {
   LOOKBACK_PRESETS,
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
+  runVolumeAnalysisScan,
+  refreshSymbolsIntoStore,
+  listSymbolsByProduct,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,
   searchInstruments,

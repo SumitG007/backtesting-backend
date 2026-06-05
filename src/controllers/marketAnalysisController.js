@@ -1,6 +1,8 @@
 const {
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
+  runVolumeAnalysisScan,
+  listSymbolsByProduct,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,
   searchInstruments,
@@ -47,6 +49,53 @@ async function runMarketAnalysis(req, res) {
       error: error.message,
       request: error.dhanBody || null,
     });
+  }
+}
+
+function parsePage(raw, fallback = 1) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
+function parsePageSize(raw, fallback = 25) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.min(50, Math.floor(n)));
+}
+
+async function listMarketAnalysisSymbols(req, res) {
+  try {
+    const product = parseProduct(req.query?.product ?? 'future');
+    const q = String(req.query?.q ?? '').trim();
+    const page = parsePage(req.query?.page, 1);
+    const pageSize = parsePageSize(req.query?.pageSize, 25);
+    const result = await listSymbolsByProduct({ product, q, page, pageSize });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function scanMarketAnalysis(req, res) {
+  try {
+    const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
+    const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 10);
+    const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+    const q = String(req.body?.q ?? req.query?.q ?? '').trim();
+    const page = parsePage(req.body?.page ?? req.query?.page, 1);
+    const pageSize = parsePageSize(req.body?.pageSize ?? req.query?.pageSize, 25);
+
+    const result = await runVolumeAnalysisScan({
+      product,
+      lookbackDays,
+      expiryDate,
+      q,
+      page,
+      pageSize,
+    });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
   }
 }
 
@@ -100,6 +149,8 @@ async function getMarketAnalysisExpiries(req, res) {
 module.exports = {
   runMarketAnalysis,
   runMarketAnalysisBatch,
+  scanMarketAnalysis,
+  listMarketAnalysisSymbols,
   getMarketAnalysisMeta,
   searchMarketInstruments,
   getMarketAnalysisExpiries,
