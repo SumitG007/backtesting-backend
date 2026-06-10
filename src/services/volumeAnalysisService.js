@@ -24,6 +24,7 @@ const {
   upsertMetricRow,
   getLatestBatchUpdatedAt,
   countMetrics,
+  syncVolumeMetricsIndexes,
 } = require('./volumeMetricsStore');
 const {
   getIstClock,
@@ -42,6 +43,26 @@ const LOOKBACK_PRESETS = {
 const DEFAULT_LOOKBACK_DAYS = 30;
 
 const analysisCache = new Map();
+
+function getActualTodayKey() {
+  return getIstClock(new Date()).dateKey;
+}
+
+function resolveSessionDateKey(sessionDate) {
+  const actualToday = getActualTodayKey();
+  const key = sessionDate ? String(sessionDate).slice(0, 10) : actualToday;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+    throw new Error('Invalid session date — use YYYY-MM-DD');
+  }
+  if (key > actualToday) {
+    throw new Error('Session date cannot be in the future');
+  }
+  return key;
+}
+
+function isHistoricalSession(sessionDateKey) {
+  return sessionDateKey !== getActualTodayKey();
+}
 
 function parseDailyBars(raw) {
   const timestamps = raw.timestamp || [];
@@ -131,11 +152,12 @@ function buildCompareMetrics(todayBar, priorBars) {
 
 function buildDisplayTable(todayBar, priorBars, compare, todayKey) {
   const rows = [];
+  const actualTodayKey = getActualTodayKey();
 
   rows.push({
     rowType: 'today',
     dateKey: todayKey,
-    dayLabel: formatIstDateLabel(todayKey, { isToday: true }),
+    dayLabel: formatIstDateLabel(todayKey, { isToday: todayKey === actualTodayKey }),
     volume: todayBar.volume,
   });
 
@@ -206,9 +228,8 @@ async function resolveFutureExpiryCode(symbol, expiry) {
   return idx >= 0 ? Math.min(idx, 2) : 0;
 }
 
-async function fetchDailyBars(resolved, calendarSpanDays) {
-  const clock = getIstClock(new Date());
-  const todayKey = clock.dateKey;
+async function fetchDailyBars(resolved, calendarSpanDays, sessionDateKey) {
+  const todayKey = sessionDateKey || getActualTodayKey();
   const fromDate = formatDateOnly(addDays(parseDateOnly(todayKey), -calendarSpanDays));
   const toDate = formatDateOnly(addDays(parseDateOnly(todayKey), 1));
 
@@ -260,10 +281,14 @@ async function fetchDailyBars(resolved, calendarSpanDays) {
  * Dhan daily historical often omits the current session until EOD.
  * Use intraday sum for the IST calendar day instead of mislabeling yesterday as today.
  */
-async function resolveTodayBar(bars, todayKey, resolved) {
+async function resolveTodayBar(bars, todayKey, resolved, { allowIntraday = true } = {}) {
   const fromDaily = bars.find((b) => b.dateKey === todayKey);
   if (fromDaily) {
     return { todayBar: fromDaily, partialToday: false };
+  }
+
+  if (!allowIntraday) {
+    throw new Error(`No daily data for session ${todayKey}`);
   }
 
   await ensureNseHolidaysLoaded();
@@ -305,11 +330,18 @@ async function getFutureExpiriesForSymbol(symbol) {
   return { symbol: upper, expiries, futureSupported: true };
 }
 
-async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', expiryDate = null }) {
+async function runVolumeAnalysis({
+  symbol,
+  lookbackDays = 5,
+  product = 'cash',
+  expiryDate = null,
+  sessionDate = null,
+}) {
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[5];
   const tradingDays = preset.tradingDays;
+  const sessionDateKey = resolveSessionDateKey(sessionDate);
   const resolved = await resolveAnalysisInstrument({ symbol, product, expiryDate });
-  const { bars, todayKey } = await fetchDailyBars(resolved, tradingDays * 2 + 25);
+  const { bars, todayKey } = await fetchDailyBars(resolved, tradingDays * 2 + 25, sessionDateKey);
   const cacheKey = `${resolved.symbol}:${resolved.product}:${resolved.expiry || ''}:${tradingDays}:${todayKey}`;
   const cached = analysisCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
@@ -328,7 +360,9 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
     );
   }
 
-  const { todayBar, partialToday } = await resolveTodayBar(bars, todayKey, resolved);
+  const { todayBar, partialToday } = await resolveTodayBar(bars, todayKey, resolved, {
+    allowIntraday: !isHistoricalSession(sessionDateKey),
+  });
   const priorBars = bars.filter((b) => b.dateKey < todayKey).slice(-tradingDays);
   const compare = buildCompareMetrics(todayBar, priorBars);
   compare.requestedSampleDays = tradingDays;
@@ -357,9 +391,10 @@ async function runVolumeAnalysis({ symbol, lookbackDays = 5, product = 'cash', e
     compare,
     summary: {
       headline: compare.ratio != null
-        ? `Today’s volume is ${compare.ratio}× the average of the previous ${compare.sampleDays} trading day${compare.sampleDays === 1 ? '' : 's'} on this contract (${compare.pctVsAvg >= 0 ? '+' : ''}${compare.pctVsAvg}%).`
+        ? `Session volume (${todayKey}) is ${compare.ratio}× the average of the previous ${compare.sampleDays} trading day${compare.sampleDays === 1 ? '' : 's'} on this contract (${compare.pctVsAvg >= 0 ? '+' : ''}${compare.pctVsAvg}%).`
         : 'Not enough prior days on this contract to compute an average.',
       todayDate: todayKey,
+      sessionDate: todayKey,
       partialToday,
       todayVolume: compare.todayVolume,
       averageVolume: compare.avgVolume,
@@ -401,27 +436,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const SCAN_SYMBOL_DELAY_MS = 900;
-const METRICS_STALE_MS = 20 * 60 * 1000;
-const MAX_LIVE_SYMBOLS = 40;
+const SCAN_SYMBOL_DELAY_MS = 300;
+const SCAN_CONCURRENCY = 4;
 const TOP_SCAN_ROWS = 10;
-const backgroundRefreshJobs = new Map();
-
-function scanCacheKey({ product, lookbackDays, expiryDate, q }) {
-  return JSON.stringify({
-    product: String(product || 'future').toLowerCase(),
-    lookbackDays: Number(lookbackDays) || 10,
-    expiryDate: expiryDate ? String(expiryDate).slice(0, 10) : '',
-    q: String(q || '').trim().toUpperCase(),
-  });
-}
-
-function isMetricsStale(updatedAtIso) {
-  if (!updatedAtIso) return true;
-  const ts = new Date(updatedAtIso).getTime();
-  if (!Number.isFinite(ts)) return true;
-  return Date.now() - ts > METRICS_STALE_MS;
-}
 
 function sortRowsByPctVsAvg(rows) {
   return [...rows].sort((a, b) => {
@@ -440,17 +457,12 @@ function isAboveAverageRow(row) {
   return row?.ok && row.pctVsAvg != null && Number(row.pctVsAvg) > 0;
 }
 
-function isPriceRunningHigh(row) {
-  if (!row?.ok) return false;
-  const pct = row.priceChangePct;
-  if (pct != null && Number.isFinite(Number(pct))) return Number(pct) > 0;
-  const prev = Number(row.prevDayClose);
-  const today = Number(row.todayPrice);
-  return Number.isFinite(prev) && Number.isFinite(today) && today > prev;
+function matchesScannerCriteria(row) {
+  return isAboveAverageRow(row);
 }
 
-function matchesScannerCriteria(row) {
-  return isAboveAverageRow(row) && isPriceRunningHigh(row);
+function shouldPersistVolumeRow(row) {
+  return matchesScannerCriteria(row);
 }
 
 function filterScannerRows(rows) {
@@ -461,28 +473,18 @@ function pickTopScannerRows(rows, limit = TOP_SCAN_ROWS) {
   return filterScannerRows(sortRowsByPctVsAvg(rows)).slice(0, limit);
 }
 
-function scheduleBackgroundRefresh(key, task) {
-  if (backgroundRefreshJobs.has(key)) return false;
-  const promise = task()
-    .catch((err) => {
-      console.warn('[VOLUME SCAN] Background refresh failed:', err.message);
-    })
-    .finally(() => {
-      backgroundRefreshJobs.delete(key);
-    });
-  backgroundRefreshJobs.set(key, promise);
-  return true;
-}
-
 async function refreshSymbolsIntoStore({
   symbols = [],
   product,
   expiryDate = null,
   lookbackDays = 10,
+  sessionDate = null,
+  persist = true,
 } = {}) {
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
   const tradingDays = preset.tradingDays;
   const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
+  const sessionDateKey = resolveSessionDateKey(sessionDate);
   const unique = [...new Set(
     (Array.isArray(symbols) ? symbols : [])
       .map((s) => String(s || '').trim().toUpperCase())
@@ -491,22 +493,22 @@ async function refreshSymbolsIntoStore({
 
   const clock = getIstClock(new Date());
   const rows = [];
-  let updated = 0;
+  let scanned = 0;
+  let savedAboveAvg = 0;
 
-  for (let i = 0; i < unique.length; i += 1) {
-    const symbol = unique[i];
-    let row;
+  async function fetchOneSymbol(symbol) {
     try {
-      row = await analyzeSymbolRow({
+      return await analyzeSymbolRow({
         symbol,
         product: prod,
         expiryDate,
         tradingDays,
         clock,
+        sessionDate: sessionDateKey,
       });
     } catch (err) {
       const entry = await getInstrumentEntry(symbol);
-      row = {
+      return {
         ok: false,
         symbol,
         cashSupported: Boolean(entry?.cash) || Boolean(resolveSymbolConfig(symbol).securityId),
@@ -514,24 +516,38 @@ async function refreshSymbolsIntoStore({
         error: isRateLimitError(err) ? 'Rate limited — retry' : (err.message || 'Failed'),
       };
     }
-    await upsertMetricRow({
-      product: prod,
-      expiryDate,
-      lookbackDays,
-      row,
-    });
-    rows.push(row);
-    updated += 1;
-    if (i < unique.length - 1) await sleep(SCAN_SYMBOL_DELAY_MS);
+  }
+
+  for (let i = 0; i < unique.length; i += SCAN_CONCURRENCY) {
+    const chunk = unique.slice(i, i + SCAN_CONCURRENCY);
+    const chunkRows = await Promise.all(chunk.map((symbol) => fetchOneSymbol(symbol)));
+    if (persist) {
+      const toSave = chunkRows.filter((row) => shouldPersistVolumeRow(row));
+      await Promise.all(toSave.map((row) => upsertMetricRow({
+        product: prod,
+        expiryDate,
+        lookbackDays,
+        sessionDate: sessionDateKey,
+        row,
+      })));
+      savedAboveAvg += toSave.length;
+    }
+    rows.push(...chunkRows);
+    scanned += chunkRows.length;
+    if (i + SCAN_CONCURRENCY < unique.length) await sleep(SCAN_SYMBOL_DELAY_MS);
   }
 
   return {
-    rows: sortRowsByPctVsAvg(rows),
+    rows: sortRowsByPctVsAvg(rows.filter((row) => shouldPersistVolumeRow(row))),
     lookback: preset,
-    todayDate: clock.dateKey,
+    todayDate: sessionDateKey,
+    sessionDate: sessionDateKey,
     product: prod,
     expiryDate: prod === 'future' ? expiryDate : null,
-    updated,
+    scanned,
+    savedAboveAvg,
+    skippedBelowAvg: scanned - savedAboveAvg,
+    updated: savedAboveAvg,
     total: unique.length,
   };
 }
@@ -543,7 +559,7 @@ function buildRowsFromMetrics(symbols, metricsMap) {
     return {
       ok: false,
       symbol,
-      error: 'Not in database yet — use Search or Refresh',
+      error: 'Not in database — click Search to fetch',
       updatedAt: null,
     };
   });
@@ -610,6 +626,7 @@ async function analyzeSymbolRow({
   expiryDate,
   tradingDays,
   clock,
+  sessionDate = null,
 }) {
   const entry = await getInstrumentEntry(symbol);
   const futureSupported = Boolean(entry?.future);
@@ -628,143 +645,167 @@ async function analyzeSymbolRow({
     lookbackDays: tradingDays,
     product,
     expiryDate,
+    sessionDate,
   });
   return buildBatchRow(result, clock, flags);
+}
+
+async function loadSavedVolumeRows({
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDateKey,
+} = {}) {
+  const metricsMap = await loadMetricsMap({
+    product,
+    expiryDate,
+    lookbackDays,
+    sessionDate: sessionDateKey,
+  });
+  return sortRowsByPctVsAvg([...metricsMap.values()].filter((row) => shouldPersistVolumeRow(row)));
+}
+
+async function ensureMetricsForSymbols({
+  symbols = [],
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDateKey,
+  fetchMissing = true,
+} = {}) {
+  let metricsMap = await loadMetricsMap({
+    product,
+    expiryDate,
+    lookbackDays,
+    sessionDate: sessionDateKey,
+  });
+
+  const missing = symbols.filter((sym) => !metricsMap.has(sym));
+  let scannedLive = 0;
+  let savedAboveAvg = 0;
+
+  if (fetchMissing && missing.length > 0) {
+    const refreshResult = await refreshSymbolsIntoStore({
+      symbols: missing,
+      product,
+      expiryDate,
+      lookbackDays,
+      sessionDate: sessionDateKey,
+      persist: true,
+    });
+    scannedLive = refreshResult.scanned;
+    savedAboveAvg = refreshResult.savedAboveAvg;
+    metricsMap = await loadMetricsMap({
+      product,
+      expiryDate,
+      lookbackDays,
+      sessionDate: sessionDateKey,
+    });
+  }
+
+  return {
+    metricsMap,
+    scannedLive,
+    savedAboveAvg,
+    cachedCount: metricsMap.size,
+    pendingScanCount: missing.length,
+  };
 }
 
 async function runVolumeAnalysisScan({
   product = 'future',
   lookbackDays = 10,
   expiryDate = null,
+  sessionDate = null,
   q = '',
-  page = 1,
-  pageSize = 25,
-  refresh = false,
-  live = false,
+  cacheOnly = false,
 } = {}) {
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[DEFAULT_LOOKBACK_DAYS];
   const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
   const query = String(q || '').trim();
-  const symbolFilter = parseSymbolFilter(query);
-  const wantsLive = Boolean(refresh || live);
+  const sessionDateKey = resolveSessionDateKey(sessionDate);
+  const dbOnly = Boolean(cacheOnly);
 
   if (prod === 'future' && !expiryDate) {
     throw new Error('Select a futures expiry');
   }
 
+  await ensureNseHolidaysLoaded();
+  if (!dbOnly && !isNseCashTradingDay(sessionDateKey)) {
+    throw new Error(`${sessionDateKey} is not an NSE trading session`);
+  }
+
   const listing = await listAllSymbolsByProduct({ product: prod, q: query });
   const symbols = listing.symbols;
 
-  let metricsMap = await loadMetricsMap({
+  const {
+    scannedLive,
+    savedAboveAvg,
+    cachedCount,
+  } = await ensureMetricsForSymbols({
+    symbols,
     product: prod,
     expiryDate,
     lookbackDays,
-    symbols,
+    sessionDateKey,
+    fetchMissing: !dbOnly,
   });
 
-  let liveRefreshed = false;
-  let backgroundQueued = false;
-
-  if (wantsLive && symbolFilter.mode !== 'all' && symbols.length > 0) {
-    const liveSymbols = symbols.slice(0, MAX_LIVE_SYMBOLS);
-    await refreshSymbolsIntoStore({
-      symbols: liveSymbols,
-      product: prod,
-      expiryDate,
-      lookbackDays,
-    });
-    metricsMap = await loadMetricsMap({
-      product: prod,
-      expiryDate,
-      lookbackDays,
-      symbols,
-    });
-    liveRefreshed = true;
-  } else if (wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
-    const withData = symbols.map((sym) => metricsMap.get(sym)).filter(Boolean);
-    const topSymbols = pickTopScannerRows(withData).map((row) => row.symbol);
-    if (topSymbols.length > 0) {
-      await refreshSymbolsIntoStore({
-        symbols: topSymbols,
-        product: prod,
-        expiryDate,
-        lookbackDays,
-      });
-      metricsMap = await loadMetricsMap({
-        product: prod,
-        expiryDate,
-        lookbackDays,
-        symbols,
-      });
-      liveRefreshed = true;
-    } else {
-      const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
-      backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
-        symbols,
-        product: prod,
-        expiryDate,
-        lookbackDays,
-      }));
-    }
-  } else if (!wantsLive && prod === 'future' && symbolFilter.mode === 'all') {
-    const withData = symbols.map((sym) => metricsMap.get(sym)).filter(Boolean);
-    const topRows = pickTopScannerRows(withData);
-    const staleTop = topRows
-      .filter((row) => isMetricsStale(row.updatedAt))
-      .map((row) => row.symbol);
-    if (staleTop.length > 0) {
-      const key = scanCacheKey({ product: prod, lookbackDays, expiryDate, q: '' });
-      backgroundQueued = scheduleBackgroundRefresh(key, () => refreshSymbolsIntoStore({
-        symbols: staleTop,
-        product: prod,
-        expiryDate,
-        lookbackDays,
-      }));
-    }
-  }
-
-  let displayRows;
-  if (symbolFilter.mode === 'all' && !liveRefreshed) {
-    const withData = symbols
-      .map((sym) => metricsMap.get(sym))
-      .filter(Boolean);
-    displayRows = pickTopScannerRows(withData);
-  } else {
-    displayRows = pickTopScannerRows(buildRowsFromMetrics(symbols, metricsMap));
-  }
-  const total = displayRows.length;
+  const allRows = await loadSavedVolumeRows({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    sessionDateKey,
+  });
+  const total = allRows.length;
 
   const latestUpdatedAt = await getLatestBatchUpdatedAt({
     product: prod,
     expiryDate,
     lookbackDays,
+    sessionDate: sessionDateKey,
   });
-  const dbCount = await countMetrics({ product: prod, expiryDate, lookbackDays });
-  const clock = getIstClock(new Date());
+  const dbCount = await countMetrics({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    sessionDate: sessionDateKey,
+  });
 
   let hint = null;
-  if (symbolFilter.mode !== 'all' && symbols.length > MAX_LIVE_SYMBOLS) {
-    hint = `Filter matched ${symbols.length} symbols — live refresh capped at ${MAX_LIVE_SYMBOLS}. Narrow your search.`;
+  if (dbOnly && cachedCount === 0) {
+    hint = 'No volume-above-average stocks saved for this session yet. Click Fetch live to scan from Dhan.';
+  } else if (dbOnly && cachedCount > 0) {
+    hint = `${cachedCount} stocks with volume above average (saved in database). Click Fetch live to scan for more.`;
+  } else if (scannedLive > 0) {
+    hint = `Scanned ${scannedLive} symbols from Dhan — saved ${savedAboveAvg} with volume above average (${scannedLive - savedAboveAvg} below avg not stored).`;
+  } else if (cachedCount > 0) {
+    hint = `${cachedCount} stocks with volume above average from database.`;
   }
 
   return {
-    rows: displayRows,
+    rows: allRows,
     lookback: preset,
-    todayDate: clock.dateKey,
+    todayDate: sessionDateKey,
+    sessionDate: sessionDateKey,
     product: prod,
     expiryDate: prod === 'future' ? expiryDate : null,
     sortedBy: 'pctVsAvg',
-    topN: TOP_SCAN_ROWS,
+    showAll: true,
     aboveAverageOnly: true,
-    priceAbovePrevCloseOnly: true,
-    source: 'mongodb',
-    liveRefreshed,
-    backgroundQueued,
+    cacheOnly: dbOnly,
+    source: dbOnly ? 'mongodb' : (scannedLive > 0 ? 'mongodb+live' : 'mongodb'),
+    fromCache: scannedLive === 0,
+    scannedLive,
+    savedAboveAvg,
+    fetchedLive: savedAboveAvg,
+    cachedCount,
+    pendingScanCount,
     hint,
     dbCount,
     universeTotal: listing.total,
     total,
-    query: query,
+    query,
     fetchedAt: latestUpdatedAt ? latestUpdatedAt.toISOString() : null,
   };
 }
@@ -774,8 +815,10 @@ async function runVolumeAnalysisBatch({
   lookbackDays = 10,
   product = 'cash',
   expiryDate = null,
+  sessionDate = null,
 }) {
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[10];
+  const sessionDateKey = resolveSessionDateKey(sessionDate);
   const unique = [...new Set(
     (Array.isArray(symbols) ? symbols : [symbols])
       .map((s) => String(s || '').trim().toUpperCase())
@@ -798,6 +841,7 @@ async function runVolumeAnalysisBatch({
         expiryDate,
         tradingDays: preset.tradingDays,
         clock,
+        sessionDate: sessionDateKey,
       }));
     } catch (err) {
       const entry = await getInstrumentEntry(symbol);
@@ -815,7 +859,8 @@ async function runVolumeAnalysisBatch({
   return {
     rows,
     lookback: preset,
-    todayDate: clock.dateKey,
+    todayDate: sessionDateKey,
+    sessionDate: sessionDateKey,
     product,
     fetchedAt: new Date().toISOString(),
   };
@@ -825,41 +870,64 @@ async function runVolumeAnalysisExport({
   product = 'future',
   lookbackDays = 10,
   expiryDate = null,
+  sessionDate = null,
 } = {}) {
   const preset = LOOKBACK_PRESETS[lookbackDays] || LOOKBACK_PRESETS[DEFAULT_LOOKBACK_DAYS];
   const prod = String(product || 'future').toLowerCase() === 'future' ? 'future' : 'cash';
+  const sessionDateKey = resolveSessionDateKey(sessionDate);
 
   if (prod === 'future' && !expiryDate) {
     throw new Error('Select a futures expiry');
   }
 
+  await ensureNseHolidaysLoaded();
+  if (!isNseCashTradingDay(sessionDateKey)) {
+    throw new Error(`${sessionDateKey} is not an NSE trading session`);
+  }
+
   const listing = await listAllSymbolsByProduct({ product: prod, q: '' });
   const symbols = listing.symbols;
-  const metricsMap = await loadMetricsMap({
+
+  await ensureMetricsForSymbols({
+    symbols,
     product: prod,
     expiryDate,
     lookbackDays,
-    symbols,
+    sessionDateKey,
+    fetchMissing: true,
   });
 
-  const rows = sortRowsByPctVsAvg(buildRowsFromMetrics(symbols, metricsMap));
+  const rows = await loadSavedVolumeRows({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    sessionDateKey,
+  });
   const latestUpdatedAt = await getLatestBatchUpdatedAt({
     product: prod,
     expiryDate,
     lookbackDays,
+    sessionDate: sessionDateKey,
   });
-  const clock = getIstClock(new Date());
+  const dbCount = await countMetrics({
+    product: prod,
+    expiryDate,
+    lookbackDays,
+    sessionDate: sessionDateKey,
+  });
 
   return {
     rows,
     lookback: preset,
-    todayDate: clock.dateKey,
+    todayDate: sessionDateKey,
+    sessionDate: sessionDateKey,
     product: prod,
     expiryDate: prod === 'future' ? expiryDate : null,
     sortedBy: 'pctVsAvg',
     exportAll: true,
+    aboveAverageOnly: true,
     source: 'mongodb',
-    dbCount: await countMetrics({ product: prod, expiryDate, lookbackDays }),
+    dbCount,
     universeTotal: listing.total,
     total: rows.length,
     fetchedAt: latestUpdatedAt ? latestUpdatedAt.toISOString() : null,
@@ -877,7 +945,7 @@ async function getVolumeAnalysisMeta() {
       { id: 'future', label: 'Futures', hint: 'NSE futures volume by expiry' },
     ],
     module: 'volume-analysis',
-    description: 'Search any NSE symbol from Dhan. Volume and expiries are live.',
+    description: 'Search futures volume by session date. Results are cached in the database per session.',
   };
 }
 
@@ -887,11 +955,16 @@ module.exports = {
   TOP_SCAN_ROWS,
   pickTopScannerRows,
   matchesScannerCriteria,
+  resolveSessionDateKey,
+  getActualTodayKey,
+  isHistoricalSession,
   runVolumeAnalysis,
   runVolumeAnalysisBatch,
   runVolumeAnalysisScan,
   runVolumeAnalysisExport,
   refreshSymbolsIntoStore,
+  ensureMetricsForSymbols,
+  syncVolumeMetricsIndexes,
   listSymbolsByProduct,
   getVolumeAnalysisMeta,
   getFutureExpiriesForSymbol,

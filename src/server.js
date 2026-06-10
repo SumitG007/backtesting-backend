@@ -46,10 +46,10 @@ async function bootBackgroundServices() {
   scheduleNseHolidayRefresh();
 
   try {
-    const { scheduleVolumeScanRefresh } = require('./services/volumeScanScheduler');
-    scheduleVolumeScanRefresh();
+    const { syncVolumeMetricsIndexes } = require('./services/volumeMetricsStore');
+    await syncVolumeMetricsIndexes();
   } catch (err) {
-    console.warn('Volume scan scheduler:', err.message);
+    console.warn('Volume metrics indexes:', err.message);
   }
 
   try {

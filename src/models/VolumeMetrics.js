@@ -14,6 +14,7 @@ const volumeMetricsSchema = new mongoose.Schema(
     symbol: { type: String, required: true, uppercase: true, trim: true },
     product: { type: String, required: true, enum: ['cash', 'future'] },
     expiryDate: { type: String, default: '' },
+    sessionDate: { type: String, default: '' },
     lookbackDays: { type: Number, required: true },
     ok: { type: Boolean, default: false },
     cashSupported: { type: Boolean, default: false },
@@ -37,11 +38,11 @@ const volumeMetricsSchema = new mongoose.Schema(
 );
 
 volumeMetricsSchema.index(
-  { symbol: 1, product: 1, expiryDate: 1, lookbackDays: 1 },
+  { symbol: 1, product: 1, expiryDate: 1, lookbackDays: 1, sessionDate: 1 },
   { unique: true },
 );
-volumeMetricsSchema.index({ product: 1, expiryDate: 1, lookbackDays: 1, pctVsAvg: -1 });
-volumeMetricsSchema.index({ product: 1, expiryDate: 1, lookbackDays: 1, updatedAt: -1 });
+volumeMetricsSchema.index({ product: 1, expiryDate: 1, lookbackDays: 1, sessionDate: 1, pctVsAvg: -1 });
+volumeMetricsSchema.index({ product: 1, expiryDate: 1, lookbackDays: 1, sessionDate: 1, updatedAt: -1 });
 
 module.exports = mongoose.models.VolumeMetrics
   || mongoose.model('VolumeMetrics', volumeMetricsSchema);

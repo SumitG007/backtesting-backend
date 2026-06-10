@@ -4,6 +4,10 @@ function normalizeExpiry(expiryDate) {
   return expiryDate ? String(expiryDate).slice(0, 10) : '';
 }
 
+function normalizeSessionDate(sessionDate) {
+  return sessionDate ? String(sessionDate).slice(0, 10) : '';
+}
+
 function docToRow(doc) {
   if (!doc) return null;
   return {
@@ -19,7 +23,8 @@ function docToRow(doc) {
     pctVsAvg: doc.pctVsAvg ?? null,
     signal: doc.signal || 'UNAVAILABLE',
     sampleDays: doc.sampleDays ?? 0,
-    todayDate: doc.todayDate || '',
+    todayDate: doc.todayDate || doc.sessionDate || '',
+    sessionDate: doc.sessionDate || doc.todayDate || '',
     partialToday: Boolean(doc.partialToday),
     priorDays: Array.isArray(doc.priorDays) ? doc.priorDays : [],
     prevDayClose: doc.prevDayClose ?? null,
@@ -31,17 +36,39 @@ function docToRow(doc) {
   };
 }
 
-async function loadMetricsMap({ product, expiryDate, lookbackDays, symbols = [] } = {}) {
-  const expiry = normalizeExpiry(expiryDate);
-  const lookback = Number(lookbackDays) || 10;
+function buildMetricsFilter({
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDate,
+  symbols = [],
+} = {}) {
   const filter = {
     product,
-    expiryDate: expiry,
-    lookbackDays: lookback,
+    expiryDate: normalizeExpiry(expiryDate),
+    lookbackDays: Number(lookbackDays) || 10,
+    sessionDate: normalizeSessionDate(sessionDate),
   };
   if (symbols.length) {
     filter.symbol = { $in: symbols.map((s) => String(s).toUpperCase()) };
   }
+  return filter;
+}
+
+async function loadMetricsMap({
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDate,
+  symbols = [],
+} = {}) {
+  const filter = buildMetricsFilter({
+    product,
+    expiryDate,
+    lookbackDays,
+    sessionDate,
+    symbols,
+  });
 
   const docs = await VolumeMetrics.find(filter).lean();
   const map = new Map();
@@ -55,9 +82,11 @@ async function upsertMetricRow({
   product,
   expiryDate,
   lookbackDays,
+  sessionDate,
   row,
 }) {
   const expiry = normalizeExpiry(expiryDate);
+  const session = normalizeSessionDate(sessionDate || row.todayDate || row.sessionDate);
   const lookback = Number(lookbackDays) || 10;
   const symbol = String(row.symbol || '').toUpperCase();
   if (!symbol) return null;
@@ -66,6 +95,7 @@ async function upsertMetricRow({
     symbol,
     product,
     expiryDate: expiry,
+    sessionDate: session,
     lookbackDays: lookback,
     ok: Boolean(row.ok),
     cashSupported: Boolean(row.cashSupported),
@@ -76,7 +106,7 @@ async function upsertMetricRow({
     pctVsAvg: row.pctVsAvg ?? null,
     signal: row.signal || 'UNAVAILABLE',
     sampleDays: row.sampleDays ?? 0,
-    todayDate: row.todayDate || '',
+    todayDate: row.todayDate || session,
     partialToday: Boolean(row.partialToday),
     priorDays: Array.isArray(row.priorDays) ? row.priorDays : [],
     prevDayClose: row.prevDayClose ?? null,
@@ -87,9 +117,9 @@ async function upsertMetricRow({
   };
 
   const doc = await VolumeMetrics.findOneAndUpdate(
-    { symbol, product, expiryDate: expiry, lookbackDays: lookback },
+    { symbol, product, expiryDate: expiry, lookbackDays: lookback, sessionDate: session },
     { $set: payload },
-    { upsert: true, new: true, setDefaultsOnInsert: true },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true },
   ).lean();
 
   return docToRow(doc);
@@ -99,37 +129,48 @@ async function upsertMetricRows({
   product,
   expiryDate,
   lookbackDays,
+  sessionDate,
   rows = [],
 }) {
   const results = [];
   for (const row of rows) {
-    results.push(await upsertMetricRow({ product, expiryDate, lookbackDays, row }));
+    results.push(await upsertMetricRow({
+      product,
+      expiryDate,
+      lookbackDays,
+      sessionDate,
+      row,
+    }));
   }
   return results;
 }
 
-async function getLatestBatchUpdatedAt({ product, expiryDate, lookbackDays } = {}) {
-  const expiry = normalizeExpiry(expiryDate);
-  const lookback = Number(lookbackDays) || 10;
-  const doc = await VolumeMetrics.findOne({
-    product,
-    expiryDate: expiry,
-    lookbackDays: lookback,
-  })
+async function getLatestBatchUpdatedAt({
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDate,
+} = {}) {
+  const filter = buildMetricsFilter({ product, expiryDate, lookbackDays, sessionDate });
+  const doc = await VolumeMetrics.findOne(filter)
     .sort({ updatedAt: -1 })
     .select('updatedAt')
     .lean();
   return doc?.updatedAt ? new Date(doc.updatedAt) : null;
 }
 
-async function countMetrics({ product, expiryDate, lookbackDays } = {}) {
-  const expiry = normalizeExpiry(expiryDate);
-  const lookback = Number(lookbackDays) || 10;
-  return VolumeMetrics.countDocuments({
-    product,
-    expiryDate: expiry,
-    lookbackDays: lookback,
-  });
+async function countMetrics({
+  product,
+  expiryDate,
+  lookbackDays,
+  sessionDate,
+} = {}) {
+  const filter = buildMetricsFilter({ product, expiryDate, lookbackDays, sessionDate });
+  return VolumeMetrics.countDocuments(filter);
+}
+
+async function syncVolumeMetricsIndexes() {
+  await VolumeMetrics.syncIndexes();
 }
 
 module.exports = {
@@ -138,5 +179,6 @@ module.exports = {
   upsertMetricRows,
   getLatestBatchUpdatedAt,
   countMetrics,
+  syncVolumeMetricsIndexes,
   docToRow,
 };

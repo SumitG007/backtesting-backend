@@ -21,14 +21,21 @@ function parseProduct(raw) {
   return p === 'future' ? 'future' : 'cash';
 }
 
+function parseSessionDate(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+
 async function runMarketAnalysis(req, res) {
   try {
     const symbol = String(req.body?.symbol || req.query?.symbol || 'HDFCBANK').toUpperCase();
     const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays);
     const product = parseProduct(req.body?.product ?? req.query?.product);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+    const sessionDate = parseSessionDate(req.body?.sessionDate ?? req.query?.sessionDate);
 
-    const result = await runVolumeAnalysis({ symbol, lookbackDays, product, expiryDate });
+    const result = await runVolumeAnalysis({ symbol, lookbackDays, product, expiryDate, sessionDate });
     return res.json({ ok: true, ...result });
   } catch (error) {
     const httpErr = error?.cause || error;
@@ -64,12 +71,6 @@ function parsePageSize(raw, fallback = 25) {
   return Math.max(1, Math.min(50, Math.floor(n)));
 }
 
-function parseRefreshIntervalMin(raw) {
-  const { setRefreshIntervalMinutes, getRefreshIntervalMinutes } = require('../services/volumeScanScheduler');
-  if (raw == null || raw === '') return getRefreshIntervalMinutes();
-  return setRefreshIntervalMinutes(Number(raw));
-}
-
 async function listMarketAnalysisSymbols(req, res) {
   try {
     const product = parseProduct(req.query?.product ?? 'future');
@@ -88,22 +89,21 @@ async function scanMarketAnalysis(req, res) {
     const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
     const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 30);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+    const sessionDate = parseSessionDate(req.body?.sessionDate ?? req.query?.sessionDate);
     const q = String(req.body?.q ?? req.query?.q ?? '').trim();
-    const page = parsePage(req.body?.page ?? req.query?.page, 1);
-    const pageSize = parsePageSize(req.body?.pageSize ?? req.query?.pageSize, 25);
-    const refreshIntervalMin = parseRefreshIntervalMin(
-      req.body?.refreshIntervalMin ?? req.query?.refreshIntervalMin,
-    );
+    const cacheOnly = req.body?.cacheOnly === true
+      || req.body?.cacheOnly === 'true'
+      || req.query?.cacheOnly === 'true';
 
     const result = await runVolumeAnalysisScan({
       product,
       lookbackDays,
       expiryDate,
+      sessionDate,
       q,
-      page,
-      pageSize,
+      cacheOnly,
     });
-    return res.json({ ok: true, refreshIntervalMin, ...result });
+    return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -114,11 +114,13 @@ async function exportMarketAnalysis(req, res) {
     const product = parseProduct(req.body?.product ?? req.query?.product ?? 'future');
     const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 30);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+    const sessionDate = parseSessionDate(req.body?.sessionDate ?? req.query?.sessionDate);
 
     const result = await runVolumeAnalysisExport({
       product,
       lookbackDays,
       expiryDate,
+      sessionDate,
     });
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -132,8 +134,9 @@ async function runMarketAnalysisBatch(req, res) {
     const lookbackDays = parseLookbackDays(req.body?.lookbackDays ?? req.query?.lookbackDays ?? 10);
     const product = parseProduct(req.body?.product ?? req.query?.product);
     const expiryDate = req.body?.expiryDate ?? req.query?.expiryDate ?? null;
+    const sessionDate = parseSessionDate(req.body?.sessionDate ?? req.query?.sessionDate);
 
-    const result = await runVolumeAnalysisBatch({ symbols, lookbackDays, product, expiryDate });
+    const result = await runVolumeAnalysisBatch({ symbols, lookbackDays, product, expiryDate, sessionDate });
     return res.json({ ok: true, ...result });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
