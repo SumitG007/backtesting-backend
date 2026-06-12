@@ -30,7 +30,7 @@ const OPTION_TYPE = 'PE';
 function runSimple920Backtest({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
-  const lotCount = Math.max(1, Number(settings.lotCount) || 1);
+  const lotCount = Math.max(1, Number(settings.lotCount) || 10);
   const basePremiumPct = Math.max(0.05, Number(settings.basePremiumPct) || 0.5);
   const premiumLeverage = Math.max(1, Number(settings.premiumLeverage) || 8);
   const strikeStep = Math.max(1, Number(settings.strikeStep) || getStrikeStep(symbol));

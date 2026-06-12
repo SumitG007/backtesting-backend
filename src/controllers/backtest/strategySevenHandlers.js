@@ -34,7 +34,7 @@ function buildSettings(req) {
       targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      lotCount: parseNumberInput(req.body?.lotCount, 1),
+      lotCount: parseNumberInput(req.body?.lotCount, 10),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),

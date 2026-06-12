@@ -4,17 +4,20 @@ const LivePaperTrade = require('../models/livePaperTrade');
 const strategyFourEngine = require('../services/liveShortStraddleEngine');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
+const strategySevenEngine = require('../services/livePutBuyEngine');
 const {
   STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -196,10 +199,31 @@ function isStraddleLiveStrategyId(strategyId) {
   return strategyId === 'strategy-2' || strategyId === 'strategy-4' || strategyId === 'strategy-6';
 }
 
+function isPutBuyLiveStrategyId(strategyId) {
+  return strategyId === 'strategy-3';
+}
+
+function putBuyPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategySevenEngine.STRATEGY_KEY,
+    startEngine: strategySevenEngine.startEngine,
+    stopEngine: strategySevenEngine.stopEngine,
+    updateEngineSettings: strategySevenEngine.updateEngineSettings,
+    getEngineSnapshot: strategySevenEngine.getEngineSnapshot,
+    ensureWallet: strategySevenEngine.ensureWallet,
+    recalcWallet: strategySevenEngine.recalcWalletFromTrades,
+    ensureRunning: strategySevenEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategySevenEngine.reconcileOpenTrades,
+    closeOpenPosition: strategySevenEngine.closeOpenPosition,
+    refreshOpenMark: strategySevenEngine.refreshOpenPositionMarkForStatus,
+  };
+}
+
 const LIVE_STRATEGIES = {
   'strategy-1': ivPaperLiveCtx('strategy-1'),
-  'strategy-3': ivPaperLiveCtx('strategy-3'),
   'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
+  'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
 };
@@ -282,9 +306,11 @@ async function getStatus(req, res) {
           ? 'Strategy B'
           : ctx.strategyId === 'strategy-2' || ctx.strategyId === 'strategy-4'
             ? 'Strategy A'
-            : ctx.strategyId === 'strategy-1' || ctx.strategyId === 'strategy-3'
+            : ctx.strategyId === 'strategy-1'
               ? 'Strategy 1'
-              : 'Paper-live',
+              : ctx.strategyId === 'strategy-3'
+                ? 'Strategy 3'
+                : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -352,6 +378,11 @@ function coerceLiveEngineSetting(key, value) {
   }
   if (key === 'skipExpiryDay') {
     return value !== false && value !== 'false' && value !== 0 && value !== '0';
+  }
+  if (key === 'targetProfitPoints') {
+    if (value === '' || value === null || value === undefined) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
   }
   if (key === 'symbol') {
     return String(value || 'NIFTY').trim().toUpperCase();
@@ -548,6 +579,9 @@ async function getLiveMeta(req, res) {
     let expiry = null;
     if (isStraddleLiveStrategyId(ctx?.strategyId)) {
       expiry = await getNextWeeklyExpiry(symbol, clock.dateKey);
+      if (snapshot?.expiry) expiry = snapshot.expiry;
+    } else if (isPutBuyLiveStrategyId(ctx?.strategyId)) {
+      expiry = await getNearestWeeklyExpiry(symbol);
       if (snapshot?.expiry) expiry = snapshot.expiry;
     } else {
       expiry = await getNearestWeeklyExpiry(symbol);
