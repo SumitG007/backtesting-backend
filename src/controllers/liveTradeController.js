@@ -79,7 +79,7 @@ async function closeLegacyOrphanStraddles(clock) {
 const {
   getCurrentLotSize,
   getNearestWeeklyExpiry,
-  getTradableWeeklyExpiry,
+  getNextWeeklyExpiry,
   getAtmPremiums,
 } = require('../services/dhanLiveService');
 const { getIstClock } = require('../utils/dateTime');
@@ -543,14 +543,11 @@ async function getLiveMeta(req, res) {
     const symbol = String(
       req.query.symbol || snapshot?.settings?.symbol || snapshot?.symbol || 'NIFTY',
     ).toUpperCase();
-    const skipExpiryDay = req.query.skipExpiryDay !== 'false' && req.query.skipExpiryDay !== '0';
     const clock = getIstClock(new Date());
     const lotSize = await getCurrentLotSize(symbol);
     let expiry = null;
     if (isStraddleLiveStrategyId(ctx?.strategyId)) {
-      expiry = skipExpiryDay
-        ? await getTradableWeeklyExpiry(symbol, clock.dateKey, 2)
-        : await getNearestWeeklyExpiry(symbol);
+      expiry = await getNextWeeklyExpiry(symbol, clock.dateKey);
       if (snapshot?.expiry) expiry = snapshot.expiry;
     } else {
       expiry = await getNearestWeeklyExpiry(symbol);

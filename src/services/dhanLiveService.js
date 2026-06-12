@@ -240,6 +240,21 @@ async function getNearestWeeklyExpiry(symbol) {
   return sorted[sorted.length - 1];
 }
 
+/** Next weekly expiry after the nearest — skip the current expiry for new short-straddle entries. */
+async function getNextWeeklyExpiry(symbol, dateKey) {
+  const list = await fetchExpiryList(symbol);
+  if (list.length === 0) return null;
+  const today = String(dateKey || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  const future = [...list]
+    .map((expiry) => String(expiry).slice(0, 10))
+    .sort()
+    .filter((expiry) => expiry >= today);
+  if (future.length >= 2) return future[1];
+  if (future.length === 1) return future[0];
+  const sorted = [...list].sort();
+  return String(sorted[sorted.length - 1]).slice(0, 10);
+}
+
 /**
  * Last expiry date (YYYY-MM-DD) still blocked for new entries on `dateKey`.
  *
@@ -852,6 +867,7 @@ module.exports = {
   fetchExpiryList,
   fetchOptionChain,
   getNearestWeeklyExpiry,
+  getNextWeeklyExpiry,
   getTradableWeeklyExpiry,
   getNearExpiryCutoffDateKey,
   isExpiryTooSoonForNewEntry,

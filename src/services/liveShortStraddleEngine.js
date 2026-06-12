@@ -12,9 +12,7 @@ const { shortStraddleMarginBlocked } = require('../strategies/shared/shortStradd
 const {
   getAtmPremiums,
   getCurrentLotSize,
-  getNearestWeeklyExpiry,
-  getTradableWeeklyExpiry,
-  isExpiryTooSoonForNewEntry,
+  getNextWeeklyExpiry,
   resolveOptionInstrument,
   estimateShortStraddleMargin,
   subscribeLiveInstrument,
@@ -53,6 +51,7 @@ const engineState = {
   },
   lotSize: 65,
   expiry: null,
+  expiryDateKey: null,
   lastSpot: null,
   lastOptionTicks: { CE: null, PE: null },
   tradeDateKey: null,
@@ -440,14 +439,12 @@ async function subscribeOpenStraddle(trade) {
 
 async function getCurrentExpiry(symbol, dateKey) {
   const cachedExpiry = String(engineState.expiry || '').slice(0, 10);
-  const shouldAvoidNearExpiry = engineState.settings.skipExpiryDay;
   const isStale = !cachedExpiry
     || cachedExpiry < dateKey
-    || (shouldAvoidNearExpiry && isExpiryTooSoonForNewEntry(cachedExpiry, dateKey, 2));
+    || engineState.expiryDateKey !== dateKey;
   if (isStale) {
-    engineState.expiry = shouldAvoidNearExpiry
-      ? await getTradableWeeklyExpiry(symbol, dateKey, 2)
-      : await getNearestWeeklyExpiry(symbol);
+    engineState.expiry = await getNextWeeklyExpiry(symbol, dateKey);
+    engineState.expiryDateKey = dateKey;
   }
   return engineState.expiry;
 }
@@ -939,9 +936,8 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
     const clock = getIstClock(new Date());
     await dedupeOpenTradesInDb(clock);
-    engineState.expiry = engineState.settings.skipExpiryDay
-      ? await getTradableWeeklyExpiry(getEngineSymbol(), clock.dateKey, 2)
-      : await getNearestWeeklyExpiry(getEngineSymbol());
+    engineState.expiry = await getNextWeeklyExpiry(getEngineSymbol(), clock.dateKey);
+    engineState.expiryDateKey = clock.dateKey;
   } catch (err) {
     engineState.lastError = `Strategy 2 setup: ${err.message}`;
   }
@@ -989,6 +985,7 @@ async function updateEngineSettings(partial = {}) {
     try {
       engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
       engineState.expiry = null;
+      engineState.expiryDateKey = null;
     } catch (err) {
       engineState.lastError = `Strategy 2 symbol change: ${err.message}`;
     }
