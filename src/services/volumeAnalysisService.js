@@ -742,6 +742,7 @@ async function runVolumeAnalysisScan({
     scannedLive,
     savedAboveAvg,
     cachedCount,
+    pendingScanCount,
   } = await ensureMetricsForSymbols({
     symbols,
     product: prod,
