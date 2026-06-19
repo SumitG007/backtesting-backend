@@ -19,11 +19,6 @@ const TIER = {
   defaultInterval: '15',
 };
 
-function parseResetPerDay(value) {
-  if (value === false || value === 'false' || value === 0 || value === '0') return false;
-  return true;
-}
-
 function buildSettings(req) {
   const { symbol = 'NIFTY', year = 2026 } = req.body || {};
   const rawIv = String(parseStringInput(req.body?.interval, TIER.defaultInterval));
@@ -33,19 +28,18 @@ function buildSettings(req) {
     settings: {
       symbol: String(symbol).toUpperCase(),
       interval,
-      resetPerDay: parseResetPerDay(req.body?.resetPerDay),
-      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 2),
-      entryFromTime: parseStringInput(req.body?.entryFromTime, '10:00'),
+      maxTradesPerDay: parseNumberInput(req.body?.maxTradesPerDay, 5),
+      entryFromTime: parseStringInput(req.body?.entryFromTime, '09:30'),
       entryToTime: parseStringInput(req.body?.entryToTime, '13:00'),
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-      stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 0),
       targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      lotCount: parseNumberInput(req.body?.lotCount, 10),
+      lotCount: parseNumberInput(req.body?.lotCount, 1),
       lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
+      trailSlGapPoints: parseNumberInput(req.body?.trailSlGapPoints, 10),
       usePatternExits: true,
     },
     yearNum: parseNumberInput(year, 2026),

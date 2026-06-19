@@ -42,6 +42,15 @@ const strategyTradeSchema = new mongoose.Schema(
     reason: String,
     signal: String,
     patternStopIndex: Number,
+    patternSlPremium: Number,
+    patternSlPremiumRisk: Number,
+    triggerLevel: Number,
+    patternBarTime: Date,
+    prevBarTime: Date,
+    breakoutBarTime: Date,
+    signalHaColor: String,
+    prevHaColor: String,
+    entryHaColor: String,
   },
   { timestamps: true }
 );

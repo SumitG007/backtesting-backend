@@ -69,9 +69,20 @@ function simulateLongOptionExit({
   useIndexExits,
   stopIndex,
   targetIndex,
+  trailSlGapPoints = null,
+  trailSlActivationPoints = null,
   eodExitMinutes = 930,
 }) {
   const premiumSide = premiumSideForLongOption(optionType);
+  const useTrail = Number.isFinite(trailSlGapPoints) && trailSlGapPoints > 0;
+  const trailGap = useTrail ? Math.min(5000, Math.max(0.01, trailSlGapPoints)) : 0;
+  const trailActivation =
+    useTrail && Number.isFinite(trailSlActivationPoints) && trailSlActivationPoints > 0
+      ? Math.min(5000, trailSlActivationPoints)
+      : useTrail
+        ? trailGap * 2
+        : 0;
+
   let exitIdx = dayBars.length - 1;
   let exitSpot = Number(dayBars[exitIdx][4]);
   let exitPremium = getOptionPremiumFromSpotMove({
@@ -84,6 +95,9 @@ function simulateLongOptionExit({
     strikeStep,
   });
   let reason = 'DAY_CLOSE';
+
+  let peakProfitPoints = 0;
+  let trailStopPremium = null;
 
   for (let k = entryIdx + 1; k < dayBars.length; k += 1) {
     const hi = Number(dayBars[k][2]);
@@ -107,6 +121,43 @@ function simulateLongOptionExit({
         });
         reason = 'PATTERN_SL';
         break;
+      }
+    }
+
+    if (useTrail) {
+      const favSpot = optionType === 'CE' ? hi : lo;
+      const favPrem = getOptionPremiumFromSpotMove({
+        side: premiumSide,
+        entrySpot,
+        currentSpot: favSpot,
+        entryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      const profitPts = favPrem - entryPremium;
+      if (profitPts > peakProfitPoints) peakProfitPoints = profitPts;
+      if (peakProfitPoints >= trailActivation) {
+        trailStopPremium = entryPremium + peakProfitPoints - trailGap;
+      }
+      if (trailStopPremium != null) {
+        const adverseSpot = optionType === 'CE' ? lo : hi;
+        const adversePrem = getOptionPremiumFromSpotMove({
+          side: premiumSide,
+          entrySpot,
+          currentSpot: adverseSpot,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (adversePrem <= trailStopPremium) {
+          exitIdx = k;
+          exitSpot = adverseSpot;
+          exitPremium = trailStopPremium;
+          reason = 'TRAIL_STOP';
+          break;
+        }
       }
     }
 
