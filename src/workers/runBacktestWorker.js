@@ -17,6 +17,10 @@ function run() {
     const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
     return runSimple920Backtest(payload);
   }
+  if (strategyKey === 'strategy8_heikin_ashi') {
+    const { runHeikinAshiBacktest } = require('../strategies/strategy8/heikinAshiBacktest');
+    return runHeikinAshiBacktest(payload);
+  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }

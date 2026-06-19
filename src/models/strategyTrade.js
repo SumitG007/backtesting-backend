@@ -40,6 +40,8 @@ const strategyTradeSchema = new mongoose.Schema(
     grossPnl: Number,
     charges: { type: Number, default: 0 },
     reason: String,
+    signal: String,
+    patternStopIndex: Number,
   },
   { timestamps: true }
 );
