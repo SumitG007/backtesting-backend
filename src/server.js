@@ -6,7 +6,6 @@ const { setPlatformReady } = require('./serverState');
 const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
 const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
-const strategyThreePaperEngine = require('./services/liveIvMeanReversionEngine');
 const strategyFourPaperEngine = require('./services/liveShortStraddleEngine');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
@@ -34,9 +33,7 @@ async function bootBackgroundServices() {
   try {
     const s4 = require('./services/liveShortStraddleEngine');
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
-    const s3 = require('./services/liveIvMeanReversionEngine');
     const s7 = require('./services/livePutBuyEngine');
-    await s3.reconcileOpenTrades();
     await s4.reconcileOpenTrades();
     await s6.reconcileOpenTrades();
     await s7.reconcileOpenTrades();
@@ -53,17 +50,6 @@ async function bootBackgroundServices() {
     await syncVolumeMetricsIndexes();
   } catch (err) {
     console.warn('Volume metrics indexes:', err.message);
-  }
-
-  try {
-    const boot = await strategyThreePaperEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('Strategy 1 paper-live engine started (always on)');
-    } else {
-      console.warn('Strategy 1 paper-live engine boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('Strategy 1 paper-live engine boot failed:', err.message);
   }
 
   try {
@@ -102,7 +88,7 @@ async function bootBackgroundServices() {
   try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
-    if (resume.strategy3?.resumed || resume.strategy4?.resumed || resume.strategy6?.resumed || resume.strategy7?.resumed) {
+    if (resume.strategy4?.resumed || resume.strategy6?.resumed || resume.strategy7?.resumed) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }
   } catch (err) {

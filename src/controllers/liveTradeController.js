@@ -3,10 +3,8 @@ const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategyFourEngine = require('../services/liveShortStraddleEngine');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
-const strategyThreeEngine = require('../services/liveIvMeanReversionEngine');
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const {
-  STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
@@ -14,7 +12,6 @@ const {
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
-  STRATEGY_THREE_IV_LIVE_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
@@ -122,9 +119,15 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
       entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
     };
   }
-  const w = wallet?.strategy3EngineSettings;
+  if (strategyId === 'strategy-3') {
+    const w = wallet?.strategy7EngineSettings;
+    return {
+      entryTime: String(w?.entryToTime || w?.entryTime || '09:20'),
+      entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
+    };
+  }
   return {
-    entryTime: String(w?.entryToTime || w?.entryTime || '09:20'),
+    entryTime: '09:20',
     entryWindowMinutes: 2,
   };
 }
@@ -173,22 +176,6 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   return `No paper-live trade recorded for today. Auto-entry runs only Mon–Fri ${entryWindowLabel} IST with backend + Dhan connected. Backtest entries are separate and do not appear here.`;
 }
 
-function ivPaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: STRATEGY_THREE_IV_LIVE_KEY,
-    startEngine: strategyThreeEngine.startEngine,
-    stopEngine: strategyThreeEngine.stopEngine,
-    updateEngineSettings: strategyThreeEngine.updateEngineSettings,
-    getEngineSnapshot: strategyThreeEngine.getEngineSnapshot,
-    ensureWallet: strategyThreeEngine.ensureWallet,
-    recalcWallet: strategyThreeEngine.recalcWalletFromTrades,
-    ensureRunning: strategyThreeEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyThreeEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyThreeEngine.closeOpenPosition,
-  };
-}
-
 function straddlePaperLiveCtx(strategyId, engine) {
   return {
     strategyId,
@@ -233,7 +220,6 @@ function putBuyPaperLiveCtx(strategyId) {
 }
 
 const LIVE_STRATEGIES = {
-  'strategy-1': ivPaperLiveCtx('strategy-1'),
   'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
@@ -318,11 +304,9 @@ async function getStatus(req, res) {
           ? 'Strategy B'
           : ctx.strategyId === 'strategy-2' || ctx.strategyId === 'strategy-4'
             ? 'Strategy A'
-            : ctx.strategyId === 'strategy-1'
-              ? 'Strategy 1'
-              : ctx.strategyId === 'strategy-3'
-                ? 'Put & Call buy'
-                : 'Paper-live',
+            : ctx.strategyId === 'strategy-3'
+              ? 'Put & Call buy'
+              : 'Paper-live',
     });
     return res.json({
       ok: true,

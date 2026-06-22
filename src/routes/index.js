@@ -7,10 +7,6 @@ const {
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
-  runStrategyFive,
-  getStrategyFiveRunTrades,
-  getStrategyFiveValidation,
-  postStrategyFiveValidation,
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
@@ -64,11 +60,6 @@ router.post('/market-analysis/run-batch', runMarketAnalysisBatch);
 router.get('/market-analysis/symbols', listMarketAnalysisSymbols);
 router.post('/market-analysis/scan', scanMarketAnalysis);
 router.post('/market-analysis/export', exportMarketAnalysis);
-// Strategy 1 — IV mean reversion
-router.post('/strategy1/run', runStrategyFive);
-router.post('/strategy1/validation', postStrategyFiveValidation);
-router.get('/strategy1/runs/:runId/trades', getStrategyFiveRunTrades);
-router.get('/strategy1/runs/:runId/validation', getStrategyFiveValidation);
 // Strategy 2 — short straddle (entry day + next day exit)
 router.post('/strategy2/run', runStrategyShortStraddleNextDay);
 router.post('/strategy2/validation', postStrategyShortStraddleValidation);

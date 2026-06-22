@@ -9,10 +9,6 @@ function run() {
   if (strategyKey === 'strategy6_short_straddle_next_day') {
     return runIntradayTierBacktest({ ...payload, variant: 'short_straddle_next_day' });
   }
-  if (strategyKey === 'strategy5_iv_mean_reversion') {
-    const { runIvMeanReversionBacktest } = require('../strategies/strategy5/ivMeanReversionBacktest');
-    return runIvMeanReversionBacktest(payload);
-  }
   if (strategyKey === 'strategy7_simple_920_market') {
     const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
     return runSimple920Backtest(payload);

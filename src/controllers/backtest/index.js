@@ -10,12 +10,6 @@ const {
   postStrategyShortStraddleValidation,
 } = require('./intradayTierHandlers');
 const {
-  runStrategyFive,
-  getStrategyFiveRunTrades,
-  getStrategyFiveValidation,
-  postStrategyFiveValidation,
-} = require('./strategyFiveHandlers');
-const {
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
@@ -36,10 +30,6 @@ module.exports = {
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
-  runStrategyFive,
-  getStrategyFiveRunTrades,
-  getStrategyFiveValidation,
-  postStrategyFiveValidation,
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
