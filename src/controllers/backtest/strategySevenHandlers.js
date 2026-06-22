@@ -8,7 +8,7 @@ const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
+const { parseNumberInput, parseStringInput, parsePremiumExitPoints, parseBooleanInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
 const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
@@ -41,6 +41,7 @@ function buildSettings(req) {
       entryTime,
       entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
       entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
+      filterPeConfirm: parseBooleanInput(req.body?.filterPeConfirm, true),
     },
     yearNum: parseNumberInput(year, 2026),
   };

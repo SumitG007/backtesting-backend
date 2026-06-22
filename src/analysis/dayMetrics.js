@@ -209,4 +209,5 @@ function buildAllDayMetrics(intraByDay, dailyMap) {
 module.exports = {
   buildAllDayMetrics,
   computeDayMetrics,
+  applyEarlyBreakFlags,
 };
