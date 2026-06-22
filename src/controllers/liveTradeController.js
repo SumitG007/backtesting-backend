@@ -156,6 +156,17 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   if (dbg?.line === 'ENTRY_SUCCESS') {
     return 'Engine logged an entry today but no open row was found — try refreshing or check MongoDB.';
   }
+  if (
+    engine?.skippedDateKey
+    || dbg?.reason === 'SKIPPED_TODAY'
+    || (dbg?.line === 'ENTRY_SKIP' && dbg?.reason && String(dbg.reason).includes('neutral'))
+  ) {
+    const evalInfo = engine?.lastDirectionEval;
+    const pe = evalInfo?.peScore ?? dbg?.peScore ?? '—';
+    const ce = evalInfo?.ceScore ?? dbg?.ceScore ?? '—';
+    const why = evalInfo?.skipReason || dbg?.reason || 'neutral_day';
+    return `No trade today — direction skipped (${why}). PE score ${pe}, CE score ${ce}. One evaluation per day in ${entryWindowLabel} IST.`;
+  }
   if (dbg?.reason === 'ALREADY_TRADED_TODAY' || dbg?.reason === 'ALREADY_TRADED_TODAY_IN_DB') {
     return 'Engine will not enter again today (one entry per day). No open row in DB — check Closed tab or wallet reset.';
   }
@@ -217,6 +228,7 @@ function putBuyPaperLiveCtx(strategyId) {
     reconcileOpenTrades: strategySevenEngine.reconcileOpenTrades,
     closeOpenPosition: strategySevenEngine.closeOpenPosition,
     refreshOpenMark: strategySevenEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategySevenEngine.clearDailySkipState,
   };
 }
 
@@ -309,7 +321,7 @@ async function getStatus(req, res) {
             : ctx.strategyId === 'strategy-1'
               ? 'Strategy 1'
               : ctx.strategyId === 'strategy-3'
-                ? 'Strategy 3'
+                ? 'Put & Call buy'
                 : 'Paper-live',
     });
     return res.json({
@@ -384,6 +396,11 @@ function coerceLiveEngineSetting(key, value) {
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
+  if (key === 'minDirectionScore') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 1) return 2;
+    return Math.min(6, Math.floor(n));
+  }
   if (key === 'symbol') {
     return String(value || 'NIFTY').trim().toUpperCase();
   }
@@ -420,6 +437,15 @@ async function resetWallet(req, res) {
       await wallet.save();
     }
     const wallet = await ctx.ensureWallet();
+    if (isPutBuyLiveStrategyId(ctx.strategyId)) {
+      if (typeof ctx.clearDailySkip === 'function') {
+        await ctx.clearDailySkip();
+      } else {
+        wallet.strategy7SkippedDateKey = null;
+        wallet.strategy7LastSkipReason = null;
+        await wallet.save();
+      }
+    }
     return res.json({ ok: true, wallet, message: `Cleared paper trades for ${ctx.strategyId}` });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
