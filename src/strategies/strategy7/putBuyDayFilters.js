@@ -1,5 +1,5 @@
 /**
- * Strategy 3 put-buy — optional PE confirm before entry.
+ * Strategy 3 — PE confirm routes bearish days to put (PE), other days to call (CE).
  */
 
 const { getIstClock } = require('../../utils/dateTime');
@@ -123,14 +123,20 @@ function findEntryBarIndex(dayBars, entryFromMin, entryToMin) {
 function resolvePutBuyEntry({ dayBars, filterPeConfirm, metrics, entryFromMin, entryToMin }) {
   const entryIdx = findEntryBarIndex(dayBars, entryFromMin, entryToMin);
   if (entryIdx == null || entryIdx >= dayBars.length - 1) {
-    return { skip: true, skipReason: 'no_entry_bar', entryIdx: null };
+    return { skip: true, skipReason: 'no_entry_bar', entryIdx: null, optionType: null };
   }
 
-  if (filterPeConfirm && (!metrics || !evaluatePeConfirm(metrics, dayBars, entryIdx))) {
-    return { skip: true, skipReason: 'pe_confirm_failed', entryIdx: null };
+  if (!filterPeConfirm) {
+    return { skip: false, skipReason: null, entryIdx, optionType: 'PE' };
   }
 
-  return { skip: false, skipReason: null, entryIdx };
+  const bearish = metrics && evaluatePeConfirm(metrics, dayBars, entryIdx);
+  return {
+    skip: false,
+    skipReason: null,
+    entryIdx,
+    optionType: bearish ? 'PE' : 'CE',
+  };
 }
 
 function parsePutBuyFilterSettings(settings = {}) {

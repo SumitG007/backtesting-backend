@@ -15,7 +15,7 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 
 const TIER = {
   key: STRATEGY_SEVEN_KEY,
-  runName: 'Strategy 3 - Put buy',
+  runName: 'Strategy 3 - Put & Call',
   defaultInterval: '5',
 };
 

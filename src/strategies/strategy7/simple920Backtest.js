@@ -1,7 +1,7 @@
 /**
- * Strategy 3 (UI) — timed put buy: long PE at entry time (default 09:20 IST).
+ * Strategy 3 (UI) — timed put/call buy at entry time (default 09:20 IST).
+ * PE confirm on: bearish → long PE; otherwise → long CE. Off: always long PE.
  * Optional premium SL / target (blank target = hold to 15:20).
- * Optional entry filters — see putBuyDayFilters.js.
  */
 
 const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
@@ -23,8 +23,6 @@ const {
 
 const M920 = 560;
 const EOD_EXIT = 920;
-
-const OPTION_TYPE = 'PE';
 
 function runSimple920Backtest({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
@@ -59,6 +57,8 @@ function runSimple920Backtest({ candles, settings }) {
   const filterCtx = filterPeConfirm ? buildPutBuyFilterContext(sortedKeys, intraByDay) : null;
   const trades = [];
   let skippedDays = 0;
+  let putTrades = 0;
+  let callTrades = 0;
 
   for (const dayKey of sortedKeys) {
     if (isWeekendDateKey(dayKey) || !isNseCashTradingDay(dayKey)) continue;
@@ -67,6 +67,7 @@ function runSimple920Backtest({ candles, settings }) {
     if (dayBars.length < 2) continue;
 
     let entryIdx;
+    let optionType = 'PE';
 
     if (filterPeConfirm) {
       const metrics = buildDayMetricsForKey(dayKey, dayBars, filterCtx);
@@ -86,6 +87,7 @@ function runSimple920Backtest({ candles, settings }) {
       }
 
       entryIdx = entryDecision.entryIdx;
+      optionType = entryDecision.optionType || 'PE';
     } else {
       for (let j = 0; j < dayBars.length; j += 1) {
         const m = getIstClock(dayBars[j][0]).minutes;
@@ -97,10 +99,13 @@ function runSimple920Backtest({ candles, settings }) {
       if (entryIdx == null || entryIdx >= dayBars.length - 1) continue;
     }
 
+    if (optionType === 'CE') callTrades += 1;
+    else putTrades += 1;
+
     const entrySpot = Number(dayBars[entryIdx][4]);
     if (!Number.isFinite(entrySpot) || entrySpot <= 0) continue;
 
-    const strike = pickStrike({ entrySpot, strikeStep, optionType: OPTION_TYPE, strikeMode });
+    const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
     const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
     const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
     const targetPremium = hasTarget ? entryPremium + targetPoints : null;
@@ -108,7 +113,7 @@ function runSimple920Backtest({ candles, settings }) {
     const { exitIdx, exitSpot, exitPremium, reason } = simulateLongOptionExit({
       dayBars,
       entryIdx,
-      optionType: OPTION_TYPE,
+      optionType,
       entrySpot,
       entryPremium,
       strike,
@@ -132,7 +137,7 @@ function runSimple920Backtest({ candles, settings }) {
         perTradeCost,
         dayBars,
         entryIdx,
-        optionType: OPTION_TYPE,
+        optionType,
         strike,
         entrySpot,
         entryPremium,
@@ -152,6 +157,8 @@ function runSimple920Backtest({ candles, settings }) {
   if (filterPeConfirm) {
     summary.skippedDays = skippedDays;
     summary.filterPeConfirm = true;
+    summary.putTrades = putTrades;
+    summary.callTrades = callTrades;
   }
 
   return { trades, summary };
