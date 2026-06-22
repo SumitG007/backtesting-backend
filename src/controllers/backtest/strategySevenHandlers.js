@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for Strategy 3 (UI) — timed put buy (long PE).
+ * HTTP handlers for Strategy 3 (UI) — timed put & call buy.
  */
 
 const StrategyRun = require('../../models/strategyRun');
@@ -8,7 +8,7 @@ const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
 const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { parseNumberInput, parseStringInput, parsePremiumExitPoints, parseBooleanInput } = require('./parsers');
+const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
 const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
@@ -41,7 +41,7 @@ function buildSettings(req) {
       entryTime,
       entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
       entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
-      filterPeConfirm: parseBooleanInput(req.body?.filterPeConfirm, true),
+      minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
     },
     yearNum: parseNumberInput(year, 2026),
   };

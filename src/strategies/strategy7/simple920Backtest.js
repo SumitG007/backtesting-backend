@@ -1,10 +1,9 @@
 /**
  * Strategy 3 (UI) — timed put/call buy at entry time (default 09:20 IST).
- * PE confirm on: bearish → long PE; otherwise → long CE. Off: always long PE.
- * Optional premium SL / target (blank target = hold to 15:20).
+ * Scores bearish vs bullish at entry → PE, CE, or skip. Optional premium SL / target.
  */
 
-const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
+const { parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
 const { isNseCashTradingDay } = require('../../services/nseHolidayService');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
@@ -18,7 +17,7 @@ const {
   buildPutBuyFilterContext,
   buildDayMetricsForKey,
   resolvePutBuyEntry,
-  parsePutBuyFilterSettings,
+  parseDirectionSettings,
 } = require('./putBuyDayFilters');
 
 const M920 = 560;
@@ -50,11 +49,11 @@ function runSimple920Backtest({ candles, settings }) {
   const normalizedFrom = Math.min(entryFromMin, entryToMin);
   const normalizedTo = Math.max(entryFromMin, entryToMin);
 
-  const { filterPeConfirm } = parsePutBuyFilterSettings(settings);
+  const { minDirectionScore } = parseDirectionSettings(settings);
 
   const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
   const sortedKeys = Array.from(intraByDay.keys()).sort();
-  const filterCtx = filterPeConfirm ? buildPutBuyFilterContext(sortedKeys, intraByDay) : null;
+  const filterCtx = buildPutBuyFilterContext(sortedKeys, intraByDay);
   const trades = [];
   let skippedDays = 0;
   let putTrades = 0;
@@ -66,38 +65,24 @@ function runSimple920Backtest({ candles, settings }) {
     const dayBars = intraByDay.get(dayKey) || [];
     if (dayBars.length < 2) continue;
 
-    let entryIdx;
-    let optionType = 'PE';
+    const metrics = buildDayMetricsForKey(dayKey, dayBars, filterCtx);
+    if (!metrics) continue;
 
-    if (filterPeConfirm) {
-      const metrics = buildDayMetricsForKey(dayKey, dayBars, filterCtx);
-      if (!metrics) continue;
+    const entryDecision = resolvePutBuyEntry({
+      dayBars,
+      metrics,
+      entryFromMin: normalizedFrom,
+      entryToMin: normalizedTo,
+      minDirectionScore,
+    });
 
-      const entryDecision = resolvePutBuyEntry({
-        dayBars,
-        filterPeConfirm,
-        metrics,
-        entryFromMin: normalizedFrom,
-        entryToMin: normalizedTo,
-      });
-
-      if (entryDecision.skip) {
-        skippedDays += 1;
-        continue;
-      }
-
-      entryIdx = entryDecision.entryIdx;
-      optionType = entryDecision.optionType || 'PE';
-    } else {
-      for (let j = 0; j < dayBars.length; j += 1) {
-        const m = getIstClock(dayBars[j][0]).minutes;
-        if (m >= normalizedFrom && m <= normalizedTo) {
-          entryIdx = j;
-          break;
-        }
-      }
-      if (entryIdx == null || entryIdx >= dayBars.length - 1) continue;
+    if (entryDecision.skip) {
+      skippedDays += 1;
+      continue;
     }
+
+    const entryIdx = entryDecision.entryIdx;
+    const optionType = entryDecision.optionType || 'PE';
 
     if (optionType === 'CE') callTrades += 1;
     else putTrades += 1;
@@ -154,12 +139,10 @@ function runSimple920Backtest({ candles, settings }) {
   }
 
   const summary = buildStrategyRunSummary(trades);
-  if (filterPeConfirm) {
-    summary.skippedDays = skippedDays;
-    summary.filterPeConfirm = true;
-    summary.putTrades = putTrades;
-    summary.callTrades = callTrades;
-  }
+  summary.skippedDays = skippedDays;
+  summary.minDirectionScore = minDirectionScore;
+  summary.putTrades = putTrades;
+  summary.callTrades = callTrades;
 
   return { trades, summary };
 }
