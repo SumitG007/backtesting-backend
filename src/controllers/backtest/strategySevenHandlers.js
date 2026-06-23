@@ -23,7 +23,7 @@ function buildSettings(req) {
   const { symbol = 'NIFTY', year = 2026 } = req.body || {};
   const rawIv = String(parseStringInput(req.body?.interval, TIER.defaultInterval));
   const interval = ['1', '5', '15'].includes(rawIv) ? rawIv : TIER.defaultInterval;
-  const entryTime = parseStringInput(req.body?.entryTime ?? req.body?.entryFromTime, '09:20');
+  const entryTime = parseStringInput(req.body?.entryTime ?? req.body?.entryFromTime, '11:15');
 
   return {
     settings: {

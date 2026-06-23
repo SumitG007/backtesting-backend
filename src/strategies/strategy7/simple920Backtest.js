@@ -1,6 +1,6 @@
 /**
- * Strategy 3 (UI) — timed put/call buy at entry time (default 09:20 IST).
- * Scores bearish vs bullish at entry → PE, CE, or skip. Optional premium SL / target.
+ * Strategy 3 (UI) — timed put/call buy at entry time (default 11:15 IST).
+ * Direction + day metrics use only candles completed by entry time (live-parity, no lookahead).
  */
 
 const { parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
@@ -15,12 +15,11 @@ const {
 } = require('../shared/intradayOptions');
 const {
   buildPutBuyFilterContext,
-  buildDayMetricsForKey,
-  resolvePutBuyEntry,
+  evaluatePutBuyDirection,
   parseDirectionSettings,
 } = require('./putBuyDayFilters');
 
-const M920 = 560;
+const DEFAULT_ENTRY_MINUTES = 675; // 11:15 IST — last completed 5m bar is 11:10 (closes 11:15)
 const EOD_EXIT = 920;
 
 function runSimple920Backtest({ candles, settings }) {
@@ -44,10 +43,9 @@ function runSimple920Backtest({ candles, settings }) {
   const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
   const targetPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
 
-  const entryFromMin = parseClockMinutes(settings.entryFromTime ?? settings.entryTime, M920);
+  const entryFromMin = parseClockMinutes(settings.entryFromTime ?? settings.entryTime, DEFAULT_ENTRY_MINUTES);
   const entryToMin = parseClockMinutes(settings.entryToTime ?? settings.entryTime, entryFromMin);
-  const normalizedFrom = Math.min(entryFromMin, entryToMin);
-  const normalizedTo = Math.max(entryFromMin, entryToMin);
+  const entryDecisionMinutes = Math.min(entryFromMin, entryToMin);
 
   const { minDirectionScore } = parseDirectionSettings(settings);
 
@@ -65,15 +63,13 @@ function runSimple920Backtest({ candles, settings }) {
     const dayBars = intraByDay.get(dayKey) || [];
     if (dayBars.length < 2) continue;
 
-    const metrics = buildDayMetricsForKey(dayKey, dayBars, filterCtx);
-    if (!metrics) continue;
-
-    const entryDecision = resolvePutBuyEntry({
+    const entryDecision = evaluatePutBuyDirection({
+      dayKey,
       dayBars,
-      metrics,
-      entryFromMin: normalizedFrom,
-      entryToMin: normalizedTo,
+      filterCtx,
+      entryDecisionMinutes,
       minDirectionScore,
+      requireFollowingBar: true,
     });
 
     if (entryDecision.skip) {

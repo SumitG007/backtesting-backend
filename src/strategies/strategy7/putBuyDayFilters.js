@@ -7,6 +7,7 @@ const { getIstClock } = require('../../utils/dateTime');
 const { computeDayMetrics, applyEarlyBreakFlags } = require('../../analysis/dayMetrics');
 
 const M1000 = 600;
+const DEFAULT_BAR_INTERVAL_MINUTES = 5;
 const DEFAULT_MIN_DIRECTION_SCORE = 2;
 
 function buildPrevDayMap(sortedKeys, intraByDay) {
@@ -79,13 +80,21 @@ function entryBarBodyPct(entryBar, dayOpen) {
 /**
  * Score bearish (PE) and bullish (CE) signals at entry. Higher score = stronger case.
  */
-function scoreDirectionalBias(metrics, dayBars, entryIdx) {
+function scoreDirectionalBias(
+  metrics,
+  dayBars,
+  entryIdx,
+  decisionMinutes,
+  barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
+) {
   const entryBar = dayBars[entryIdx];
   if (!entryBar || !metrics) {
     return { peScore: 0, ceScore: 0, peSignals: [], ceSignals: [] };
   }
 
-  const asOfMinutes = getIstClock(entryBar[0]).minutes;
+  const barOpenMinutes = getIstClock(entryBar[0]).minutes;
+  const asOfMinutes =
+    Number.isFinite(decisionMinutes) ? decisionMinutes : barOpenMinutes + barIntervalMinutes;
   const open = Number(dayBars[0][1]);
   const entryClose = Number(entryBar[4]);
   const entryOpen = Number(entryBar[1]);
@@ -171,21 +180,91 @@ function evaluatePeConfirm(metrics, dayBars, entryIdx) {
   return peScore > 0 && peScore >= ceScore;
 }
 
-function findEntryBarIndex(dayBars, entryFromMin, entryToMin) {
+/**
+ * Last 5m bar fully closed at decision clock time.
+ * Entry at 11:15 IST → use 11:10 bar (closes 11:15), not the forming 11:15–11:20 bar.
+ */
+function findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES) {
+  if (!Number.isFinite(decisionMinutes) || !dayBars?.length) return null;
+  let bestIdx = null;
   for (let j = 0; j < dayBars.length; j += 1) {
-    const m = getIstClock(dayBars[j][0]).minutes;
-    if (m >= entryFromMin && m <= entryToMin) return j;
+    const barOpenMinutes = getIstClock(dayBars[j][0]).minutes;
+    const barEndMinutes = barOpenMinutes + barIntervalMinutes;
+    if (barEndMinutes <= decisionMinutes) bestIdx = j;
+    else break;
   }
-  return null;
+  return bestIdx;
 }
 
-function resolvePutBuyEntry({ dayBars, metrics, entryFromMin, entryToMin, minDirectionScore = DEFAULT_MIN_DIRECTION_SCORE }) {
-  const entryIdx = findEntryBarIndex(dayBars, entryFromMin, entryToMin);
-  if (entryIdx == null || entryIdx >= dayBars.length - 1) {
+/** Candles + day metrics knowable at entry clock — excludes forming / future bars. */
+function sliceBarsAsOfDecision(dayBars, decisionMinutes, barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES) {
+  const lastIdx = findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes);
+  if (lastIdx == null) return [];
+  return dayBars.slice(0, lastIdx + 1);
+}
+
+function evaluatePutBuyDirection({
+  dayKey,
+  dayBars,
+  filterCtx,
+  entryDecisionMinutes,
+  minDirectionScore,
+  barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
+  requireFollowingBar = true,
+  followingBarsDayBars = null,
+}) {
+  const barsAsOfEntry = sliceBarsAsOfDecision(dayBars, entryDecisionMinutes, barIntervalMinutes);
+  if (!barsAsOfEntry.length) {
+    return { skip: true, skipReason: 'no_entry_bar', entryIdx: null, optionType: null, peScore: 0, ceScore: 0 };
+  }
+  const metrics = buildDayMetricsForKey(dayKey, barsAsOfEntry, filterCtx);
+  if (!metrics) {
+    return { skip: true, skipReason: 'no_metrics', entryIdx: null, optionType: null, peScore: 0, ceScore: 0 };
+  }
+  return resolvePutBuyEntry({
+    dayBars: barsAsOfEntry,
+    followingBarsDayBars: followingBarsDayBars || dayBars,
+    metrics,
+    entryDecisionMinutes,
+    minDirectionScore,
+    barIntervalMinutes,
+    requireFollowingBar,
+  });
+}
+
+/** @deprecated use findLastCompletedBarIndex */
+function findEntryBarIndex(dayBars, entryFromMin, entryToMin) {
+  return findLastCompletedBarIndex(dayBars, entryToMin, DEFAULT_BAR_INTERVAL_MINUTES);
+}
+
+function resolvePutBuyEntry({
+  dayBars,
+  metrics,
+  /** IST clock minute when the entry decision is made (e.g. 675 for 11:15). */
+  entryDecisionMinutes,
+  /** @deprecated alias for entryDecisionMinutes */
+  entryFromMin,
+  entryToMin,
+  minDirectionScore = DEFAULT_MIN_DIRECTION_SCORE,
+  barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
+  /** Backtest exit sim needs at least one bar after the signal bar; live uses real ticks. */
+  requireFollowingBar = true,
+  /** Full session bars for following-bar check when dayBars is sliced at entry. */
+  followingBarsDayBars = null,
+}) {
+  const decisionMinutes = Number.isFinite(entryDecisionMinutes)
+    ? entryDecisionMinutes
+    : Number.isFinite(entryToMin)
+      ? entryToMin
+      : entryFromMin;
+  const entryIdx = findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes);
+  const barsForFollowing = followingBarsDayBars || dayBars;
+  const missingFollowingBar = requireFollowingBar && entryIdx != null && entryIdx >= barsForFollowing.length - 1;
+  if (entryIdx == null || missingFollowingBar) {
     return { skip: true, skipReason: 'no_entry_bar', entryIdx: null, optionType: null };
   }
 
-  const bias = scoreDirectionalBias(metrics, dayBars, entryIdx);
+  const bias = scoreDirectionalBias(metrics, dayBars, entryIdx, decisionMinutes, barIntervalMinutes);
   const minScore = Math.max(1, Number(minDirectionScore) || DEFAULT_MIN_DIRECTION_SCORE);
 
   if (bias.peScore >= minScore && bias.peScore > bias.ceScore) {
@@ -231,11 +310,16 @@ function parseDirectionSettings(settings = {}) {
 }
 
 module.exports = {
+  DEFAULT_BAR_INTERVAL_MINUTES,
   DEFAULT_MIN_DIRECTION_SCORE,
   buildPutBuyFilterContext,
   buildDayMetricsForKey,
   scoreDirectionalBias,
   evaluatePeConfirm,
+  findLastCompletedBarIndex,
+  sliceBarsAsOfDecision,
+  evaluatePutBuyDirection,
+  findEntryBarIndex,
   resolvePutBuyEntry,
   parseDirectionSettings,
 };

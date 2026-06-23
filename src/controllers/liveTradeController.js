@@ -122,7 +122,7 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
   if (strategyId === 'strategy-3') {
     const w = wallet?.strategy7EngineSettings;
     return {
-      entryTime: String(w?.entryToTime || w?.entryTime || '09:20'),
+      entryTime: String(w?.entryToTime || w?.entryTime || '11:15'),
       entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
     };
   }

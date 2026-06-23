@@ -11,6 +11,7 @@ const {
   getNseHolidayDescription,
 } = require('./nseHolidayService');
 const { getStrikeStep } = require('../utils/market');
+const { pickStrike } = require('../strategies/shared/intradayOptions');
 const {
   getAtmPremiums,
   getCurrentLotSize,
@@ -22,8 +23,7 @@ const {
 const { fetchTradingDayCandles } = require('./dhanDataService');
 const {
   buildPutBuyFilterContext,
-  buildDayMetricsForKey,
-  resolvePutBuyEntry,
+  evaluatePutBuyDirection,
   parseDirectionSettings,
 } = require('../strategies/strategy7/putBuyDayFilters');
 const { STRATEGY_SEVEN_PUT_BUY_LIVE_KEY } = require('../strategies/keys');
@@ -36,9 +36,10 @@ const POSITION_POLL_MS = 6000;
 const OPEN_MARK_CHAIN_MIN_GAP_MS = 10000;
 const TICK_FRESH_MAX_AGE_MS = 45000;
 const MIN_HOLD_MS = 30000;
-const M920 = 560;
+const DEFAULT_ENTRY_MINUTES = 675; // 11:15 IST
 const EOD_EXIT = 920;
 const DEFAULT_STOP_LOSS_POINTS = 15;
+const TERMINAL_SKIP_REASONS = new Set(['neutral_day', 'direction_tie']);
 
 const engineState = {
   running: false,
@@ -51,7 +52,7 @@ const engineState = {
   settings: {
     symbol: 'NIFTY',
     lotCount: 10,
-    entryTime: '09:20',
+    entryTime: '11:15',
     entryWindowMinutes: 2,
     stopLossPoints: DEFAULT_STOP_LOSS_POINTS,
     targetProfitPoints: null,
@@ -131,7 +132,7 @@ function normalizeSettings(settings = {}) {
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount,
-    entryTime: String(settings.entryTime || '09:20').trim(),
+    entryTime: String(settings.entryTime || '11:15').trim(),
     entryWindowMinutes,
     stopLossPoints,
     targetProfitPoints,
@@ -170,9 +171,24 @@ async function resolvePrevTradingDayKey(dateKey) {
   return null;
 }
 
-async function refreshTodayCandles(clock) {
+function liveEntryWindowMinutes() {
+  return Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+}
+
+function isInsideEntryWindow(clock) {
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  return clock.minutes >= entryMinutes && clock.minutes <= entryMinutes + liveEntryWindowMinutes();
+}
+
+async function refreshTodayCandles(clock, { force = false } = {}) {
   const now = Date.now();
-  if (now - engineState.lastCandleFetchAt < CANDLE_REFRESH_MIN_GAP_MS && engineState.todayBars.length > 0) {
+  const inEntryWindow = isInsideEntryWindow(clock);
+  if (
+    !force
+    && !inEntryWindow
+    && now - engineState.lastCandleFetchAt < CANDLE_REFRESH_MIN_GAP_MS
+    && engineState.todayBars.length > 0
+  ) {
     return engineState.todayBars;
   }
   try {
@@ -210,9 +226,9 @@ async function loadPrevDayCandles(prevKey) {
 }
 
 async function evaluateDirectionResolution(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, M920);
-  const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
-  const todayBars = await refreshTodayCandles(clock);
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  const entryWindowMinutes = liveEntryWindowMinutes();
+  const todayBars = await refreshTodayCandles(clock, { force: isInsideEntryWindow(clock) });
   if (!todayBars.length) {
     return { skip: true, skipReason: 'no_candles', peScore: 0, ceScore: 0 };
   }
@@ -227,17 +243,15 @@ async function evaluateDirectionResolution(clock) {
   const intraByDay = new Map([[prevKey, prevBars], [clock.dateKey, todayBars]]);
   const sortedKeys = [prevKey, clock.dateKey];
   const ctx = buildPutBuyFilterContext(sortedKeys, intraByDay);
-  const metrics = buildDayMetricsForKey(clock.dateKey, todayBars, ctx);
-  if (!metrics) {
-    return { skip: true, skipReason: 'no_metrics', peScore: 0, ceScore: 0 };
-  }
   const { minDirectionScore } = parseDirectionSettings(engineState.settings);
-  const resolution = resolvePutBuyEntry({
+  const decisionMinutes = Math.min(clock.minutes, entryMinutes + entryWindowMinutes);
+  const resolution = evaluatePutBuyDirection({
+    dayKey: clock.dateKey,
     dayBars: todayBars,
-    metrics,
-    entryFromMin: entryMinutes,
-    entryToMin: entryMinutes + entryWindowMinutes,
+    filterCtx: ctx,
+    entryDecisionMinutes: decisionMinutes,
     minDirectionScore,
+    requireFollowingBar: false,
   });
   engineState.lastDirectionEval = {
     at: new Date().toISOString(),
@@ -246,6 +260,18 @@ async function evaluateDirectionResolution(clock) {
     minDirectionScore,
   };
   return resolution;
+}
+
+async function maybeMarkEntryWindowClosedWithoutTrade(clock) {
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  const entryWindowMinutes = liveEntryWindowMinutes();
+  if (clock.minutes <= entryMinutes + entryWindowMinutes) return;
+  if (engineState.tradeDateKey === clock.dateKey || engineState.skippedDateKey === clock.dateKey) return;
+  if (engineState.openTradeId) return;
+  const lastEval = engineState.lastDirectionEval;
+  const skipReason =
+    lastEval?.dateKey === clock.dateKey && lastEval?.skipReason ? lastEval.skipReason : 'no_entry_bar';
+  await persistSkippedDay(clock, { skipReason });
 }
 
 async function persistSkippedDay(clock, resolution) {
@@ -280,8 +306,8 @@ function isEodExitTime(minutes) {
 }
 
 function isNearEntryWindow(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, M920);
-  const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  const entryWindowMinutes = liveEntryWindowMinutes();
   return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + entryWindowMinutes + 10;
 }
 
@@ -578,8 +604,8 @@ async function getEntryGate(clock) {
   }
   await syncEngineTradeStateFromDb(clock);
   await loadSkippedDayFromWallet(clock);
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, M920);
-  const entryWindowMinutes = Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  const entryWindowMinutes = liveEntryWindowMinutes();
   const windowEnd = entryMinutes + entryWindowMinutes;
   if (clock.minutes < entryMinutes) {
     return {
@@ -629,6 +655,7 @@ async function getEntryGate(clock) {
 
 async function evaluateEntry() {
   const clock = getIstClock(new Date());
+  await maybeMarkEntryWindowClosedWithoutTrade(clock);
   const gate = await getEntryGate(clock);
   if (!gate.ok) {
     if (isNearEntryWindow(clock)) {
@@ -639,7 +666,7 @@ async function evaluateEntry() {
 
   const resolution = await evaluateDirectionResolution(clock);
   if (!resolution || resolution.skip) {
-    if (resolution?.skip) {
+    if (resolution?.skip && TERMINAL_SKIP_REASONS.has(resolution.skipReason)) {
       await persistSkippedDay(clock, resolution);
     }
     logEntry('ENTRY_SKIP', {
@@ -709,7 +736,12 @@ async function placeLongOption(clock, resolution) {
       return;
     }
     const strikeStep = getStrikeStep(symbol);
-    const strike = Math.round(spot / strikeStep) * strikeStep;
+    const strike = pickStrike({
+      entrySpot: spot,
+      strikeStep,
+      optionType,
+      strikeMode: engineState.settings.strikeMode,
+    });
     const premiums = await getAtmPremiums({ symbol, strike, expiry });
     const entryPremium = premiumFromChain(premiums, optionType);
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
