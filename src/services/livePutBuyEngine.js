@@ -53,7 +53,7 @@ const engineState = {
     symbol: 'NIFTY',
     lotCount: 10,
     entryTime: '11:15',
-    entryWindowMinutes: 2,
+    entryWindowMinutes: 0,
     stopLossPoints: DEFAULT_STOP_LOSS_POINTS,
     targetProfitPoints: null,
     strikeMode: 'ATM',
@@ -103,7 +103,7 @@ function syncEngineSymbolFromSettings() {
 
 function normalizeSettings(settings = {}) {
   const lotCount = Math.max(1, Number(settings.lotCount) || 10);
-  const entryWindowMinutes = Math.max(0, Number(settings.entryWindowMinutes) || 0);
+  const entryWindowMinutes = 0; // 5m bars — decision at exact entryTime (e.g. 11:15), no extra window
   const slRaw = settings.stopLossPoints;
   let hasStopLoss = true;
   let stopLossPoints = DEFAULT_STOP_LOSS_POINTS;
@@ -172,12 +172,12 @@ async function resolvePrevTradingDayKey(dateKey) {
 }
 
 function liveEntryWindowMinutes() {
-  return Math.max(0, Number(engineState.settings.entryWindowMinutes) || 0);
+  return 0;
 }
 
 function isInsideEntryWindow(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  return clock.minutes >= entryMinutes && clock.minutes <= entryMinutes + liveEntryWindowMinutes();
+  return clock.minutes === entryMinutes;
 }
 
 async function refreshTodayCandles(clock, { force = false } = {}) {
@@ -227,7 +227,6 @@ async function loadPrevDayCandles(prevKey) {
 
 async function evaluateDirectionResolution(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  const entryWindowMinutes = liveEntryWindowMinutes();
   const todayBars = await refreshTodayCandles(clock, { force: isInsideEntryWindow(clock) });
   if (!todayBars.length) {
     return { skip: true, skipReason: 'no_candles', peScore: 0, ceScore: 0 };
@@ -244,7 +243,7 @@ async function evaluateDirectionResolution(clock) {
   const sortedKeys = [prevKey, clock.dateKey];
   const ctx = buildPutBuyFilterContext(sortedKeys, intraByDay);
   const { minDirectionScore } = parseDirectionSettings(engineState.settings);
-  const decisionMinutes = Math.min(clock.minutes, entryMinutes + entryWindowMinutes);
+  const decisionMinutes = entryMinutes;
   const resolution = evaluatePutBuyDirection({
     dayKey: clock.dateKey,
     dayBars: todayBars,
@@ -264,8 +263,7 @@ async function evaluateDirectionResolution(clock) {
 
 async function maybeMarkEntryWindowClosedWithoutTrade(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  const entryWindowMinutes = liveEntryWindowMinutes();
-  if (clock.minutes <= entryMinutes + entryWindowMinutes) return;
+  if (clock.minutes <= entryMinutes) return;
   if (engineState.tradeDateKey === clock.dateKey || engineState.skippedDateKey === clock.dateKey) return;
   if (engineState.openTradeId) return;
   const lastEval = engineState.lastDirectionEval;
@@ -307,8 +305,7 @@ function isEodExitTime(minutes) {
 
 function isNearEntryWindow(clock) {
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  const entryWindowMinutes = liveEntryWindowMinutes();
-  return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + entryWindowMinutes + 10;
+  return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + 5;
 }
 
 function optionTickIsFresh() {
@@ -605,8 +602,6 @@ async function getEntryGate(clock) {
   await syncEngineTradeStateFromDb(clock);
   await loadSkippedDayFromWallet(clock);
   const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  const entryWindowMinutes = liveEntryWindowMinutes();
-  const windowEnd = entryMinutes + entryWindowMinutes;
   if (clock.minutes < entryMinutes) {
     return {
       ok: false,
@@ -616,13 +611,12 @@ async function getEntryGate(clock) {
       nowMinutes: clock.minutes,
     };
   }
-  if (clock.minutes > windowEnd) {
+  if (clock.minutes > entryMinutes) {
     return {
       ok: false,
       reason: 'AFTER_ENTRY_WINDOW',
       entryTime: engineState.settings.entryTime,
-      entryWindowMinutes,
-      windowEndMinutes: windowEnd,
+      entryMinutes,
       nowMinutes: clock.minutes,
     };
   }
@@ -649,7 +643,7 @@ async function getEntryGate(clock) {
     ok: true,
     reason: 'READY_TO_ENTER',
     entryTime: engineState.settings.entryTime,
-    entryWindowMinutes,
+    entryWindowMinutes: 0,
   };
 }
 

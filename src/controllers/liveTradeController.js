@@ -85,10 +85,11 @@ const {
 const { getIstClock } = require('../utils/dateTime');
 
 function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
+  const windowMins = Math.max(0, Number(entryWindowMinutes) || 0);
+  if (windowMins <= 0) return String(entryTime || '11:15');
   const parts = String(entryTime).split(':');
   const hh = Number(parts[0]);
   const mm = Number(parts[1]);
-  const windowMins = Math.max(0, Number(entryWindowMinutes) || 0);
   const startMinutes = Number.isFinite(hh) && Number.isFinite(mm) ? (hh * 60 + mm) : (9 * 60 + 20);
   const endMinutes = startMinutes + windowMins;
   const endH = String(Math.floor(endMinutes / 60)).padStart(2, '0');
@@ -100,9 +101,13 @@ function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
 function resolveHintEntrySettings(engine, strategyId, wallet) {
   const fromEngine = engine?.settings;
   if (fromEngine?.entryTime) {
+    const windowMins =
+      strategyId === 'strategy-3'
+        ? 0
+        : Math.max(0, Number(fromEngine.entryWindowMinutes) || 2);
     return {
       entryTime: String(fromEngine.entryTime),
-      entryWindowMinutes: Math.max(0, Number(fromEngine.entryWindowMinutes) || 2),
+      entryWindowMinutes: windowMins,
     };
   }
   if (strategyId === 'strategy-6') {
@@ -123,7 +128,7 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
     const w = wallet?.strategy7EngineSettings;
     return {
       entryTime: String(w?.entryToTime || w?.entryTime || '11:15'),
-      entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
+      entryWindowMinutes: 0,
     };
   }
   return {
