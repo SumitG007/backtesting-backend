@@ -46,6 +46,21 @@ async function bootBackgroundServices() {
   scheduleNseHolidayRefresh();
 
   try {
+    const LivePaperTrade = require('./models/livePaperTrade');
+    await LivePaperTrade.syncIndexes();
+  } catch (err) {
+    console.warn('LivePaperTrade index sync:', err.message);
+  }
+
+  try {
+    const manualEngine = require('./services/manualTradeEngine');
+    await manualEngine.ensureEngineRunning();
+    console.log('Manual trading console engine started');
+  } catch (err) {
+    console.warn('Manual console engine boot:', err.message);
+  }
+
+  try {
     const boot = await strategyFourPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Strategy 2 paper-live engine started (always on)');

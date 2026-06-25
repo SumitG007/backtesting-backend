@@ -866,6 +866,7 @@ module.exports = {
   getCurrentLotSize,
   fetchExpiryList,
   fetchOptionChain,
+  fetchOptionChainCached,
   getNearestWeeklyExpiry,
   getNextWeeklyExpiry,
   getTradableWeeklyExpiry,

@@ -49,10 +49,16 @@ const livePaperTradeSchema = new mongoose.Schema(
 
 livePaperTradeSchema.index({ entryTime: -1 });
 livePaperTradeSchema.index({ strategyKey: 1, exitTime: 1 });
-// At most one open paper trade per strategy at a time.
+// At most one open paper trade per auto-strategy; manual console allows multiple opens.
 livePaperTradeSchema.index(
   { strategyKey: 1 },
-  { unique: true, partialFilterExpression: { exitTime: null } },
+  {
+    unique: true,
+    partialFilterExpression: {
+      exitTime: null,
+      strategyKey: { $ne: 'manual_console_live' },
+    },
+  },
 );
 
 module.exports =

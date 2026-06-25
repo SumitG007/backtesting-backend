@@ -30,6 +30,19 @@ const {
   closeLivePosition,
   reopenLiveTrade,
 } = require('../controllers/liveTradeController');
+const {
+  getManualConsoleStatus,
+  getManualExpiries,
+  getManualQuote,
+  getManualChain,
+  postManualOrder,
+  deleteManualOrder,
+  postManualClosePosition,
+  patchManualPositionRisk,
+  getManualTrades,
+  getManualActions,
+  postManualWalletReset,
+} = require('../controllers/manualConsoleController');
 
 const router = express.Router();
 
@@ -68,5 +81,17 @@ router.get('/live/:strategyId/trades', listLiveTrades);
 router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 router.post('/live/:strategyId/close', closeLivePosition);
 router.post('/live/:strategyId/reopen-trade', reopenLiveTrade);
+// Manual trading console (paper — Dhan LTP, simulated fills)
+router.get('/manual-console/status', getManualConsoleStatus);
+router.get('/manual-console/expiries', getManualExpiries);
+router.get('/manual-console/quote', getManualQuote);
+router.get('/manual-console/chain', getManualChain);
+router.post('/manual-console/orders', postManualOrder);
+router.delete('/manual-console/orders/:orderId', deleteManualOrder);
+router.post('/manual-console/positions/:tradeId/close', postManualClosePosition);
+router.patch('/manual-console/positions/:tradeId/risk', patchManualPositionRisk);
+router.get('/manual-console/trades', getManualTrades);
+router.get('/manual-console/actions', getManualActions);
+router.post('/manual-console/wallet/reset', postManualWalletReset);
 
 module.exports = router;
