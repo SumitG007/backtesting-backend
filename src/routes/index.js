@@ -19,16 +19,6 @@ const {
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const {
-  runMarketAnalysis,
-  runMarketAnalysisBatch,
-  scanMarketAnalysis,
-  listMarketAnalysisSymbols,
-  getMarketAnalysisMeta,
-  searchMarketInstruments,
-  getMarketAnalysisExpiries,
-  exportMarketAnalysis,
-} = require('../controllers/marketAnalysisController');
-const {
   getStatus: getLiveStatus,
   startLive,
   stopLive,
@@ -52,14 +42,6 @@ router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
 router.get('/data/candles/day', getCandlesDay);
-router.get('/market-analysis/meta', getMarketAnalysisMeta);
-router.get('/market-analysis/search', searchMarketInstruments);
-router.get('/market-analysis/expiries', getMarketAnalysisExpiries);
-router.post('/market-analysis/run', runMarketAnalysis);
-router.post('/market-analysis/run-batch', runMarketAnalysisBatch);
-router.get('/market-analysis/symbols', listMarketAnalysisSymbols);
-router.post('/market-analysis/scan', scanMarketAnalysis);
-router.post('/market-analysis/export', exportMarketAnalysis);
 // Strategy 2 — short straddle (entry day + next day exit)
 router.post('/strategy2/run', runStrategyShortStraddleNextDay);
 router.post('/strategy2/validation', postStrategyShortStraddleValidation);

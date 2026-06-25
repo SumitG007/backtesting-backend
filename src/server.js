@@ -46,13 +46,6 @@ async function bootBackgroundServices() {
   scheduleNseHolidayRefresh();
 
   try {
-    const { syncVolumeMetricsIndexes } = require('./services/volumeMetricsStore');
-    await syncVolumeMetricsIndexes();
-  } catch (err) {
-    console.warn('Volume metrics indexes:', err.message);
-  }
-
-  try {
     const boot = await strategyFourPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Strategy 2 paper-live engine started (always on)');
