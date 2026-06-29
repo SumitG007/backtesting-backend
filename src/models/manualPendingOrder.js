@@ -4,7 +4,10 @@ const manualPendingOrderSchema = new mongoose.Schema(
   {
     strategyKey: { type: String, required: true, index: true },
     symbol: { type: String, required: true },
-    optionType: { type: String, enum: ['CE', 'PE'], required: true },
+    optionType: { type: String, enum: ['CE', 'PE', 'FUT'], required: true },
+    /** OPTION (CE/PE long buy) or FUTURE (direct future, LONG/SHORT). */
+    product: { type: String, enum: ['OPTION', 'FUTURE'], default: 'OPTION' },
+    side: { type: String, enum: ['LONG', 'SHORT'], default: 'LONG' },
     strike: { type: Number, required: true },
     expiryDate: { type: String, required: true },
     orderType: { type: String, enum: ['MARKET', 'LIMIT'], default: 'MARKET' },
@@ -15,6 +18,11 @@ const manualPendingOrderSchema = new mongoose.Schema(
     perTradeCost: { type: Number, default: 100 },
     stopLossPoints: { type: Number, default: null },
     targetProfitPoints: { type: Number, default: null },
+    /** Risk input mode chosen at order time: PCT (% of entry premium) or POINTS. */
+    stopLossMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
+    targetMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
+    stopLossPct: { type: Number, default: null },
+    targetPct: { type: Number, default: null },
     status: {
       type: String,
       enum: ['PENDING', 'FILLED', 'CANCELLED', 'EXPIRED'],

@@ -5,7 +5,9 @@ const livePaperTradeSchema = new mongoose.Schema(
     strategyKey: { type: String, required: true, index: true },
     symbol: { type: String, required: true, index: true },
     side: { type: String, enum: ['LONG', 'SHORT', 'SELL'], required: true },
-    optionType: { type: String, enum: ['CE', 'PE', 'STRADDLE'], required: true },
+    optionType: { type: String, enum: ['CE', 'PE', 'STRADDLE', 'FUT'], required: true },
+    /** OPTION (CE/PE) or FUTURE (direct stock/index future). */
+    product: { type: String, enum: ['OPTION', 'FUTURE'], default: 'OPTION' },
     strike: { type: Number, required: true },
     expiryDate: { type: String, default: null },
     lotSize: { type: Number, required: true },
@@ -16,6 +18,9 @@ const livePaperTradeSchema = new mongoose.Schema(
     entryTime: { type: Date, required: true },
     stopLossPremium: { type: Number, default: null },
     targetPremium: { type: Number, default: null },
+    /** How SL/target were entered: PCT (% of entry premium) or POINTS. For UI default toggle. */
+    stopLossMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
+    targetMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
     entryCredit: { type: Number, default: null },
     exitDebit: { type: Number, default: null },
     legs: { type: [mongoose.Schema.Types.Mixed], default: undefined },

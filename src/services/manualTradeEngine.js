@@ -21,6 +21,10 @@ const {
   getNearestWeeklyExpiry,
   fetchExpiryList,
   fetchOptionChainCached,
+  listFutureUnderlyings,
+  listFutureExpiries,
+  getFutureLtp,
+  getFutureQuote,
 } = require('./dhanLiveService');
 
 const STRATEGY_KEY = MANUAL_CONSOLE_LIVE_KEY;
@@ -62,11 +66,64 @@ function normalizeOptionType(optionType) {
   return t;
 }
 
+function normalizeProduct(product) {
+  return String(product || 'OPTION').toUpperCase() === 'FUTURE' ? 'FUTURE' : 'OPTION';
+}
+
+function normalizeSide(side) {
+  return String(side || 'LONG').toUpperCase() === 'SHORT' ? 'SHORT' : 'LONG';
+}
+
+function isFutureTrade(trade) {
+  return normalizeProduct(trade?.product) === 'FUTURE' || String(trade?.optionType).toUpperCase() === 'FUT';
+}
+
+/** Direction sign: LONG profits when price rises (+1), SHORT when price falls (-1). */
+function directionSign(trade) {
+  return String(trade?.side).toUpperCase() === 'SHORT' ? -1 : 1;
+}
+
+/** Validate a futures underlying exists in the instrument master. */
+async function normalizeFutureSymbol(symbol) {
+  const upper = String(symbol || '').toUpperCase().trim();
+  if (!upper) throw new Error('Futures symbol required');
+  if (ALLOWED_SYMBOLS.has(upper)) return upper; // NIFTY/BANKNIFTY also have index futures
+  const list = await listFutureUnderlyings();
+  if (!list.includes(upper)) throw new Error(`No stock future found for ${upper}`);
+  return upper;
+}
+
 function parsePremiumPoints(raw) {
   if (raw === '' || raw === null || raw === undefined) return null;
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.min(5000, n);
+}
+
+function normalizeRiskMode(mode) {
+  return String(mode || '').toUpperCase() === 'PCT' ? 'PCT' : 'POINTS';
+}
+
+/** Parse a positive % value (1..99 for SL, 1..1000 for target). */
+function parsePct(raw, { max = 1000 } = {}) {
+  if (raw === '' || raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(max, n);
+}
+
+/**
+ * Resolve SL/target premium-points from an entry premium given the configured mode.
+ * For PCT: points = entryPremium * pct / 100. SL pct is capped just under 100%.
+ */
+function pointsFromConfig({ mode, points, pct, entryPremium, leg }) {
+  const m = normalizeRiskMode(mode);
+  if (m === 'PCT') {
+    if (pct == null || !Number.isFinite(entryPremium) || entryPremium <= 0) return null;
+    const safePct = leg === 'SL' ? Math.min(99, pct) : pct;
+    return (entryPremium * safePct) / 100;
+  }
+  return points != null ? points : null;
 }
 
 function premiumFromChain(chain, optionType) {
@@ -152,9 +209,10 @@ function buildOpenPositionMark(trade, mark, clock) {
   const qty = Number(trade.qty) || 0;
   const invested = entryPremium * qty;
   const finalValue = optionLtp * qty;
-  const grossPnl = finalValue - invested;
+  const dir = directionSign(trade);
+  const grossPnl = (optionLtp - entryPremium) * qty * dir;
   const source = mark?.source || 'chain';
-  const optionType = normalizeOptionType(trade.optionType);
+  const optionType = isFutureTrade(trade) ? 'FUT' : normalizeOptionType(trade.optionType);
 
   return {
     at: new Date().toISOString(),
@@ -178,6 +236,11 @@ function buildOpenPositionMark(trade, mark, clock) {
 }
 
 async function resolveMarkForTrade(trade) {
+  if (isFutureTrade(trade)) {
+    const { ltp } = await getFutureLtp({ symbol: trade.symbol, expiry: trade.expiryDate });
+    const price = Number.isFinite(ltp) && ltp > 0 ? ltp : null;
+    return { spot: price, optionLtp: price, source: price != null ? 'chain' : 'entry' };
+  }
   const chain = await getAtmPremiums({
     symbol: trade.symbol,
     strike: trade.strike,
@@ -195,16 +258,35 @@ async function resolveMarkForTrade(trade) {
 async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   const qty = order.lotSize * order.lots;
   const invested = entryPremium * qty;
-  const slPts = order.stopLossPoints;
-  const tgPts = order.targetProfitPoints;
-  const stopLossPremium = slPts != null ? Math.max(0.05, entryPremium - slPts) : null;
-  const targetPremium = tgPts != null ? entryPremium + tgPts : null;
+  const product = normalizeProduct(order.product);
+  const side = product === 'FUTURE' ? normalizeSide(order.side) : 'LONG';
+  const dir = side === 'SHORT' ? -1 : 1;
+  const slConfigured = order.stopLossMode != null || order.stopLossPoints != null;
+  const tgConfigured = order.targetMode != null || order.targetProfitPoints != null;
+  const slPts = pointsFromConfig({
+    mode: order.stopLossMode,
+    points: order.stopLossPoints,
+    pct: order.stopLossPct,
+    entryPremium,
+    leg: 'SL',
+  });
+  const tgPts = pointsFromConfig({
+    mode: order.targetMode,
+    points: order.targetProfitPoints,
+    pct: order.targetPct,
+    entryPremium,
+    leg: 'TG',
+  });
+  // SL is always the losing side, target the winning side — flip levels for SHORT.
+  const stopLossPremium = slPts != null ? Math.max(0.05, entryPremium - dir * slPts) : null;
+  const targetPremium = tgPts != null ? Math.max(0.05, entryPremium + dir * tgPts) : null;
 
   const tradeDoc = await LivePaperTrade.create({
     strategyKey: STRATEGY_KEY,
     symbol: order.symbol,
-    side: 'LONG',
-    optionType: order.optionType,
+    side,
+    optionType: product === 'FUTURE' ? 'FUT' : order.optionType,
+    product,
     strike: order.strike,
     expiryDate: order.expiryDate,
     lotSize: order.lotSize,
@@ -220,8 +302,10 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
     charges: Number(order.perTradeCost || 100),
     stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
     targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
-    legs: [{ optionType: order.optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
-    notes: `manual; order=${order._id}; type=${order.orderType}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}`,
+    stopLossMode: stopLossPremium != null && slConfigured ? normalizeRiskMode(order.stopLossMode) : null,
+    targetMode: targetPremium != null && tgConfigured ? normalizeRiskMode(order.targetMode) : null,
+    legs: [{ optionType: product === 'FUTURE' ? 'FUT' : order.optionType, side, entryPremium: Number(entryPremium.toFixed(2)) }],
+    notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}`,
   });
 
   order.status = 'FILLED';
@@ -248,6 +332,13 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
 }
 
 async function createMarketFill(order, clock) {
+  if (normalizeProduct(order.product) === 'FUTURE') {
+    const { ltp } = await getFutureLtp({ symbol: order.symbol, expiry: order.expiryDate });
+    if (!Number.isFinite(ltp) || ltp <= 0) {
+      throw new Error(`Future LTP unavailable for ${order.symbol}`);
+    }
+    return fillOrderToTrade(order, { entryPremium: ltp, spot: ltp, clock });
+  }
   const chain = await getAtmPremiums({
     symbol: order.symbol,
     strike: order.strike,
@@ -264,9 +355,100 @@ async function createMarketFill(order, clock) {
   return fillOrderToTrade(order, { entryPremium, spot, clock });
 }
 
+async function createFutureOrder(payload, clock) {
+  const symbol = await normalizeFutureSymbol(payload.symbol);
+  const side = normalizeSide(payload.side);
+  const orderType = String(payload.orderType || 'MARKET').toUpperCase() === 'LIMIT' ? 'LIMIT' : 'MARKET';
+  const lots = Math.max(1, Math.floor(Number(payload.lots) || 1));
+  const lotSize = Math.max(1, Number(payload.lotSize) || (await getCurrentLotSize(symbol)));
+  const perTradeCost = Number.isFinite(Number(payload.perTradeCost)) && Number(payload.perTradeCost) >= 0
+    ? Number(payload.perTradeCost)
+    : 100;
+
+  const stopLossMode = normalizeRiskMode(payload.stopLossMode);
+  const targetMode = normalizeRiskMode(payload.targetMode);
+  const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
+  const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
+  const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
+  const targetPct = targetMode === 'PCT' ? parsePct(tgRawValue, { max: 1000 }) : null;
+  const stopLossPoints = stopLossMode === 'POINTS' ? parsePremiumPoints(slRawValue) : null;
+  const targetProfitPoints = targetMode === 'POINTS' ? parsePremiumPoints(tgRawValue) : null;
+  const slConfigured = stopLossPct != null || stopLossPoints != null;
+  const tgConfigured = targetPct != null || targetProfitPoints != null;
+
+  // Resolve nearest (or chosen) future expiry.
+  const expiries = await listFutureExpiries(symbol);
+  if (!expiries.length) throw new Error(`No futures contracts found for ${symbol}`);
+  const wanted = payload.expiryDate ? String(payload.expiryDate).slice(0, 10) : null;
+  const expiryDate = (wanted && expiries.find((e) => e.expiry === wanted)?.expiry) || expiries[0].expiry;
+
+  let limitPremium = null;
+  if (orderType === 'LIMIT') {
+    limitPremium = parsePremiumPoints(payload.limitPremium);
+    if (limitPremium == null) throw new Error('Limit price is required for LIMIT orders');
+  }
+
+  const order = await ManualPendingOrder.create({
+    strategyKey: STRATEGY_KEY,
+    symbol,
+    optionType: 'FUT',
+    product: 'FUTURE',
+    side,
+    strike: 0,
+    expiryDate,
+    orderType,
+    limitPremium,
+    lots,
+    lotSize,
+    perTradeCost,
+    stopLossPoints,
+    targetProfitPoints,
+    stopLossMode: slConfigured ? stopLossMode : null,
+    targetMode: tgConfigured ? targetMode : null,
+    stopLossPct,
+    targetPct,
+    status: 'PENDING',
+    sessionDateKey: clock.dateKey,
+  });
+
+  await logAction({
+    action: 'ORDER_CREATED',
+    orderId: order._id,
+    symbol,
+    message: `FUTURE ${side} ${symbol} x${lots} (${orderType})`,
+    details: {
+      product: 'FUTURE',
+      side,
+      orderType,
+      limitPremium,
+      expiryDate,
+      stopLoss: slConfigured ? { mode: stopLossMode, pct: stopLossPct, points: stopLossPoints } : 'off',
+      target: tgConfigured ? { mode: targetMode, pct: targetPct, points: targetProfitPoints } : 'eod',
+    },
+  });
+
+  if (orderType === 'MARKET') {
+    try {
+      const trade = await createMarketFill(order, clock);
+      return { order, trade, filled: true };
+    } catch (err) {
+      order.status = 'CANCELLED';
+      order.cancelReason = err.message;
+      await order.save();
+      await logAction({ action: 'ORDER_FAILED', orderId: order._id, symbol, message: err.message });
+      throw err;
+    }
+  }
+  return { order, trade: null, filled: false };
+}
+
 async function createOrder(payload) {
   const clock = getIstClock(new Date());
   await assertMarketOpen(clock);
+
+  if (normalizeProduct(payload.product) === 'FUTURE') {
+    return createFutureOrder(payload, clock);
+  }
 
   const symbol = normalizeSymbol(payload.symbol);
   const optionType = normalizeOptionType(payload.optionType);
@@ -276,8 +458,16 @@ async function createOrder(payload) {
   const perTradeCost = Number.isFinite(Number(payload.perTradeCost)) && Number(payload.perTradeCost) >= 0
     ? Number(payload.perTradeCost)
     : 100;
-  const stopLossPoints = parsePremiumPoints(payload.stopLossPoints);
-  const targetProfitPoints = parsePremiumPoints(payload.targetProfitPoints);
+  const stopLossMode = normalizeRiskMode(payload.stopLossMode);
+  const targetMode = normalizeRiskMode(payload.targetMode);
+  const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
+  const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
+  const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
+  const targetPct = targetMode === 'PCT' ? parsePct(tgRawValue, { max: 1000 }) : null;
+  const stopLossPoints = stopLossMode === 'POINTS' ? parsePremiumPoints(slRawValue) : null;
+  const targetProfitPoints = targetMode === 'POINTS' ? parsePremiumPoints(tgRawValue) : null;
+  const slConfigured = stopLossPct != null || stopLossPoints != null;
+  const tgConfigured = targetPct != null || targetProfitPoints != null;
 
   let expiryDate = String(payload.expiryDate || '').slice(0, 10);
   if (!expiryDate) {
@@ -318,6 +508,10 @@ async function createOrder(payload) {
     perTradeCost,
     stopLossPoints,
     targetProfitPoints,
+    stopLossMode: slConfigured ? stopLossMode : null,
+    targetMode: tgConfigured ? targetMode : null,
+    stopLossPct,
+    targetPct,
     status: orderType === 'MARKET' ? 'PENDING' : 'PENDING',
     sessionDateKey: clock.dateKey,
   });
@@ -327,7 +521,13 @@ async function createOrder(payload) {
     orderId: order._id,
     symbol,
     message: `${orderType} ${optionType} ${strike} x${lots}`,
-    details: { orderType, limitPremium, stopLossPoints, targetProfitPoints, expiryDate },
+    details: {
+      orderType,
+      limitPremium,
+      stopLoss: slConfigured ? { mode: stopLossMode, pct: stopLossPct, points: stopLossPoints } : 'off',
+      target: tgConfigured ? { mode: targetMode, pct: targetPct, points: targetProfitPoints } : 'eod',
+      expiryDate,
+    },
   });
 
   if (orderType === 'MARKET') {
@@ -373,9 +573,11 @@ async function cancelOrder(orderId, reason = 'USER_CANCEL') {
 async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   const safeExit = Math.max(0.05, Number(exitPremium) || Number(mark?.optionLtp) || 0.05);
   const finalValue = safeExit * trade.qty;
-  const invested = (Number(trade.entryPremium) || 0) * trade.qty;
+  const entryPremium = Number(trade.entryPremium) || 0;
+  const invested = entryPremium * trade.qty;
   const charges = Math.max(0, Number(trade.charges) || 0);
-  const pnl = finalValue - invested - charges;
+  const dir = directionSign(trade);
+  const pnl = (safeExit - entryPremium) * trade.qty * dir - charges;
   const clock = getIstClock(new Date());
 
   trade.status = 'CLOSED';
@@ -448,42 +650,78 @@ async function updatePositionRisk(tradeId, payload = {}) {
     throw new Error('Invalid entry premium on open trade');
   }
 
+  const dir = directionSign(trade);
   const prev = {
     stopLossPremium: trade.stopLossPremium,
     targetPremium: trade.targetPremium,
   };
   const changes = {};
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'stopLossPoints')) {
-    const slPts = parseRiskPointsInput(payload.stopLossPoints);
+  // New contract: stopLossValue + stopLossMode. Legacy: stopLossPoints (always POINTS).
+  const hasSl =
+    Object.prototype.hasOwnProperty.call(payload, 'stopLossValue') ||
+    Object.prototype.hasOwnProperty.call(payload, 'stopLossPoints');
+  const hasTg =
+    Object.prototype.hasOwnProperty.call(payload, 'targetValue') ||
+    Object.prototype.hasOwnProperty.call(payload, 'targetProfitPoints');
+
+  if (hasSl) {
+    const usePct = normalizeRiskMode(payload.stopLossMode) === 'PCT' &&
+      Object.prototype.hasOwnProperty.call(payload, 'stopLossValue');
+    const rawSl = Object.prototype.hasOwnProperty.call(payload, 'stopLossValue')
+      ? payload.stopLossValue
+      : payload.stopLossPoints;
+    const slPts = pointsFromConfig({
+      mode: usePct ? 'PCT' : 'POINTS',
+      points: usePct ? null : parseRiskPointsInput(rawSl),
+      pct: usePct ? parsePct(rawSl, { max: 99 }) : null,
+      entryPremium: entry,
+      leg: 'SL',
+    });
     if (slPts == null) {
       trade.stopLossPremium = null;
+      trade.stopLossMode = null;
       changes.stopLossPremium = null;
     } else {
-      const slPrem = Math.max(0.05, entry - slPts);
-      if (slPrem >= entry) {
-        throw new Error('Stop loss must be below entry premium');
+      const slPrem = Math.max(0.05, entry - dir * slPts);
+      // SL must be on the losing side: below entry for LONG, above entry for SHORT.
+      if (dir === 1 ? slPrem >= entry : slPrem <= entry) {
+        throw new Error(`Stop loss must be ${dir === 1 ? 'below' : 'above'} entry`);
       }
       trade.stopLossPremium = Number(slPrem.toFixed(2));
+      trade.stopLossMode = usePct ? 'PCT' : 'POINTS';
       changes.stopLossPremium = trade.stopLossPremium;
-      changes.stopLossPoints = slPts;
+      changes.stopLossMode = trade.stopLossMode;
     }
   }
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'targetProfitPoints')) {
-    const tgPts = parseRiskPointsInput(payload.targetProfitPoints);
+  if (hasTg) {
+    const usePct = normalizeRiskMode(payload.targetMode) === 'PCT' &&
+      Object.prototype.hasOwnProperty.call(payload, 'targetValue');
+    const rawTg = Object.prototype.hasOwnProperty.call(payload, 'targetValue')
+      ? payload.targetValue
+      : payload.targetProfitPoints;
+    const tgPts = pointsFromConfig({
+      mode: usePct ? 'PCT' : 'POINTS',
+      points: usePct ? null : parseRiskPointsInput(rawTg),
+      pct: usePct ? parsePct(rawTg, { max: 1000 }) : null,
+      entryPremium: entry,
+      leg: 'TG',
+    });
     if (tgPts == null) {
       trade.targetPremium = null;
+      trade.targetMode = null;
       changes.targetPremium = null;
     } else {
-      trade.targetPremium = Number((entry + tgPts).toFixed(2));
+      trade.targetPremium = Number(Math.max(0.05, entry + dir * tgPts).toFixed(2));
+      trade.targetMode = usePct ? 'PCT' : 'POINTS';
       changes.targetPremium = trade.targetPremium;
-      changes.targetProfitPoints = tgPts;
+      changes.targetMode = trade.targetMode;
     }
   }
 
   if (!Object.keys(changes).length) {
-    throw new Error('Send stopLossPoints and/or targetProfitPoints to update');
+    throw new Error('Send stopLoss and/or target to update');
   }
 
   trade.notes = [
@@ -527,6 +765,18 @@ async function checkPendingOrders(clock) {
       continue;
     }
     try {
+      if (normalizeProduct(order.product) === 'FUTURE') {
+        const { ltp } = await getFutureLtp({ symbol: order.symbol, expiry: order.expiryDate });
+        if (!Number.isFinite(ltp) || ltp <= 0) continue;
+        // LONG fills when price drops to/below limit; SHORT fills when price rises to/above limit.
+        const fill = normalizeSide(order.side) === 'SHORT'
+          ? ltp >= Number(order.limitPremium)
+          : ltp <= Number(order.limitPremium);
+        if (fill) {
+          await fillOrderToTrade(order, { entryPremium: ltp, spot: ltp, clock });
+        }
+        continue;
+      }
       const chain = await getAtmPremiums({
         symbol: order.symbol,
         strike: order.strike,
@@ -575,7 +825,13 @@ async function checkOpenPositions(clock) {
       const optionLtp = Number(mark.optionLtp);
       if (!Number.isFinite(optionLtp) || optionLtp <= 0) continue;
 
-      if (trade.stopLossPremium != null && optionLtp <= Number(trade.stopLossPremium)) {
+      const dir = directionSign(trade);
+      const slHit =
+        trade.stopLossPremium != null &&
+        (dir === 1
+          ? optionLtp <= Number(trade.stopLossPremium)
+          : optionLtp >= Number(trade.stopLossPremium));
+      if (slHit) {
         await finalizeTrade(trade, {
           exitPremium: Number(trade.stopLossPremium),
           mark,
@@ -584,7 +840,12 @@ async function checkOpenPositions(clock) {
         continue;
       }
 
-      if (trade.targetPremium != null && optionLtp >= Number(trade.targetPremium)) {
+      const tgHit =
+        trade.targetPremium != null &&
+        (dir === 1
+          ? optionLtp >= Number(trade.targetPremium)
+          : optionLtp <= Number(trade.targetPremium));
+      if (tgHit) {
         await finalizeTrade(trade, {
           exitPremium: Number(trade.targetPremium),
           mark,
@@ -669,6 +930,26 @@ async function getExpiries(symbol) {
   const future = [...list].sort().filter((d) => d >= today);
   const nearest = future[0] || list[0] || null;
   return { symbol: sym, expiries: future.length ? future : list, nearest };
+}
+
+/** Symbol picker data: index option underlyings + all NSE stock-future underlyings. */
+async function getInstrumentUniverse() {
+  let futures = [];
+  try {
+    futures = await listFutureUnderlyings();
+  } catch {
+    futures = [];
+  }
+  const indexOptions = [...ALLOWED_SYMBOLS];
+  // Stock futures exclude the index symbols (those trade as options here).
+  const stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s));
+  return { indexOptions, stockFutures };
+}
+
+/** Live quote for a stock/index future order ticket. */
+async function getFuture({ symbol, expiry } = {}) {
+  const sym = await normalizeFutureSymbol(symbol);
+  return getFutureQuote({ symbol: sym, expiry });
 }
 
 function pickLegLtp(leg) {
@@ -828,6 +1109,8 @@ module.exports = {
   getStatus,
   getQuote,
   getExpiries,
+  getInstrumentUniverse,
+  getFuture,
   getChainAroundAtm,
   listTrades,
   listActions,

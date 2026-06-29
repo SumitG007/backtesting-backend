@@ -35,6 +35,8 @@ const {
   getManualExpiries,
   getManualQuote,
   getManualChain,
+  getManualInstruments,
+  getManualFutureQuote,
   postManualOrder,
   deleteManualOrder,
   postManualClosePosition,
@@ -86,6 +88,8 @@ router.get('/manual-console/status', getManualConsoleStatus);
 router.get('/manual-console/expiries', getManualExpiries);
 router.get('/manual-console/quote', getManualQuote);
 router.get('/manual-console/chain', getManualChain);
+router.get('/manual-console/instruments', getManualInstruments);
+router.get('/manual-console/future-quote', getManualFutureQuote);
 router.post('/manual-console/orders', postManualOrder);
 router.delete('/manual-console/orders/:orderId', deleteManualOrder);
 router.post('/manual-console/positions/:tradeId/close', postManualClosePosition);

@@ -658,6 +658,87 @@ async function resolveFutureInstrument({ symbol, expiry }) {
   };
 }
 
+/** Distinct list of NSE stock-future (FUTSTK) underlyings, sorted A→Z. */
+async function listFutureUnderlyings() {
+  const rows = await loadInstrumentMaster();
+  const set = new Set();
+  for (const r of rows) {
+    const instr = String(pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE', 'SEM_INSTRUMENT_NAME']) || '').toUpperCase();
+    if (instr !== 'FUTSTK') continue;
+    if (normalizeExchangeSegment(r) !== 'NSE_FNO') continue;
+    const ul = String(pickField(r, ['UNDERLYING_SYMBOL', 'UNDERLYING']) || '').toUpperCase().trim();
+    if (ul) set.add(ul);
+  }
+  return [...set].sort();
+}
+
+/** POST /marketfeed/ltp — returns { SEGMENT: { securityId: { last_price } } }. */
+async function fetchMarketLtp(segmentToIds) {
+  const body = {};
+  for (const [seg, ids] of Object.entries(segmentToIds || {})) {
+    const nums = (ids || []).map((v) => Number(v)).filter((n) => Number.isFinite(n));
+    if (nums.length) body[seg] = nums;
+  }
+  if (!Object.keys(body).length) return {};
+  const resp = await postWithAuthRetry('/marketfeed/ltp', body, 'marketfeed-ltp');
+  return resp.data?.data || resp.data || {};
+}
+
+/** Resolve last price for a resolved future/instrument via REST, falling back to WS ticker. */
+async function fetchInstrumentLtp(inst) {
+  const segment = inst.exchangeSegment || 'NSE_FNO';
+  const securityId = String(inst.securityId);
+  try {
+    const data = await fetchMarketLtp({ [segment]: [securityId] });
+    const seg = data?.[segment] || {};
+    const node = seg[securityId] || seg[Number(securityId)] || {};
+    const ltp = Number(node.last_price ?? node.ltp ?? node.LTP);
+    if (Number.isFinite(ltp) && ltp > 0) return ltp;
+  } catch {
+    // fall back to WS ticker below
+  }
+  const key = `fut:${segment}:${securityId}`;
+  subscribeLiveInstrument({ key, securityId, exchangeSegment: segment, onTick: () => {} });
+  for (let i = 0; i < 10; i += 1) {
+    const last = Number(getLastPrice(key)?.ltp);
+    if (Number.isFinite(last) && last > 0) return last;
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  throw new Error('Future LTP unavailable (no REST or WS data yet)');
+}
+
+/** Live last price for a stock/index future by underlying + (optional) expiry. */
+async function getFutureLtp({ symbol, expiry } = {}) {
+  const inst = await resolveFutureInstrument({ symbol, expiry });
+  const ltp = await fetchInstrumentLtp(inst);
+  return { ltp, instrument: inst };
+}
+
+/**
+ * Quote for the futures order ticket: nearest tradable expiry, LTP, lot size and
+ * the full expiry list so the UI can let the user roll to the next month.
+ */
+async function getFutureQuote({ symbol, expiry } = {}) {
+  const upper = String(symbol || '').toUpperCase();
+  const expiries = await listFutureExpiries(upper);
+  if (!expiries.length) throw new Error(`No futures contracts found for ${upper}`);
+  const wanted = expiry ? String(expiry).slice(0, 10) : null;
+  const inst = (wanted && expiries.find((e) => e.expiry === wanted)) || expiries[0];
+  const ltp = await fetchInstrumentLtp(inst);
+  const lotSize = await getCurrentLotSize(upper);
+  return {
+    symbol: upper,
+    expiry: inst.expiry,
+    expiries: expiries.map((e) => e.expiry),
+    ltp,
+    lotSize,
+    securityId: inst.securityId,
+    exchangeSegment: inst.exchangeSegment,
+    tradingSymbol: inst.tradingSymbol,
+  };
+}
+
 async function resolveOptionInstrument({ symbol, strike, expiry, optionType }) {
   const upperSymbol = String(symbol || '').toUpperCase();
   const normalizedExpiry = String(expiry || '').slice(0, 10);
@@ -875,8 +956,12 @@ module.exports = {
   getAtmPremiums,
   pickSecurityIdFromRow,
   listFutureExpiries,
+  listFutureUnderlyings,
   resolveFutureInstrument,
   futureInstrumentTypeForUnderlying,
+  fetchMarketLtp,
+  getFutureLtp,
+  getFutureQuote,
   resolveOptionInstrument,
   estimateShortStraddleMargin,
   subscribeLiveInstrument,

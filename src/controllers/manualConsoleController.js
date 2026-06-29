@@ -55,6 +55,27 @@ async function getManualChain(req, res) {
   }
 }
 
+async function getManualInstruments(_req, res) {
+  try {
+    const data = await manualEngine.getInstrumentUniverse();
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualFutureQuote(req, res) {
+  try {
+    const data = await manualEngine.getFuture({
+      symbol: req.query?.symbol,
+      expiry: req.query?.expiry,
+    });
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
 async function postManualOrder(req, res) {
   try {
     const result = await manualEngine.createOrder(req.body || {});
@@ -103,14 +124,21 @@ async function patchManualPositionRisk(req, res) {
     const tradeId = String(req.params?.tradeId || '').trim();
     if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId required' });
     const body = req.body || {};
-    const trade = await manualEngine.updatePositionRisk(tradeId, {
-      stopLossPoints: Object.prototype.hasOwnProperty.call(body, 'stopLossPoints')
-        ? body.stopLossPoints
-        : undefined,
-      targetProfitPoints: Object.prototype.hasOwnProperty.call(body, 'targetProfitPoints')
-        ? body.targetProfitPoints
-        : undefined,
-    });
+    const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    const riskPayload = {};
+    if (has('stopLossValue')) {
+      riskPayload.stopLossValue = body.stopLossValue;
+      riskPayload.stopLossMode = body.stopLossMode;
+    } else if (has('stopLossPoints')) {
+      riskPayload.stopLossPoints = body.stopLossPoints;
+    }
+    if (has('targetValue')) {
+      riskPayload.targetValue = body.targetValue;
+      riskPayload.targetMode = body.targetMode;
+    } else if (has('targetProfitPoints')) {
+      riskPayload.targetProfitPoints = body.targetProfitPoints;
+    }
+    const trade = await manualEngine.updatePositionRisk(tradeId, riskPayload);
     return res.json({
       ok: true,
       trade,
@@ -160,6 +188,8 @@ module.exports = {
   getManualExpiries,
   getManualQuote,
   getManualChain,
+  getManualInstruments,
+  getManualFutureQuote,
   postManualOrder,
   deleteManualOrder,
   postManualClosePosition,
