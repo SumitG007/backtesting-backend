@@ -39,6 +39,7 @@ const MIN_HOLD_MS = 30000;
 const DEFAULT_ENTRY_MINUTES = 675; // 11:15 IST
 const EOD_EXIT = 920;
 const DEFAULT_STOP_LOSS_POINTS = 15;
+const DEFAULT_TARGET_PROFIT_POINTS = 100;
 const TERMINAL_SKIP_REASONS = new Set(['neutral_day', 'direction_tie']);
 
 const engineState = {
@@ -55,7 +56,7 @@ const engineState = {
     entryTime: '11:15',
     entryWindowMinutes: 0,
     stopLossPoints: DEFAULT_STOP_LOSS_POINTS,
-    targetProfitPoints: null,
+    targetProfitPoints: DEFAULT_TARGET_PROFIT_POINTS,
     strikeMode: 'ATM',
     perTradeCost: 100,
     minDirectionScore: 2,
@@ -122,9 +123,24 @@ function normalizeSettings(settings = {}) {
       hasStopLoss = true;
     }
   }
-  const rawTg = Number(settings.targetProfitPoints);
-  const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
-  const targetProfitPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
+  const tgRaw = settings.targetProfitPoints;
+  let hasTarget = true;
+  let targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
+  if (tgRaw === '' || tgRaw === null || tgRaw === undefined) {
+    // Not specified → default target 100 premium points.
+    hasTarget = true;
+    targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
+  } else {
+    const rawTg = Number(tgRaw);
+    if (!Number.isFinite(rawTg) || rawTg <= 0) {
+      // Explicit 0 / invalid → target disabled (exit on SL or EOD).
+      hasTarget = false;
+      targetProfitPoints = 0;
+    } else {
+      targetProfitPoints = Math.min(5000, Math.max(0.01, rawTg));
+      hasTarget = true;
+    }
+  }
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
   const { minDirectionScore } = parseDirectionSettings(settings);
@@ -1093,7 +1109,8 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
       : {};
     const normalized = normalizeSettings({ ...persisted, symbol: persisted.symbol || symbol });
     const prevSl = Number(persisted.stopLossPoints);
-    if (!persisted.stopLossPoints || prevSl === 10) {
+    // Persist normalized defaults when SL legacy (10) or when target was never set (apply new 100 default).
+    if (!persisted.stopLossPoints || prevSl === 10 || persisted.targetProfitPoints == null) {
       wallet.strategy7EngineSettings = normalized;
       await wallet.save();
     }

@@ -772,6 +772,26 @@ async function resolveOptionInstrument({ symbol, strike, expiry, optionType }) {
   };
 }
 
+/**
+ * Distinct OPTIDX expiry dates (YYYY-MM-DD) for an underlying from the instrument master,
+ * sorted ascending. Note: the master only lists CURRENTLY-ACTIVE contracts, so already-expired
+ * weeklies are absent — the backtest uses this to detect which days have resolvable real premiums.
+ */
+async function listOptionExpiriesFromMaster(symbol) {
+  const upper = String(symbol || '').toUpperCase();
+  const rows = await loadInstrumentMaster();
+  const set = new Set();
+  for (const r of rows) {
+    const instrument = String(pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE']) || '').toUpperCase();
+    if (instrument !== 'OPTIDX') continue;
+    const underlying = String(pickField(r, ['UNDERLYING_SYMBOL']) || '').toUpperCase().trim();
+    if (underlying !== upper) continue;
+    const exp = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(exp)) set.add(exp);
+  }
+  return [...set].sort();
+}
+
 function decodeTickerPacket(buffer) {
   // Header (8 bytes) + Ticker payload: LTP (4 byte float) + LTT (4 byte int)
   if (buffer.length < 16) return null;
@@ -963,6 +983,7 @@ module.exports = {
   getFutureLtp,
   getFutureQuote,
   resolveOptionInstrument,
+  listOptionExpiriesFromMaster,
   estimateShortStraddleMargin,
   subscribeLiveInstrument,
   subscribeLiveSymbol,

@@ -5,9 +5,11 @@
 const StrategyRun = require('../../models/strategyRun');
 const StrategyTrade = require('../../models/strategyTrade');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
-const { fetchWithRateLimitRetry } = require('../../services/dhanDataService');
+const { fetchYearCandlesByDayCached } = require('../../services/dhanDataService');
 const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
+const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
+const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
@@ -31,7 +33,7 @@ function buildSettings(req) {
       interval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
-      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
+      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 100),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 10),
@@ -50,7 +52,9 @@ function buildSettings(req) {
 async function runStrategySeven(req, res) {
   try {
     const { settings, yearNum } = buildSettings(req);
-    const payload = await fetchWithRateLimitRetry({
+    // Live parity: fetch per-day (same single-day request the paper-live engine uses)
+    // so the backtest sees the identical day-open Dhan serves live. See dhanDataService.
+    const payload = await fetchYearCandlesByDayCached({
       symbol: settings.symbol,
       interval: settings.interval,
       year: yearNum,
@@ -61,18 +65,35 @@ async function runStrategySeven(req, res) {
       settings,
     });
 
+    // Live parity: swap the worker's synthetic premiums for REAL option premiums where the
+    // contract is still resolvable, then rebuild the summary off the repriced trades.
+    const enriched = await enrichStrategySevenTradesWithRealPremiums({
+      trades: result.trades,
+      settings,
+    });
+    const trades = enriched.trades;
+    const summary = {
+      ...buildStrategyRunSummary(trades),
+      skippedDays: result.summary.skippedDays,
+      minDirectionScore: result.summary.minDirectionScore,
+      putTrades: result.summary.putTrades,
+      callTrades: result.summary.callTrades,
+      realPremiumTrades: enriched.realCount,
+      modelPremiumTrades: enriched.modelCount,
+    };
+
     const runDoc = await StrategyRun.create({
       strategyKey: TIER.key,
       symbol: settings.symbol,
       interval: settings.interval,
       year: yearNum,
       settings,
-      summary: result.summary,
+      summary,
       status: 'completed',
     });
 
-    if (result.trades.length > 0) {
-      await StrategyTrade.insertMany(mapTradesForInsert(result.trades, runDoc._id, TIER.key));
+    if (trades.length > 0) {
+      await StrategyTrade.insertMany(mapTradesForInsert(trades, runDoc._id, TIER.key));
     }
 
     const pageSize = 25;
@@ -83,13 +104,13 @@ async function runStrategySeven(req, res) {
       year: yearNum,
       symbol: settings.symbol,
       interval: settings.interval,
-      summary: result.summary,
-      trades: result.trades.slice(0, pageSize),
+      summary,
+      trades: trades.slice(0, pageSize),
       pagination: {
         page: 1,
         pageSize,
-        totalRows: result.trades.length,
-        totalPages: Math.max(1, Math.ceil(result.trades.length / pageSize)),
+        totalRows: trades.length,
+        totalPages: Math.max(1, Math.ceil(trades.length / pageSize)),
       },
       settings,
     });

@@ -8,6 +8,7 @@ const {
   differenceInDaysInclusive,
   normalizeTimestamp,
   getIstClock,
+  isWeekendDateKey,
   sleep,
 } = require('../utils/dateTime');
 const { resolveSymbolConfig } = require('../utils/market');
@@ -267,6 +268,88 @@ async function fetchYearCandles({ symbol, interval, year }) {
   return { rows: allRows, fromDate, toDate };
 }
 
+const yearByDayCache = new Map();
+
+/**
+ * Backtest candle source with LIVE PARITY: instead of one wide 90-day range request
+ * (which makes Dhan return a range-dependent open for the first candle of each day),
+ * pull every trading session via the SAME single-day intraday request the paper-live
+ * engine uses (`fetchTradingDayCandles`). This guarantees the backtest sees the exact
+ * same OHLC — especially the 09:15 open — that live trades on.
+ */
+async function fetchYearCandlesByDay({ symbol, interval, year }) {
+  const resolved = resolveSymbolConfig(symbol);
+  if (!resolved.securityId || !resolved.exchangeSegment) {
+    throw new Error('Unsupported symbol selected');
+  }
+
+  let isNseCashTradingDay = () => true;
+  try {
+    // Lazy require avoids any circular-import risk at module load.
+    const nse = require('./nseHolidayService');
+    await nse.ensureNseHolidaysLoaded();
+    isNseCashTradingDay = nse.isNseCashTradingDay;
+  } catch {
+    // Holiday list unavailable — holidays just return empty candle sets and are skipped.
+  }
+
+  const { fromDate, toDate } = getYearRange(year);
+  const allRows = [];
+  let cursor = parseDateOnly(fromDate);
+  const end = parseDateOnly(toDate);
+
+  while (cursor <= end) {
+    const dayKey = formatDateOnly(cursor);
+    cursor = addDays(cursor, 1);
+    if (isWeekendDateKey(dayKey) || !isNseCashTradingDay(dayKey)) continue;
+
+    let rows = null;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const res = await fetchTradingDayCandles({ symbol, interval, dateKey: dayKey });
+        rows = res.rows;
+        break;
+      } catch (error) {
+        const code = error?.response?.data?.errorCode || error?.cause?.response?.data?.errorCode;
+        if (code === 'DH-904' && attempt < 3) {
+          await sleep((attempt + 1) * 2000);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (rows && rows.length) {
+      for (const r of rows) allRows.push(r);
+    }
+  }
+
+  allRows.sort((a, b) => new Date(a[0]) - new Date(b[0]));
+  return { rows: allRows, fromDate, toDate };
+}
+
+/**
+ * Cached wrapper for {@link fetchYearCandlesByDay}. Completed years are immutable so they
+ * are cached; the current year is always refetched so today's still-forming session stays fresh.
+ */
+const CURRENT_YEAR_BYDAY_TTL_MS = 2 * 60 * 1000; // 2 min — fresh enough for "today" yet fast on repeat clicks
+
+async function fetchYearCandlesByDayCached({ symbol, interval, year }) {
+  const symKey = String(symbol || '').toUpperCase();
+  const cacheKey = `${symKey}:${interval}:${year}`;
+  const isPastYear = Number(year) < new Date().getFullYear();
+  const cached = yearByDayCache.get(cacheKey);
+  if (cached) {
+    // Completed years are immutable → cache forever; current year → short TTL so today stays fresh.
+    if (isPastYear || Date.now() - cached.at < CURRENT_YEAR_BYDAY_TTL_MS) {
+      return cached.payload;
+    }
+  }
+  const payload = await fetchYearCandlesByDay({ symbol, interval, year });
+  yearByDayCache.set(cacheKey, { payload, at: Date.now() });
+  return payload;
+}
+
 /** Single IST session stats from 1-min candles when the daily bar for today is not ready yet. */
 async function fetchIntradayDayStats({ dateKey, securityId, exchangeSegment, instrument }) {
   const raw = await fetchDhanIntradayChunk({
@@ -314,13 +397,27 @@ async function fetchTradingDayCandles({ symbol, interval, dateKey }) {
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol selected');
   }
+  return fetchIntradayCandlesBySecurity({
+    securityId: resolved.securityId,
+    exchangeSegment: resolved.exchangeSegment,
+    instrument: resolved.instrument,
+    interval,
+    dateKey,
+  });
+}
+
+/**
+ * Single-day intraday candles for an arbitrary Dhan contract (index, future, or OPTION
+ * contract by securityId). Used by the backtest to pull REAL historical option premiums.
+ */
+async function fetchIntradayCandlesBySecurity({ securityId, exchangeSegment, instrument, interval, dateKey }) {
   const raw = await fetchDhanIntradayChunk({
     fromDate: dateKey,
     toDate: dateKey,
     interval: String(interval),
-    securityId: resolved.securityId,
-    exchangeSegment: resolved.exchangeSegment,
-    instrument: resolved.instrument,
+    securityId,
+    exchangeSegment,
+    instrument,
   });
   await sleep(150);
 
@@ -388,8 +485,11 @@ module.exports = {
   isDh905Error,
   extractDhanApiError,
   fetchWithRateLimitRetry,
+  fetchYearCandlesByDay,
+  fetchYearCandlesByDayCached,
   fetchIntradayDayVolume,
   fetchIntradayDayStats,
   fetchTradingDayCandles,
+  fetchIntradayCandlesBySecurity,
   getCandlesWithCache,
 };
