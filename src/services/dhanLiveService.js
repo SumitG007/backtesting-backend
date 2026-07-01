@@ -658,18 +658,135 @@ async function resolveFutureInstrument({ symbol, expiry }) {
   };
 }
 
-/** Distinct list of NSE stock-future (FUTSTK) underlyings, sorted A→Z. */
-async function listFutureUnderlyings() {
+/** NSE/BSE sandbox test contracts in the Dhan master (e.g. 011NSETEST) — not real tradable stocks. */
+function isTradableStockUnderlying(symbol) {
+  const ul = String(symbol || '').toUpperCase().trim();
+  if (!ul) return false;
+  if (/NSETEST|BSETEST/.test(ul)) return false;
+  return true;
+}
+
+function shouldPreferExpiry(current, candidate, today) {
+  if (!candidate) return false;
+  if (!current) return true;
+  const curFuture = current >= today;
+  const candFuture = candidate >= today;
+  if (candFuture && !curFuture) return true;
+  if (!candFuture && curFuture) return false;
+  return candidate < current;
+}
+
+/** Build export rows for NSE stock F&O underlyings (symbol, lot, nearest expiry, underlying security id). */
+async function buildStockUnderlyingMeta(instrumentType) {
+  const wanted = String(instrumentType || '').toUpperCase();
   const rows = await loadInstrumentMaster();
-  const set = new Set();
+  const today = new Date().toISOString().slice(0, 10);
+  const bySymbol = new Map();
+
   for (const r of rows) {
     const instr = String(pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE', 'SEM_INSTRUMENT_NAME']) || '').toUpperCase();
-    if (instr !== 'FUTSTK') continue;
+    if (instr !== wanted) continue;
     if (normalizeExchangeSegment(r) !== 'NSE_FNO') continue;
-    const ul = String(pickField(r, ['UNDERLYING_SYMBOL', 'UNDERLYING']) || '').toUpperCase().trim();
-    if (ul) set.add(ul);
+    const symbol = String(pickField(r, ['UNDERLYING_SYMBOL', 'UNDERLYING']) || '').toUpperCase().trim();
+    if (!isTradableStockUnderlying(symbol)) continue;
+
+    const expiry = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
+    const lotSizeRaw = Number(pickField(r, ['LOT_SIZE', 'SEM_LOT_UNITS', 'LotSize']));
+    const underlyingSecurityId = String(pickField(r, ['UNDERLYING_SECURITY_ID', 'UNDERLYING_SECURITY']) || '').trim();
+
+    let entry = bySymbol.get(symbol);
+    if (!entry) {
+      entry = {
+        symbol,
+        underlyingSecurityId: underlyingSecurityId || null,
+        lotSize: null,
+        nearestExpiry: null,
+      };
+      bySymbol.set(symbol, entry);
+    }
+
+    if (underlyingSecurityId && !entry.underlyingSecurityId) {
+      entry.underlyingSecurityId = underlyingSecurityId;
+    }
+
+    if (shouldPreferExpiry(entry.nearestExpiry, expiry, today)) {
+      entry.nearestExpiry = expiry;
+      if (Number.isFinite(lotSizeRaw) && lotSizeRaw > 0) {
+        entry.lotSize = Math.floor(lotSizeRaw);
+      }
+    } else if (!entry.lotSize && Number.isFinite(lotSizeRaw) && lotSizeRaw > 0) {
+      entry.lotSize = Math.floor(lotSizeRaw);
+    }
   }
-  return [...set].sort();
+
+  return [...bySymbol.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+}
+
+/** Batch-fetch NSE equity LTP for underlying security ids (spot / current price). */
+async function fetchEquityLtpsBatch(securityIds) {
+  const prices = new Map();
+  const unique = [...new Set(
+    (securityIds || []).map((id) => String(id)).filter((id) => /^\d+$/.test(id)),
+  )];
+  const chunkSize = 50;
+
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    try {
+      const data = await fetchMarketLtp({ NSE_EQ: chunk.map((id) => Number(id)) });
+      const seg = data?.NSE_EQ || {};
+      for (const id of chunk) {
+        const node = seg[id] || seg[Number(id)] || {};
+        const ltp = Number(node.last_price ?? node.ltp ?? node.LTP);
+        if (Number.isFinite(ltp) && ltp > 0) {
+          prices.set(String(id), Number(ltp.toFixed(2)));
+        }
+      }
+    } catch {
+      // keep partial prices when a batch fails
+    }
+    if (i + chunkSize < unique.length) {
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+
+  return prices;
+}
+
+/** Export-ready rows: sr no, symbol, current price, lot size, nearest expiry. */
+async function getStockUnderlyingExportRows(instrumentType) {
+  const meta = await buildStockUnderlyingMeta(instrumentType);
+  let ltpBySecurityId = new Map();
+  try {
+    ltpBySecurityId = await fetchEquityLtpsBatch(meta.map((row) => row.underlyingSecurityId));
+  } catch {
+    // CSV still useful without live prices
+  }
+
+  return meta.map((row, index) => ({
+    srNo: index + 1,
+    symbol: row.symbol,
+    currentPrice: ltpBySecurityId.get(String(row.underlyingSecurityId)) ?? '',
+    lotSize: row.lotSize ?? '',
+    nearestExpiry: row.nearestExpiry ?? '',
+  }));
+}
+
+/** Distinct NSE F&O stock underlyings for a given instrument type (OPTSTK / FUTSTK), sorted A→Z. */
+async function listStockUnderlyings(instrumentType) {
+  const meta = await buildStockUnderlyingMeta(instrumentType);
+  return meta.map((row) => row.symbol);
+}
+
+/** Distinct list of NSE stock-future (FUTSTK) underlyings, sorted A→Z. */
+async function listFutureUnderlyings() {
+  return listStockUnderlyings('FUTSTK');
+}
+
+/** Distinct list of NSE stock-option (OPTSTK) underlyings, sorted A→Z. */
+async function listOptionStockUnderlyings() {
+  return listStockUnderlyings('OPTSTK');
 }
 
 /** POST /marketfeed/ltp — returns { SEGMENT: { securityId: { last_price } } }. */
@@ -977,6 +1094,10 @@ module.exports = {
   pickSecurityIdFromRow,
   listFutureExpiries,
   listFutureUnderlyings,
+  listOptionStockUnderlyings,
+  buildStockUnderlyingMeta,
+  isTradableStockUnderlying,
+  getStockUnderlyingExportRows,
   resolveFutureInstrument,
   futureInstrumentTypeForUnderlying,
   fetchMarketLtp,

@@ -31,6 +31,11 @@ const {
   reopenLiveTrade,
 } = require('../controllers/liveTradeController');
 const {
+  getInstrumentSummary,
+  exportOptionStocksCsv,
+  exportFutureStocksCsv,
+} = require('../controllers/instrumentDataController');
+const {
   getManualConsoleStatus,
   getManualExpiries,
   getManualQuote,
@@ -57,6 +62,9 @@ router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
 router.get('/data/candles/day', getCandlesDay);
+router.get('/data/option-stocks.csv', exportOptionStocksCsv);
+router.get('/data/future-stocks.csv', exportFutureStocksCsv);
+router.get('/data/instrument-summary', getInstrumentSummary);
 // Strategy 2 — short straddle (entry day + next day exit)
 router.post('/strategy2/run', runStrategyShortStraddleNextDay);
 router.post('/strategy2/validation', postStrategyShortStraddleValidation);

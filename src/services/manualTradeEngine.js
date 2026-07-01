@@ -25,6 +25,7 @@ const {
   listFutureExpiries,
   getFutureLtp,
   getFutureQuote,
+  isTradableStockUnderlying,
 } = require('./dhanLiveService');
 
 const STRATEGY_KEY = MANUAL_CONSOLE_LIVE_KEY;
@@ -87,6 +88,9 @@ function directionSign(trade) {
 async function normalizeFutureSymbol(symbol) {
   const upper = String(symbol || '').toUpperCase().trim();
   if (!upper) throw new Error('Futures symbol required');
+  if (!isTradableStockUnderlying(upper)) {
+    throw new Error(`Test/sandbox symbol not allowed: ${upper}`);
+  }
   if (ALLOWED_SYMBOLS.has(upper)) return upper; // NIFTY/BANKNIFTY also have index futures
   const list = await listFutureUnderlyings();
   if (!list.includes(upper)) throw new Error(`No stock future found for ${upper}`);
@@ -941,8 +945,8 @@ async function getInstrumentUniverse() {
     futures = [];
   }
   const indexOptions = [...ALLOWED_SYMBOLS];
-  // Stock futures exclude the index symbols (those trade as options here).
-  const stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s));
+  // Stock futures exclude the index symbols (those trade as options here) and sandbox test names.
+  const stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s) && isTradableStockUnderlying(s));
   return { indexOptions, stockFutures };
 }
 
