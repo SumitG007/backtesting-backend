@@ -53,6 +53,8 @@ const liveWalletSchema = new mongoose.Schema(
       strikeMode: { type: String, default: 'ATM' },
       perTradeCost: { type: Number, default: 100 },
       minDirectionScore: { type: Number, default: 2 },
+      enabledPeSignals: { type: [String], default: undefined },
+      enabledCeSignals: { type: [String], default: undefined },
     },
     strategy7SkippedDateKey: { type: String, default: null },
     strategy7LastSkipReason: { type: String, default: null },

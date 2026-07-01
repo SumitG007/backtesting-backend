@@ -6,9 +6,43 @@
 const { getIstClock } = require('../../utils/dateTime');
 const { computeDayMetrics, applyEarlyBreakFlags } = require('../../analysis/dayMetrics');
 
-const M1000 = 600;
 const DEFAULT_BAR_INTERVAL_MINUTES = 5;
 const DEFAULT_MIN_DIRECTION_SCORE = 2;
+
+const ALL_PE_SIGNALS = [
+  'below_open',
+  'pdl_break',
+  'gap_down_hold',
+  'gap_down',
+  'orb_low_break',
+  'gap_up_fade',
+];
+
+const ALL_CE_SIGNALS = [
+  'above_open',
+  'pdh_break',
+  'gap_up_hold',
+  'gap_up',
+  'orb_high_break',
+  'gap_down_fade',
+];
+
+function parseEnabledSignalList(raw, allowed) {
+  if (raw == null) return [...allowed];
+  if (Array.isArray(raw)) {
+    const set = new Set(raw.map((id) => String(id)));
+    return allowed.filter((id) => set.has(id));
+  }
+  if (typeof raw === 'object') {
+    return allowed.filter((id) => raw[id] !== false && raw[id] !== 'false' && raw[id] !== 0);
+  }
+  return [...allowed];
+}
+
+function filterSignalsByEnabled(signals, enabledList) {
+  const enabled = new Set(enabledList);
+  return signals.filter((id) => enabled.has(id));
+}
 
 function buildPrevDayMap(sortedKeys, intraByDay) {
   const map = new Map();
@@ -68,15 +102,6 @@ function brokeLevelBefore(dayBars, level, asOfMinutes, side) {
   return false;
 }
 
-function entryBarBodyPct(entryBar, dayOpen) {
-  const entryOpen = Number(entryBar[1]);
-  const entryClose = Number(entryBar[4]);
-  if (!Number.isFinite(entryOpen) || !Number.isFinite(entryClose) || !Number.isFinite(dayOpen) || dayOpen <= 0) {
-    return 0;
-  }
-  return (Math.abs(entryClose - entryOpen) / dayOpen) * 100;
-}
-
 /**
  * Score bearish (PE) and bullish (CE) signals at entry. Higher score = stronger case.
  */
@@ -86,6 +111,8 @@ function scoreDirectionalBias(
   entryIdx,
   decisionMinutes,
   barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
+  enabledPeSignals = ALL_PE_SIGNALS,
+  enabledCeSignals = ALL_CE_SIGNALS,
 ) {
   const entryBar = dayBars[entryIdx];
   if (!entryBar || !metrics) {
@@ -97,10 +124,8 @@ function scoreDirectionalBias(
     Number.isFinite(decisionMinutes) ? decisionMinutes : barOpenMinutes + barIntervalMinutes;
   const open = Number(dayBars[0][1]);
   const entryClose = Number(entryBar[4]);
-  const entryOpen = Number(entryBar[1]);
   const prevHigh = metrics._prevHigh ?? null;
   const prevLow = metrics._prevLow ?? null;
-  const bodyPct = entryBarBodyPct(entryBar, open);
 
   const peSignals = [];
   const ceSignals = [];
@@ -148,29 +173,18 @@ function scoreDirectionalBias(
     ceSignals.push('orb_high_break');
   }
 
-  if (asOfMinutes >= M1000 && metrics.firstHourRed) {
-    peSignals.push('first_hour_red');
-  }
-  if (asOfMinutes >= M1000 && metrics.firstHourGreen) {
-    ceSignals.push('first_hour_green');
-  }
-
-  if (Number.isFinite(entryOpen) && Number.isFinite(entryClose) && entryClose < entryOpen && bodyPct >= 0.03) {
-    peSignals.push('red_entry_bar');
-  }
-  if (Number.isFinite(entryOpen) && Number.isFinite(entryClose) && entryClose > entryOpen && bodyPct >= 0.03) {
-    ceSignals.push('green_entry_bar');
-  }
-
   // Mild gap fade: gap up filled to prev close often turns red; gap down filled often turns green.
   if (metrics.gapFilledUp) peSignals.push('gap_up_fade');
   if (metrics.gapFilledDown) ceSignals.push('gap_down_fade');
 
+  const filteredPe = filterSignalsByEnabled(peSignals, enabledPeSignals);
+  const filteredCe = filterSignalsByEnabled(ceSignals, enabledCeSignals);
+
   return {
-    peScore: peSignals.length,
-    ceScore: ceSignals.length,
-    peSignals,
-    ceSignals,
+    peScore: filteredPe.length,
+    ceScore: filteredCe.length,
+    peSignals: filteredPe,
+    ceSignals: filteredCe,
   };
 }
 
@@ -209,6 +223,8 @@ function evaluatePutBuyDirection({
   filterCtx,
   entryDecisionMinutes,
   minDirectionScore,
+  enabledPeSignals = ALL_PE_SIGNALS,
+  enabledCeSignals = ALL_CE_SIGNALS,
   barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
   requireFollowingBar = true,
   followingBarsDayBars = null,
@@ -227,6 +243,8 @@ function evaluatePutBuyDirection({
     metrics,
     entryDecisionMinutes,
     minDirectionScore,
+    enabledPeSignals,
+    enabledCeSignals,
     barIntervalMinutes,
     requireFollowingBar,
   });
@@ -246,6 +264,8 @@ function resolvePutBuyEntry({
   entryFromMin,
   entryToMin,
   minDirectionScore = DEFAULT_MIN_DIRECTION_SCORE,
+  enabledPeSignals = ALL_PE_SIGNALS,
+  enabledCeSignals = ALL_CE_SIGNALS,
   barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
   /** Backtest exit sim needs at least one bar after the signal bar; live uses real ticks. */
   requireFollowingBar = true,
@@ -264,7 +284,15 @@ function resolvePutBuyEntry({
     return { skip: true, skipReason: 'no_entry_bar', entryIdx: null, optionType: null };
   }
 
-  const bias = scoreDirectionalBias(metrics, dayBars, entryIdx, decisionMinutes, barIntervalMinutes);
+  const bias = scoreDirectionalBias(
+    metrics,
+    dayBars,
+    entryIdx,
+    decisionMinutes,
+    barIntervalMinutes,
+    enabledPeSignals,
+    enabledCeSignals,
+  );
   const minScore = Math.max(1, Number(minDirectionScore) || DEFAULT_MIN_DIRECTION_SCORE);
 
   if (bias.peScore >= minScore && bias.peScore > bias.ceScore) {
@@ -306,10 +334,21 @@ function parseDirectionSettings(settings = {}) {
   const minDirectionScore =
     Number.isFinite(rawMin) && rawMin >= 1 ? Math.min(6, Math.floor(rawMin)) : DEFAULT_MIN_DIRECTION_SCORE;
 
-  return { minDirectionScore };
+  const enabledPeSignals = parseEnabledSignalList(
+    settings.enabledPeSignals ?? settings.peSignalFilters,
+    ALL_PE_SIGNALS,
+  );
+  const enabledCeSignals = parseEnabledSignalList(
+    settings.enabledCeSignals ?? settings.ceSignalFilters,
+    ALL_CE_SIGNALS,
+  );
+
+  return { minDirectionScore, enabledPeSignals, enabledCeSignals };
 }
 
 module.exports = {
+  ALL_PE_SIGNALS,
+  ALL_CE_SIGNALS,
   DEFAULT_BAR_INTERVAL_MINUTES,
   DEFAULT_MIN_DIRECTION_SCORE,
   buildPutBuyFilterContext,

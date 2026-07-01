@@ -21,6 +21,18 @@ const TIER = {
   defaultInterval: '5',
 };
 
+function parseEnabledSignalsFromBody(body, key, fallbackKey) {
+  const raw = body?.[key] ?? body?.[fallbackKey];
+  if (raw == null) return undefined;
+  if (Array.isArray(raw)) return raw.map((id) => String(id));
+  if (typeof raw === 'object') {
+    return Object.entries(raw)
+      .filter(([, enabled]) => enabled !== false && enabled !== 'false' && enabled !== 0)
+      .map(([id]) => String(id));
+  }
+  return undefined;
+}
+
 function buildSettings(req) {
   const { symbol = 'NIFTY', year = 2026 } = req.body || {};
   const rawIv = String(parseStringInput(req.body?.interval, TIER.defaultInterval));
@@ -33,7 +45,7 @@ function buildSettings(req) {
       interval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
-      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 100),
+      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 10),
@@ -44,6 +56,8 @@ function buildSettings(req) {
       entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
       entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
       minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
+      enabledPeSignals: parseEnabledSignalsFromBody(req.body, 'enabledPeSignals', 'peSignalFilters'),
+      enabledCeSignals: parseEnabledSignalsFromBody(req.body, 'enabledCeSignals', 'ceSignalFilters'),
     },
     yearNum: parseNumberInput(year, 2026),
   };

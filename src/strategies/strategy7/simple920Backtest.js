@@ -3,7 +3,7 @@
  * Direction + day metrics use only candles completed by entry time (live-parity, no lookahead).
  */
 
-const { parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
+const { parseClockMinutes, isWeekendDateKey, buildIstWallClockTimestamp } = require('../../utils/dateTime');
 const { isNseCashTradingDay } = require('../../services/nseHolidayService');
 const { getLotSize, getStrikeStep } = require('../../utils/market');
 const { buildStrategyRunSummary } = require('../shared/summary');
@@ -47,7 +47,7 @@ function runSimple920Backtest({ candles, settings }) {
   const entryToMin = parseClockMinutes(settings.entryToTime ?? settings.entryTime, entryFromMin);
   const entryDecisionMinutes = Math.min(entryFromMin, entryToMin);
 
-  const { minDirectionScore } = parseDirectionSettings(settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
 
   const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
   const sortedKeys = Array.from(intraByDay.keys()).sort();
@@ -69,6 +69,8 @@ function runSimple920Backtest({ candles, settings }) {
       filterCtx,
       entryDecisionMinutes,
       minDirectionScore,
+      enabledPeSignals,
+      enabledCeSignals,
       requireFollowingBar: true,
     });
 
@@ -130,6 +132,7 @@ function runSimple920Backtest({ candles, settings }) {
         stopPremium,
         hasTarget,
         targetPremium,
+        entryTime: new Date(buildIstWallClockTimestamp(dayKey, entryDecisionMinutes)).toISOString(),
       }),
     );
   }

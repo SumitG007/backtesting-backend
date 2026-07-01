@@ -49,12 +49,12 @@ function sessionFilter(rows) {
   });
 }
 
-/** Index of the option bar matching the entry clock minute (last bar at/<= entry minute). */
-function findEntryBarIdx(optionBars, entryMinutes) {
+/** Last option/index bar fully closed at entry clock (5m bar ending at entry minute). */
+function findEntryBarIdx(optionBars, entryMinutes, barIntervalMinutes = 5) {
   let idx = -1;
   for (let i = 0; i < optionBars.length; i += 1) {
     const m = getIstClock(optionBars[i][0]).minutes;
-    if (m <= entryMinutes) idx = i;
+    if (m + barIntervalMinutes <= entryMinutes) idx = i;
     else break;
   }
   return idx;

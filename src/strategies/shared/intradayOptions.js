@@ -260,6 +260,7 @@ function buildLongOptionTrade({
   stopPremium,
   hasTarget,
   targetPremium,
+  entryTime = null,
   extra = {},
 }) {
   const invested = entryPremium * lotSize * lotCount;
@@ -279,7 +280,7 @@ function buildLongOptionTrade({
     finalValue: Number(finalValue.toFixed(2)),
     closed: optionType,
     order: 'BUY',
-    entryTime: dayBars[entryIdx][0],
+    entryTime: entryTime ?? dayBars[entryIdx][0],
     exitTime: dayBars[exitIdx][0],
     entryPrice: Number(entrySpot.toFixed(2)),
     exitPrice: Number(exitSpot.toFixed(2)),

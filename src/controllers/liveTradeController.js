@@ -367,8 +367,19 @@ function stopLive(req, res) {
 }
 
 const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct', 'targetVolCrushPct', 'stopVolExpandPct']);
+const SIGNAL_LIST_KEYS = new Set(['enabledPeSignals', 'enabledCeSignals']);
 
 function coerceLiveEngineSetting(key, value) {
+  if (SIGNAL_LIST_KEYS.has(key)) {
+    if (value == null) return undefined;
+    if (Array.isArray(value)) return value.map((id) => String(id));
+    if (typeof value === 'object') {
+      return Object.entries(value)
+        .filter(([, enabled]) => enabled !== false && enabled !== 'false' && enabled !== 0)
+        .map(([id]) => String(id));
+    }
+    return undefined;
+  }
   if (typeof value === 'string' && /Time$/.test(key)) {
     return value.trim();
   }

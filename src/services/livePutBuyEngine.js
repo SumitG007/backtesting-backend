@@ -4,7 +4,7 @@
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
-const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../utils/dateTime');
+const { getIstClock, parseClockMinutes, isWeekendDateKey, buildIstWallClockTimestamp } = require('../utils/dateTime');
 const {
   ensureNseHolidaysLoaded,
   isNseCashTradingDay,
@@ -39,7 +39,6 @@ const MIN_HOLD_MS = 30000;
 const DEFAULT_ENTRY_MINUTES = 675; // 11:15 IST
 const EOD_EXIT = 920;
 const DEFAULT_STOP_LOSS_POINTS = 15;
-const DEFAULT_TARGET_PROFIT_POINTS = 100;
 const TERMINAL_SKIP_REASONS = new Set(['neutral_day', 'direction_tie']);
 
 const engineState = {
@@ -56,7 +55,7 @@ const engineState = {
     entryTime: '11:15',
     entryWindowMinutes: 0,
     stopLossPoints: DEFAULT_STOP_LOSS_POINTS,
-    targetProfitPoints: DEFAULT_TARGET_PROFIT_POINTS,
+    targetProfitPoints: null,
     strikeMode: 'ATM',
     perTradeCost: 100,
     minDirectionScore: 2,
@@ -124,16 +123,14 @@ function normalizeSettings(settings = {}) {
     }
   }
   const tgRaw = settings.targetProfitPoints;
-  let hasTarget = true;
-  let targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
+  let hasTarget = false;
+  let targetProfitPoints = 0;
   if (tgRaw === '' || tgRaw === null || tgRaw === undefined) {
-    // Not specified → default target 100 premium points.
-    hasTarget = true;
-    targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
+    hasTarget = false;
+    targetProfitPoints = 0;
   } else {
     const rawTg = Number(tgRaw);
     if (!Number.isFinite(rawTg) || rawTg <= 0) {
-      // Explicit 0 / invalid → target disabled (exit on SL or EOD).
       hasTarget = false;
       targetProfitPoints = 0;
     } else {
@@ -143,7 +140,7 @@ function normalizeSettings(settings = {}) {
   }
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
-  const { minDirectionScore } = parseDirectionSettings(settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
 
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
@@ -157,6 +154,8 @@ function normalizeSettings(settings = {}) {
     strikeMode: String(settings.strikeMode || 'ATM').toUpperCase(),
     perTradeCost,
     minDirectionScore,
+    enabledPeSignals,
+    enabledCeSignals,
   };
 }
 
@@ -258,7 +257,7 @@ async function evaluateDirectionResolution(clock) {
   const intraByDay = new Map([[prevKey, prevBars], [clock.dateKey, todayBars]]);
   const sortedKeys = [prevKey, clock.dateKey];
   const ctx = buildPutBuyFilterContext(sortedKeys, intraByDay);
-  const { minDirectionScore } = parseDirectionSettings(engineState.settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(engineState.settings);
   const decisionMinutes = entryMinutes;
   const resolution = evaluatePutBuyDirection({
     dayKey: clock.dateKey,
@@ -266,6 +265,8 @@ async function evaluateDirectionResolution(clock) {
     filterCtx: ctx,
     entryDecisionMinutes: decisionMinutes,
     minDirectionScore,
+    enabledPeSignals,
+    enabledCeSignals,
     requireFollowingBar: false,
   });
   engineState.lastDirectionEval = {
@@ -778,6 +779,7 @@ async function placeLongOption(clock, resolution) {
       ? entryPremium + engineState.settings.targetProfitPoints
       : null;
     const signalNote = Array.isArray(resolution?.signals) ? resolution.signals.join(',') : '';
+    const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
 
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
@@ -791,7 +793,7 @@ async function placeLongOption(clock, resolution) {
       qty,
       entryPremium: Number(entryPremium.toFixed(2)),
       entrySpot: Number(spot.toFixed(2)),
-      entryTime: new Date(),
+      entryTime: new Date(buildIstWallClockTimestamp(clock.dateKey, entryMinutes)),
       entryDateKey: clock.dateKey,
       status: 'OPEN',
       investedAmount: Number(invested.toFixed(2)),
@@ -1109,8 +1111,8 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
       : {};
     const normalized = normalizeSettings({ ...persisted, symbol: persisted.symbol || symbol });
     const prevSl = Number(persisted.stopLossPoints);
-    // Persist normalized defaults when SL legacy (10) or when target was never set (apply new 100 default).
-    if (!persisted.stopLossPoints || prevSl === 10 || persisted.targetProfitPoints == null) {
+    // Persist normalized defaults when SL legacy (10).
+    if (!persisted.stopLossPoints || prevSl === 10) {
       wallet.strategy7EngineSettings = normalized;
       await wallet.save();
     }
