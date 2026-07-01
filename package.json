@@ -9,6 +9,7 @@
     "test:token": "node src/scripts/testToken.js",
     "discover:market": "node scripts/runMarketDiscovery.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
+    "scenarios:s3": "node scripts/runStrategy3MultiYear.js",
     "cache:candles": "node scripts/saveCandleCache.js",
     "mongo:free-space": "node scripts/freeMongoStorage.js",
     "test": "echo \"Error: no test specified\" && exit 1"
