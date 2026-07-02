@@ -1,6 +1,6 @@
 /**
- * Strategy 5 (UI) — blind daily ATM put at entry time (default 09:20 IST).
- * No strategy logic: one PE buy every session that has candle data.
+ * Strategy 5 (UI) — blind daily ATM put + call at entry time (default 09:20 IST).
+ * No strategy logic: one PE and one CE buy every session that has candle data.
  */
 
 const { parseClockMinutes, isWeekendDateKey, buildIstWallClockTimestamp, getIstClock } = require('../../utils/dateTime');
@@ -15,7 +15,9 @@ const {
 } = require('../shared/intradayOptions');
 
 const DEFAULT_ENTRY_MINUTES = 560; // 09:20 IST
+const DEFAULT_STOP_LOSS_POINTS = 15;
 const EOD_EXIT = 920;
+const DAILY_OPTION_TYPES = ['PE', 'CE'];
 
 /** Last fully closed candle at entry clock (e.g. 09:20 on 5m → 09:15–09:20 bar). */
 function findLastCompletedBarAtTime(dayBars, decisionMinutes, barIntervalMinutes) {
@@ -57,6 +59,89 @@ function resolveEntryBarForTimedPut(dayBars, decisionMinutes, barIntervalMinutes
   return 0;
 }
 
+function resolvePremiumExitPoints(rawValue, defaultWhenOmitted) {
+  if (rawValue === undefined || rawValue === null) {
+    return {
+      active: defaultWhenOmitted > 0,
+      points: defaultWhenOmitted > 0 ? defaultWhenOmitted : 0,
+    };
+  }
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { active: false, points: 0 };
+  }
+  return { active: true, points: Math.min(5000, Math.max(0.01, parsed)) };
+}
+
+function runOneTimedLongOption({
+  symbol,
+  lotSize,
+  lotCount,
+  perTradeCost,
+  basePremiumPct,
+  premiumLeverage,
+  strikeStep,
+  strikeMode,
+  dayKey,
+  dayBars,
+  entryIdx,
+  entryDecisionMinutes,
+  optionType,
+  hasStopLoss,
+  stopLossPoints,
+  hasTarget,
+  targetPoints,
+}) {
+  const entrySpot = Number(dayBars[entryIdx][4]);
+  if (!Number.isFinite(entrySpot) || entrySpot <= 0) return null;
+
+  const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
+  const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
+  const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
+  const targetPremium = hasTarget ? entryPremium + targetPoints : null;
+
+  const { exitIdx, exitSpot, exitPremium, reason } = simulateLongOptionExit({
+    dayBars,
+    entryIdx,
+    optionType,
+    entrySpot,
+    entryPremium,
+    strike,
+    strikeStep,
+    premiumLeverage,
+    hasStopLoss,
+    stopPremium,
+    hasTarget,
+    targetPremium,
+    useIndexExits: false,
+    stopIndex: null,
+    targetIndex: null,
+    eodExitMinutes: EOD_EXIT,
+  });
+
+  return buildLongOptionTrade({
+    symbol,
+    lotSize,
+    lotCount,
+    perTradeCost,
+    dayBars,
+    entryIdx,
+    optionType,
+    strike,
+    entrySpot,
+    entryPremium,
+    exitIdx,
+    exitSpot,
+    exitPremium,
+    reason,
+    hasStopLoss,
+    stopPremium,
+    hasTarget,
+    targetPremium,
+    entryTime: new Date(buildIstWallClockTimestamp(dayKey, entryDecisionMinutes)).toISOString(),
+  });
+}
+
 function runDailyPutBuyBacktest({ candles, settings }) {
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const lotSize = Math.max(1, Number(settings.lotSize) || getLotSize(symbol));
@@ -70,13 +155,13 @@ function runDailyPutBuyBacktest({ candles, settings }) {
       ? Number(settings.perTradeCost)
       : 100;
 
-  const rawSl = Number(settings.stopLossPoints);
-  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
-  const stopLossPoints = hasStopLoss ? Math.min(5000, Math.max(0.01, rawSl)) : 0;
+  const stopLoss = resolvePremiumExitPoints(settings.stopLossPoints, DEFAULT_STOP_LOSS_POINTS);
+  const hasStopLoss = stopLoss.active;
+  const stopLossPoints = stopLoss.points;
 
-  const rawTg = Number(settings.targetProfitPoints);
-  const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
-  const targetPoints = hasTarget ? Math.min(5000, Math.max(0.01, rawTg)) : 0;
+  const target = resolvePremiumExitPoints(settings.targetProfitPoints, 0);
+  const hasTarget = target.active;
+  const targetPoints = target.points;
 
   const entryTimeStr = String(settings.entryTime ?? settings.entryFromTime ?? '09:20').trim();
   const entryFromMin = parseClockMinutes(settings.entryFromTime ?? settings.entryTime, DEFAULT_ENTRY_MINUTES);
@@ -92,6 +177,8 @@ function runDailyPutBuyBacktest({ candles, settings }) {
   const sortedKeys = Array.from(intraByDay.keys()).sort();
   const trades = [];
   let skippedDays = 0;
+  let putTrades = 0;
+  let callTrades = 0;
 
   for (const dayKey of sortedKeys) {
     if (isWeekendDateKey(dayKey) || !isNseCashTradingDay(dayKey)) continue;
@@ -108,64 +195,45 @@ function runDailyPutBuyBacktest({ candles, settings }) {
       continue;
     }
 
-    const optionType = 'PE';
-    const entrySpot = Number(dayBars[entryIdx][4]);
-    if (!Number.isFinite(entrySpot) || entrySpot <= 0) continue;
-
-    const strike = pickStrike({ entrySpot, strikeStep, optionType, strikeMode });
-    const entryPremium = Math.max(0.05, (entrySpot * basePremiumPct) / 100);
-    const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
-    const targetPremium = hasTarget ? entryPremium + targetPoints : null;
-
-    const { exitIdx, exitSpot, exitPremium, reason } = simulateLongOptionExit({
-      dayBars,
-      entryIdx,
-      optionType,
-      entrySpot,
-      entryPremium,
-      strike,
-      strikeStep,
-      premiumLeverage,
-      hasStopLoss,
-      stopPremium,
-      hasTarget,
-      targetPremium,
-      useIndexExits: false,
-      stopIndex: null,
-      targetIndex: null,
-      eodExitMinutes: EOD_EXIT,
-    });
-
-    trades.push(
-      buildLongOptionTrade({
+    let dayHadTrade = false;
+    for (const optionType of DAILY_OPTION_TYPES) {
+      const trade = runOneTimedLongOption({
         symbol,
         lotSize,
         lotCount,
         perTradeCost,
+        basePremiumPct,
+        premiumLeverage,
+        strikeStep,
+        strikeMode,
+        dayKey,
         dayBars,
         entryIdx,
+        entryDecisionMinutes,
         optionType,
-        strike,
-        entrySpot,
-        entryPremium,
-        exitIdx,
-        exitSpot,
-        exitPremium,
-        reason,
         hasStopLoss,
-        stopPremium,
+        stopLossPoints,
         hasTarget,
-        targetPremium,
-        entryTime: new Date(buildIstWallClockTimestamp(dayKey, entryDecisionMinutes)).toISOString(),
-      }),
-    );
+        targetPoints,
+      });
+      if (!trade) continue;
+
+      dayHadTrade = true;
+      trades.push(trade);
+      if (optionType === 'CE') callTrades += 1;
+      else putTrades += 1;
+    }
+
+    if (!dayHadTrade) skippedDays += 1;
   }
 
   const summary = buildStrategyRunSummary(trades);
   summary.skippedDays = skippedDays;
-  summary.putTrades = trades.length;
+  summary.putTrades = putTrades;
+  summary.callTrades = callTrades;
   summary.entryTime = entryTimeStr;
   summary.entryMinutes = entryDecisionMinutes;
+  summary.stopLossPoints = hasStopLoss ? stopLossPoints : 0;
 
   return { trades, summary };
 }

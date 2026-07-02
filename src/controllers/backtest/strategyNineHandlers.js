@@ -1,5 +1,5 @@
 /**
- * HTTP handlers for Strategy 5 (UI) — daily PUT buy at entry time.
+ * HTTP handlers for Strategy 5 (UI) — daily PUT + CALL buy at entry time.
  */
 
 const StrategyRun = require('../../models/strategyRun');
@@ -17,7 +17,7 @@ const { createPostMultiYearValidationHandler } = require('./postMultiYearValidat
 
 const TIER = {
   key: STRATEGY_NINE_KEY,
-  runName: 'Strategy 5 - Daily PUT buy',
+  runName: 'Strategy 5 - Daily PUT & CALL buy',
   defaultInterval: '5',
 };
 
@@ -32,7 +32,7 @@ function buildSettings(req) {
       symbol: String(symbol).toUpperCase(),
       interval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-      stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 0),
+      stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
       targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
@@ -72,6 +72,7 @@ async function runStrategyNine(req, res) {
       ...buildStrategyRunSummary(trades),
       skippedDays: result.summary.skippedDays,
       putTrades: result.summary.putTrades,
+      callTrades: result.summary.callTrades,
       realPremiumTrades: enriched.realCount,
       modelPremiumTrades: enriched.modelCount,
     };
