@@ -17,6 +17,10 @@ function run() {
     const { runHeikinAshiBacktest } = require('../strategies/strategy8/heikinAshiBacktest');
     return runHeikinAshiBacktest(payload);
   }
+  if (strategyKey === 'strategy9_daily_put_buy') {
+    const { runDailyPutBuyBacktest } = require('../strategies/strategy9/dailyPutBuyBacktest');
+    return runDailyPutBuyBacktest(payload);
+  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }

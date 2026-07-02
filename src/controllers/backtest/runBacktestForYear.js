@@ -3,7 +3,7 @@ const {
   fetchYearCandlesByDayCached,
 } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
+const { STRATEGY_SEVEN_KEY, STRATEGY_NINE_KEY } = require('../../strategies/keys');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 
@@ -21,7 +21,9 @@ const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/
 function createRunBacktestForYear(strategyKey) {
   return async (year, settings) => {
     const currentYear = new Date().getFullYear();
-    const liveParity = strategyKey === STRATEGY_SEVEN_KEY && Number(year) === currentYear;
+    const liveParity =
+      (strategyKey === STRATEGY_SEVEN_KEY || strategyKey === STRATEGY_NINE_KEY) &&
+      Number(year) === currentYear;
 
     const payload = liveParity
       ? await fetchYearCandlesByDayCached({ symbol: settings.symbol, interval: settings.interval, year })
@@ -48,6 +50,10 @@ function createRunBacktestForYear(strategyKey) {
       realPremiumTrades: enriched.realCount,
       modelPremiumTrades: enriched.modelCount,
     };
+    if (strategyKey === STRATEGY_NINE_KEY) {
+      delete summary.minDirectionScore;
+      delete summary.callTrades;
+    }
     return { trades, summary };
   };
 }
