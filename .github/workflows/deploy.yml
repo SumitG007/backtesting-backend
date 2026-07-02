@@ -1,0 +1,51 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.2.0
+
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+
+          script: |
+            cd /var/www/html/backtesting/backtesting-backend
+
+            echo "Loading NVM..."
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+
+            echo "Node Version:"
+            node -v
+            npm -v
+
+            echo "Fetching latest code..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "Installing dependencies..."
+            npm ci
+
+            # Uncomment if your project has a build step
+            # npm run build
+
+            # Uncomment if you're using Prisma
+            # npx prisma generate
+            # npx prisma migrate deploy
+
+            echo "Restarting PM2..."
+            pm2 reload backtesting_BE --update-env || pm2 restart backtesting_BE
+
+            pm2 save
+
+            echo "✅ Backend deployment completed."
