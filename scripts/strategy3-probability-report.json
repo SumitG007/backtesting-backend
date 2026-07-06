@@ -1,0 +1,900 @@
+{
+  "generatedAt": "2026-07-06T12:38:50.132Z",
+  "baseline": {
+    "trades": 944,
+    "wins": 358,
+    "losses": 586,
+    "winRate": 37.92,
+    "slHits": 534,
+    "slRate": 56.57,
+    "net": 2900064.24,
+    "avgPnl": 3072.1,
+    "expectancy": 3072.1,
+    "profitFactor": 1.53
+  },
+  "exits": {
+    "TARGET": 0,
+    "STOP_LOSS": 534,
+    "DAY_CLOSE": 410,
+    "OTHER": 0
+  },
+  "signalWinRates": [
+    {
+      "signal": "orb_high_break",
+      "with": {
+        "trades": 382,
+        "wins": 154,
+        "losses": 228,
+        "winRate": 40.31,
+        "slHits": 211,
+        "slRate": 55.24,
+        "net": 1496682.46,
+        "avgPnl": 3918.02,
+        "expectancy": 3918.02,
+        "profitFactor": 1.7
+      },
+      "without": {
+        "trades": 562,
+        "wins": 204,
+        "losses": 358,
+        "winRate": 36.3,
+        "slHits": 323,
+        "slRate": 57.47,
+        "net": 1403381.78,
+        "avgPnl": 2497.12,
+        "expectancy": 2497.12,
+        "profitFactor": 1.43
+      },
+      "lift": 4.01,
+      "slLift": 2.23
+    },
+    {
+      "signal": "above_open",
+      "with": {
+        "trades": 447,
+        "wins": 178,
+        "losses": 269,
+        "winRate": 39.82,
+        "slHits": 247,
+        "slRate": 55.26,
+        "net": 1521702.04,
+        "avgPnl": 3404.26,
+        "expectancy": 3404.26,
+        "profitFactor": 1.61
+      },
+      "without": {
+        "trades": 497,
+        "wins": 180,
+        "losses": 317,
+        "winRate": 36.22,
+        "slHits": 287,
+        "slRate": 57.75,
+        "net": 1378362.2,
+        "avgPnl": 2773.36,
+        "expectancy": 2773.36,
+        "profitFactor": 1.47
+      },
+      "lift": 3.6,
+      "slLift": 2.49
+    },
+    {
+      "signal": "gap_up",
+      "with": {
+        "trades": 263,
+        "wins": 103,
+        "losses": 160,
+        "winRate": 39.16,
+        "slHits": 147,
+        "slRate": 55.89,
+        "net": 572934.75,
+        "avgPnl": 2178.46,
+        "expectancy": 2178.46,
+        "profitFactor": 1.39
+      },
+      "without": {
+        "trades": 681,
+        "wins": 255,
+        "losses": 426,
+        "winRate": 37.44,
+        "slHits": 387,
+        "slRate": 56.83,
+        "net": 2327129.49,
+        "avgPnl": 3417.22,
+        "expectancy": 3417.22,
+        "profitFactor": 1.59
+      },
+      "lift": 1.72,
+      "slLift": 0.94
+    },
+    {
+      "signal": "pdh_break",
+      "with": {
+        "trades": 308,
+        "wins": 120,
+        "losses": 188,
+        "winRate": 38.96,
+        "slHits": 174,
+        "slRate": 56.49,
+        "net": 720231.02,
+        "avgPnl": 2338.41,
+        "expectancy": 2338.41,
+        "profitFactor": 1.41
+      },
+      "without": {
+        "trades": 636,
+        "wins": 238,
+        "losses": 398,
+        "winRate": 37.42,
+        "slHits": 360,
+        "slRate": 56.6,
+        "net": 2179833.22,
+        "avgPnl": 3427.41,
+        "expectancy": 3427.41,
+        "profitFactor": 1.59
+      },
+      "lift": 1.54,
+      "slLift": 0.11
+    },
+    {
+      "signal": "gap_up_fade",
+      "with": {
+        "trades": 202,
+        "wins": 78,
+        "losses": 124,
+        "winRate": 38.61,
+        "slHits": 110,
+        "slRate": 54.46,
+        "net": 683433.15,
+        "avgPnl": 3383.33,
+        "expectancy": 3383.33,
+        "profitFactor": 1.61
+      },
+      "without": {
+        "trades": 742,
+        "wins": 280,
+        "losses": 462,
+        "winRate": 37.74,
+        "slHits": 424,
+        "slRate": 57.14,
+        "net": 2216631.09,
+        "avgPnl": 2987.37,
+        "expectancy": 2987.37,
+        "profitFactor": 1.51
+      },
+      "lift": 0.87,
+      "slLift": 2.68
+    },
+    {
+      "signal": "gap_down_fade",
+      "with": {
+        "trades": 109,
+        "wins": 40,
+        "losses": 69,
+        "winRate": 36.7,
+        "slHits": 62,
+        "slRate": 56.88,
+        "net": 467245.56,
+        "avgPnl": 4286.66,
+        "expectancy": 4286.66,
+        "profitFactor": 1.73
+      },
+      "without": {
+        "trades": 835,
+        "wins": 318,
+        "losses": 517,
+        "winRate": 38.08,
+        "slHits": 472,
+        "slRate": 56.53,
+        "net": 2432818.68,
+        "avgPnl": 2913.56,
+        "expectancy": 2913.56,
+        "profitFactor": 1.51
+      },
+      "lift": -1.38,
+      "slLift": -0.35
+    },
+    {
+      "signal": "gap_down",
+      "with": {
+        "trades": 163,
+        "wins": 59,
+        "losses": 104,
+        "winRate": 36.2,
+        "slHits": 92,
+        "slRate": 56.44,
+        "net": 546030.78,
+        "avgPnl": 3349.88,
+        "expectancy": 3349.88,
+        "profitFactor": 1.57
+      },
+      "without": {
+        "trades": 781,
+        "wins": 299,
+        "losses": 482,
+        "winRate": 38.28,
+        "slHits": 442,
+        "slRate": 56.59,
+        "net": 2354033.46,
+        "avgPnl": 3014.13,
+        "expectancy": 3014.13,
+        "profitFactor": 1.52
+      },
+      "lift": -2.08,
+      "slLift": 0.15
+    },
+    {
+      "signal": "below_open",
+      "with": {
+        "trades": 444,
+        "wins": 162,
+        "losses": 282,
+        "winRate": 36.49,
+        "slHits": 252,
+        "slRate": 56.76,
+        "net": 1382040.78,
+        "avgPnl": 3112.7,
+        "expectancy": 3112.7,
+        "profitFactor": 1.53
+      },
+      "without": {
+        "trades": 500,
+        "wins": 196,
+        "losses": 304,
+        "winRate": 39.2,
+        "slHits": 282,
+        "slRate": 56.4,
+        "net": 1518023.46,
+        "avgPnl": 3036.05,
+        "expectancy": 3036.05,
+        "profitFactor": 1.53
+      },
+      "lift": -2.71,
+      "slLift": -0.36
+    },
+    {
+      "signal": "orb_low_break",
+      "with": {
+        "trades": 374,
+        "wins": 134,
+        "losses": 240,
+        "winRate": 35.83,
+        "slHits": 217,
+        "slRate": 58.02,
+        "net": 1151161.54,
+        "avgPnl": 3077.97,
+        "expectancy": 3077.97,
+        "profitFactor": 1.52
+      },
+      "without": {
+        "trades": 570,
+        "wins": 224,
+        "losses": 346,
+        "winRate": 39.3,
+        "slHits": 317,
+        "slRate": 55.61,
+        "net": 1748902.7,
+        "avgPnl": 3068.25,
+        "expectancy": 3068.25,
+        "profitFactor": 1.54
+      },
+      "lift": -3.47,
+      "slLift": -2.41
+    },
+    {
+      "signal": "pdl_break",
+      "with": {
+        "trades": 271,
+        "wins": 94,
+        "losses": 177,
+        "winRate": 34.69,
+        "slHits": 162,
+        "slRate": 59.78,
+        "net": 667006.92,
+        "avgPnl": 2461.28,
+        "expectancy": 2461.28,
+        "profitFactor": 1.4
+      },
+      "without": {
+        "trades": 673,
+        "wins": 264,
+        "losses": 409,
+        "winRate": 39.23,
+        "slHits": 372,
+        "slRate": 55.27,
+        "net": 2233057.32,
+        "avgPnl": 3318.06,
+        "expectancy": 3318.06,
+        "profitFactor": 1.59
+      },
+      "lift": -4.54,
+      "slLift": -4.51
+    }
+  ],
+  "scoreBuckets": [
+    {
+      "key": "score_4",
+      "n": 311,
+      "winRate": 38.59,
+      "slRate": 54.98,
+      "net": 1146389.36,
+      "avgPnl": 3686.14,
+      "profitFactor": 1.66
+    },
+    {
+      "key": "score_2",
+      "n": 186,
+      "winRate": 40.86,
+      "slRate": 54.84,
+      "net": 682656.18,
+      "avgPnl": 3670.19,
+      "profitFactor": 1.66
+    },
+    {
+      "key": "score_3",
+      "n": 436,
+      "winRate": 36.01,
+      "slRate": 58.49,
+      "net": 1048287.62,
+      "avgPnl": 2404.33,
+      "profitFactor": 1.4
+    },
+    {
+      "key": "score_5",
+      "n": 11,
+      "winRate": 45.45,
+      "slRate": 54.55,
+      "net": 22731.08,
+      "avgPnl": 2066.46,
+      "profitFactor": 1.38
+    }
+  ],
+  "typeBuckets": [
+    {
+      "key": "PE",
+      "n": 461,
+      "winRate": 36.44,
+      "slRate": 57.05,
+      "net": 1418905.62,
+      "avgPnl": 3077.89,
+      "profitFactor": 1.53
+    },
+    {
+      "key": "CE",
+      "n": 483,
+      "winRate": 39.34,
+      "slRate": 56.11,
+      "net": 1481158.62,
+      "avgPnl": 3066.58,
+      "profitFactor": 1.54
+    }
+  ],
+  "topCombos": [
+    {
+      "key": "PE|below_open+gap_up_fade+pdl_break",
+      "n": 16,
+      "winRate": 56.25,
+      "slRate": 37.5,
+      "net": 141595.33,
+      "avgPnl": 8849.71,
+      "profitFactor": 3.22
+    },
+    {
+      "key": "PE|below_open+gap_up_fade",
+      "n": 18,
+      "winRate": 50,
+      "slRate": 50,
+      "net": 141085.19,
+      "avgPnl": 7838.07,
+      "profitFactor": 2.59
+    },
+    {
+      "key": "CE|above_open+orb_high_break",
+      "n": 37,
+      "winRate": 45.95,
+      "slRate": 48.65,
+      "net": 256170.36,
+      "avgPnl": 6923.52,
+      "profitFactor": 2.37
+    },
+    {
+      "key": "CE|above_open+gap_down_fade+orb_high_break",
+      "n": 67,
+      "winRate": 35.82,
+      "slRate": 58.21,
+      "net": 397114.66,
+      "avgPnl": 5927.08,
+      "profitFactor": 1.99
+    },
+    {
+      "key": "PE|below_open+gap_down+orb_low_break+pdl_break",
+      "n": 88,
+      "winRate": 42.05,
+      "slRate": 53.41,
+      "net": 513430.11,
+      "avgPnl": 5834.43,
+      "profitFactor": 2.07
+    },
+    {
+      "key": "CE|above_open+gap_up+orb_high_break+pdh_break",
+      "n": 124,
+      "winRate": 44.35,
+      "slRate": 48.39,
+      "net": 614712.24,
+      "avgPnl": 4957.36,
+      "profitFactor": 1.99
+    },
+    {
+      "key": "PE|below_open+gap_up_fade+orb_low_break",
+      "n": 97,
+      "winRate": 43.3,
+      "slRate": 47.42,
+      "net": 422887.33,
+      "avgPnl": 4359.66,
+      "profitFactor": 1.87
+    },
+    {
+      "key": "PE|below_open+gap_down+orb_low_break",
+      "n": 26,
+      "winRate": 30.77,
+      "slRate": 57.69,
+      "net": 76833.95,
+      "avgPnl": 2955.15,
+      "profitFactor": 1.49
+    },
+    {
+      "key": "CE|above_open+pdh_break",
+      "n": 16,
+      "winRate": 56.25,
+      "slRate": 43.75,
+      "net": 47037.64,
+      "avgPnl": 2939.85,
+      "profitFactor": 1.68
+    },
+    {
+      "key": "PE|below_open+orb_low_break",
+      "n": 44,
+      "winRate": 29.55,
+      "slRate": 63.64,
+      "net": 124101.02,
+      "avgPnl": 2820.48,
+      "profitFactor": 1.43
+    },
+    {
+      "key": "CE|above_open+gap_up+orb_high_break",
+      "n": 48,
+      "winRate": 41.67,
+      "slRate": 58.33,
+      "net": 87766.43,
+      "avgPnl": 1828.47,
+      "profitFactor": 1.32
+    },
+    {
+      "key": "CE|above_open+gap_down_fade+orb_high_break+pdh_break",
+      "n": 25,
+      "winRate": 36,
+      "slRate": 56,
+      "net": 42493.73,
+      "avgPnl": 1699.75,
+      "profitFactor": 1.29
+    },
+    {
+      "key": "CE|above_open+orb_high_break+pdh_break",
+      "n": 49,
+      "winRate": 32.65,
+      "slRate": 67.35,
+      "net": 68436.85,
+      "avgPnl": 1396.67,
+      "profitFactor": 1.21
+    },
+    {
+      "key": "PE|below_open+gap_up_fade+orb_low_break+pdl_break",
+      "n": 70,
+      "winRate": 25.71,
+      "slRate": 68.57,
+      "net": -12284.7,
+      "avgPnl": -175.5,
+      "profitFactor": 0.97
+    },
+    {
+      "key": "PE|below_open+orb_low_break+pdl_break",
+      "n": 34,
+      "winRate": 26.47,
+      "slRate": 73.53,
+      "net": -43404.2,
+      "avgPnl": -1276.59,
+      "profitFactor": 0.82
+    },
+    {
+      "key": "PE|below_open+gap_down+pdl_break",
+      "n": 26,
+      "winRate": 23.08,
+      "slRate": 61.54,
+      "net": -43911.41,
+      "avgPnl": -1688.9,
+      "profitFactor": 0.75
+    },
+    {
+      "key": "CE|above_open+gap_up+pdh_break",
+      "n": 45,
+      "winRate": 26.67,
+      "slRate": 68.89,
+      "net": -77646.26,
+      "avgPnl": -1725.47,
+      "profitFactor": 0.75
+    }
+  ],
+  "worstCombos": [
+    {
+      "key": "CE|above_open+orb_high_break",
+      "n": 37,
+      "winRate": 45.95,
+      "slRate": 48.65,
+      "net": 256170.36,
+      "avgPnl": 6923.52,
+      "profitFactor": 2.37
+    },
+    {
+      "key": "CE|above_open+gap_down_fade+orb_high_break",
+      "n": 67,
+      "winRate": 35.82,
+      "slRate": 58.21,
+      "net": 397114.66,
+      "avgPnl": 5927.08,
+      "profitFactor": 1.99
+    },
+    {
+      "key": "PE|below_open+gap_down+orb_low_break+pdl_break",
+      "n": 88,
+      "winRate": 42.05,
+      "slRate": 53.41,
+      "net": 513430.11,
+      "avgPnl": 5834.43,
+      "profitFactor": 2.07
+    },
+    {
+      "key": "CE|above_open+gap_up+orb_high_break+pdh_break",
+      "n": 124,
+      "winRate": 44.35,
+      "slRate": 48.39,
+      "net": 614712.24,
+      "avgPnl": 4957.36,
+      "profitFactor": 1.99
+    },
+    {
+      "key": "PE|below_open+gap_up_fade+orb_low_break",
+      "n": 97,
+      "winRate": 43.3,
+      "slRate": 47.42,
+      "net": 422887.33,
+      "avgPnl": 4359.66,
+      "profitFactor": 1.87
+    },
+    {
+      "key": "PE|below_open+gap_down+orb_low_break",
+      "n": 26,
+      "winRate": 30.77,
+      "slRate": 57.69,
+      "net": 76833.95,
+      "avgPnl": 2955.15,
+      "profitFactor": 1.49
+    },
+    {
+      "key": "CE|above_open+pdh_break",
+      "n": 16,
+      "winRate": 56.25,
+      "slRate": 43.75,
+      "net": 47037.64,
+      "avgPnl": 2939.85,
+      "profitFactor": 1.68
+    },
+    {
+      "key": "PE|below_open+orb_low_break",
+      "n": 44,
+      "winRate": 29.55,
+      "slRate": 63.64,
+      "net": 124101.02,
+      "avgPnl": 2820.48,
+      "profitFactor": 1.43
+    },
+    {
+      "key": "CE|above_open+gap_up+orb_high_break",
+      "n": 48,
+      "winRate": 41.67,
+      "slRate": 58.33,
+      "net": 87766.43,
+      "avgPnl": 1828.47,
+      "profitFactor": 1.32
+    },
+    {
+      "key": "CE|above_open+gap_down_fade+orb_high_break+pdh_break",
+      "n": 25,
+      "winRate": 36,
+      "slRate": 56,
+      "net": 42493.73,
+      "avgPnl": 1699.75,
+      "profitFactor": 1.29
+    },
+    {
+      "key": "CE|above_open+orb_high_break+pdh_break",
+      "n": 49,
+      "winRate": 32.65,
+      "slRate": 67.35,
+      "net": 68436.85,
+      "avgPnl": 1396.67,
+      "profitFactor": 1.21
+    },
+    {
+      "key": "PE|below_open+gap_up_fade+orb_low_break+pdl_break",
+      "n": 70,
+      "winRate": 25.71,
+      "slRate": 68.57,
+      "net": -12284.7,
+      "avgPnl": -175.5,
+      "profitFactor": 0.97
+    },
+    {
+      "key": "PE|below_open+orb_low_break+pdl_break",
+      "n": 34,
+      "winRate": 26.47,
+      "slRate": 73.53,
+      "net": -43404.2,
+      "avgPnl": -1276.59,
+      "profitFactor": 0.82
+    },
+    {
+      "key": "PE|below_open+gap_down+pdl_break",
+      "n": 26,
+      "winRate": 23.08,
+      "slRate": 61.54,
+      "net": -43911.41,
+      "avgPnl": -1688.9,
+      "profitFactor": 0.75
+    },
+    {
+      "key": "CE|above_open+gap_up+pdh_break",
+      "n": 45,
+      "winRate": 26.67,
+      "slRate": 68.89,
+      "net": -77646.26,
+      "avgPnl": -1725.47,
+      "profitFactor": 0.75
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "WR55",
+      "name": "Signal combo historical WR>=55% (full-sample)",
+      "trades": 32,
+      "wins": 18,
+      "losses": 14,
+      "winRate": 56.25,
+      "slHits": 13,
+      "slRate": 40.63,
+      "net": 188632.97,
+      "avgPnl": 5894.78,
+      "expectancy": 5894.78,
+      "profitFactor": 2.42
+    },
+    {
+      "id": "SC4",
+      "name": "Min direction score >= 4",
+      "trades": 322,
+      "wins": 125,
+      "losses": 197,
+      "winRate": 38.82,
+      "slHits": 177,
+      "slRate": 54.97,
+      "net": 1169120.44,
+      "avgPnl": 3630.81,
+      "expectancy": 3630.81,
+      "profitFactor": 1.65
+    },
+    {
+      "id": "ORB",
+      "name": "ORB break only (orb_high or orb_low)",
+      "trades": 756,
+      "wins": 288,
+      "losses": 468,
+      "winRate": 38.1,
+      "slHits": 428,
+      "slRate": 56.61,
+      "net": 2647844,
+      "avgPnl": 3502.44,
+      "expectancy": 3502.44,
+      "profitFactor": 1.61
+    },
+    {
+      "id": "SC3_ORB",
+      "name": "Score>=3 AND ORB break",
+      "trades": 656,
+      "wins": 250,
+      "losses": 406,
+      "winRate": 38.11,
+      "slHits": 371,
+      "slRate": 56.55,
+      "net": 2209257.85,
+      "avgPnl": 3367.77,
+      "expectancy": 3367.77,
+      "profitFactor": 1.59
+    },
+    {
+      "id": "BASE",
+      "name": "Baseline (min score 2, current)",
+      "trades": 944,
+      "wins": 358,
+      "losses": 586,
+      "winRate": 37.92,
+      "slHits": 534,
+      "slRate": 56.57,
+      "net": 2900064.24,
+      "avgPnl": 3072.1,
+      "expectancy": 3072.1,
+      "profitFactor": 1.53
+    },
+    {
+      "id": "SC3",
+      "name": "Min direction score >= 3",
+      "trades": 758,
+      "wins": 282,
+      "losses": 476,
+      "winRate": 37.2,
+      "slHits": 432,
+      "slRate": 56.99,
+      "net": 2217408.06,
+      "avgPnl": 2925.34,
+      "expectancy": 2925.34,
+      "profitFactor": 1.5
+    },
+    {
+      "id": "NO_FADE",
+      "name": "Exclude gap fade signals",
+      "trades": 633,
+      "wins": 240,
+      "losses": 393,
+      "winRate": 37.91,
+      "slHits": 362,
+      "slRate": 57.19,
+      "net": 1749385.53,
+      "avgPnl": 2763.64,
+      "expectancy": 2763.64,
+      "profitFactor": 1.48
+    },
+    {
+      "id": "CORE",
+      "name": "Core: score>=3, no fade, PDL/PDH or ORB",
+      "trades": 472,
+      "wins": 176,
+      "losses": 296,
+      "winRate": 37.29,
+      "slHits": 273,
+      "slRate": 57.84,
+      "net": 1225527.14,
+      "avgPnl": 2596.46,
+      "expectancy": 2596.46,
+      "profitFactor": 1.44
+    },
+    {
+      "id": "PDLPDH",
+      "name": "PDL/PDH break required for direction",
+      "trades": 579,
+      "wins": 214,
+      "losses": 365,
+      "winRate": 36.96,
+      "slHits": 336,
+      "slRate": 58.03,
+      "net": 1387237.94,
+      "avgPnl": 2395.92,
+      "expectancy": 2395.92,
+      "profitFactor": 1.41
+    },
+    {
+      "id": "PE_PDL",
+      "name": "PE only when pdl_break; CE only when pdh_break",
+      "trades": 579,
+      "wins": 214,
+      "losses": 365,
+      "winRate": 36.96,
+      "slHits": 336,
+      "slRate": 58.03,
+      "net": 1387237.94,
+      "avgPnl": 2395.92,
+      "expectancy": 2395.92,
+      "profitFactor": 1.41
+    },
+    {
+      "id": "SC3_PDLPDH",
+      "name": "Score>=3 AND PDL/PDH break",
+      "trades": 520,
+      "wins": 188,
+      "losses": 332,
+      "winRate": 36.15,
+      "slHits": 304,
+      "slRate": 58.46,
+      "net": 1232805.69,
+      "avgPnl": 2370.78,
+      "expectancy": 2370.78,
+      "profitFactor": 1.4
+    },
+    {
+      "id": "WF55",
+      "name": "Walk-forward: prior-year combo WR>=55%",
+      "trades": 40,
+      "wins": 16,
+      "losses": 24,
+      "winRate": 40,
+      "slHits": 20,
+      "slRate": 50,
+      "net": 53609.13,
+      "avgPnl": 1340.23,
+      "expectancy": 1340.23,
+      "profitFactor": 1.26
+    },
+    {
+      "id": "GAP_HOLD",
+      "name": "Gap hold signals only (gap_up_hold / gap_down_hold)",
+      "trades": 16,
+      "wins": 6,
+      "losses": 10,
+      "winRate": 37.5,
+      "slHits": 9,
+      "slRate": 56.25,
+      "net": 919.06,
+      "avgPnl": 57.44,
+      "expectancy": 57.44,
+      "profitFactor": 1.01
+    },
+    {
+      "id": "WR60",
+      "name": "Signal combo historical WR>=60% (full-sample)",
+      "trades": 0,
+      "wins": 0,
+      "losses": 0,
+      "winRate": 0,
+      "slHits": 0,
+      "slRate": 0,
+      "net": 0,
+      "avgPnl": 0,
+      "expectancy": 0
+    },
+    {
+      "id": "WF60",
+      "name": "Walk-forward: prior-year combo WR>=60%",
+      "trades": 6,
+      "wins": 1,
+      "losses": 5,
+      "winRate": 16.67,
+      "slHits": 5,
+      "slRate": 83.33,
+      "net": -42826.25,
+      "avgPnl": -7137.71,
+      "expectancy": -7137.71,
+      "profitFactor": 0.13
+    }
+  ],
+  "walkForward": {
+    "wr55": {
+      "trades": 40,
+      "wins": 16,
+      "losses": 24,
+      "winRate": 40,
+      "slHits": 20,
+      "slRate": 50,
+      "net": 53609.13,
+      "avgPnl": 1340.23,
+      "expectancy": 1340.23,
+      "profitFactor": 1.26
+    },
+    "wr60": {
+      "trades": 6,
+      "wins": 1,
+      "losses": 5,
+      "winRate": 16.67,
+      "slHits": 5,
+      "slRate": 83.33,
+      "net": -42826.25,
+      "avgPnl": -7137.71,
+      "expectancy": -7137.71,
+      "profitFactor": 0.13
+    }
+  }
+}
