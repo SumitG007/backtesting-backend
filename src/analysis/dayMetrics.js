@@ -11,8 +11,11 @@ const M1530 = 930; // 15:30
 
 /**
  * Per-session intraday statistics (1m / 5m / 15m). Uses bar OHLC only.
+ * @param {{ maxMinutes?: number }} [options] — when set, only bars at or before this IST minute are used (no lookahead).
  */
-function computeDayMetrics(bars, prevDay) {
+function computeDayMetrics(bars, prevDay, options = {}) {
+  const maxMinutes = Number.isFinite(options.maxMinutes) ? options.maxMinutes : null;
+
   if (!bars?.length) return null;
 
   const open = Number(bars[0][1]);
@@ -41,6 +44,7 @@ function computeDayMetrics(bars, prevDay) {
   for (const c of bars) {
     const clock = getIstClock(c[0]);
     const m = clock.minutes;
+    if (maxMinutes != null && m > maxMinutes) break;
     const h = Number(c[2]);
     const l = Number(c[3]);
     const cl = Number(c[4]);
@@ -161,14 +165,16 @@ function computeDayMetrics(bars, prevDay) {
   };
 }
 
-function applyEarlyBreakFlags(metrics) {
+function applyEarlyBreakFlags(metrics, options = {}) {
   if (!metrics?._bars) return metrics;
+  const maxMinutes = Number.isFinite(options.maxMinutes) ? options.maxMinutes : null;
   const { _bars: bars, _prevHigh: prevHigh, _prevLow: prevLow } = metrics;
   let brokePDHBefore1030 = false;
   let brokePDLBefore1030 = false;
   for (const c of bars) {
     const clock = getIstClock(c[0]);
     if (clock.minutes >= M1030) break;
+    if (maxMinutes != null && clock.minutes > maxMinutes) break;
     const h = Number(c[2]);
     const l = Number(c[3]);
     if (prevHigh != null && h > prevHigh) brokePDHBefore1030 = true;
@@ -176,6 +182,13 @@ function applyEarlyBreakFlags(metrics) {
   }
   const { _bars, _prevHigh, _prevLow, ...rest } = metrics;
   return { ...rest, brokePDHBefore1030, brokePDLBefore1030 };
+}
+
+/** Metrics using only candles known at or before `maxMinutes` IST (avoids signal lookahead). */
+function computeDayMetricsAtTime(bars, prevDay, maxMinutes) {
+  const raw = computeDayMetrics(bars, prevDay, { maxMinutes });
+  if (!raw) return null;
+  return applyEarlyBreakFlags(raw, { maxMinutes });
 }
 
 function attachChainFields(sortedMetrics) {
@@ -209,5 +222,6 @@ function buildAllDayMetrics(intraByDay, dailyMap) {
 module.exports = {
   buildAllDayMetrics,
   computeDayMetrics,
+  computeDayMetricsAtTime,
   applyEarlyBreakFlags,
 };

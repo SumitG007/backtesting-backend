@@ -32,7 +32,7 @@ function buildSettings(req) {
       interval,
       strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
       stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
-      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 70),
+      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 55),
       basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
       premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
       lotCount: parseNumberInput(req.body?.lotCount, 10),

@@ -2,7 +2,7 @@
  * Strategy 6 — morning pattern stack with configurable rules & chop filters.
  */
 
-const { buildAllDayMetrics } = require('../../analysis/dayMetrics');
+const { buildAllDayMetrics, computeDayMetricsAtTime } = require('../../analysis/dayMetrics');
 const { buildDailyFromIntraday } = require('../../analysis/candleGroups');
 const { getIstClock } = require('../../utils/dateTime');
 
@@ -110,15 +110,29 @@ function buildMorningPatternContext(sortedKeys, intraByDay) {
   const allMetrics = buildAllDayMetrics(intraByDay, dailyMap);
   const metricsByKey = new Map(allMetrics.map((m) => [m.dateKey, m]));
 
+  const prevDayByKey = new Map();
+  const sorted = [...sortedKeys].sort();
+  for (const dayKey of sorted) {
+    let prevDay = null;
+    for (let i = sorted.indexOf(dayKey) - 1; i >= 0; i -= 1) {
+      const pk = sorted[i];
+      if (dailyMap.has(pk)) {
+        prevDay = dailyMap.get(pk);
+        break;
+      }
+    }
+    prevDayByKey.set(dayKey, prevDay);
+  }
+
   const first30MedianByDay = new Map();
   const rolling = [];
-  for (const dayKey of sortedKeys) {
+  for (const dayKey of sorted) {
     const m = metricsByKey.get(dayKey);
     if (m && Number.isFinite(m.first30Range)) rolling.push(m.first30Range);
     first30MedianByDay.set(dayKey, median(rolling.slice(-ROLLING_DAYS)));
   }
 
-  return { metricsByKey, first30MedianByDay };
+  return { metricsByKey, first30MedianByDay, prevDayByKey };
 }
 
 function makeEntry(bars, entryMinutes, optionType, signalId, barIntervalMinutes) {
@@ -155,46 +169,56 @@ function passesChopFilters(metrics, patternConfig, symbol) {
 }
 
 function resolveMorningPattern({ dayKey, bars, filterCtx, barIntervalMinutes, patternConfig, symbol }) {
-  const metrics = filterCtx.metricsByKey.get(dayKey);
-  if (!metrics || !bars?.length) return { skip: true, skipReason: 'no_metrics' };
+  if (!bars?.length) return { skip: true, skipReason: 'no_metrics' };
 
   const cfg = patternConfig || DEFAULT_PATTERN_CONFIG;
-  const chop = passesChopFilters(metrics, cfg, symbol);
-  if (!chop.ok) return { skip: true, skipReason: chop.skipReason };
-
+  const prevDay = filterCtx.prevDayByKey?.get(dayKey) ?? null;
   const first30Median = filterCtx.first30MedianByDay.get(dayKey) ?? Infinity;
-  const narrow30 =
-    Number.isFinite(metrics.first30Range) &&
+
+  const metrics1015 = computeDayMetricsAtTime(bars, prevDay, ENTRY_1015);
+  if (!metrics1015) return { skip: true, skipReason: 'no_metrics' };
+
+  const narrow30At1015 =
+    Number.isFinite(metrics1015.first30Range) &&
     Number.isFinite(first30Median) &&
-    metrics.first30Range <= first30Median;
+    metrics1015.first30Range <= first30Median;
 
-  if (
-    cfg.enableOrbHigh &&
-    narrow30 &&
-    metrics.brokeFirst30HighBefore11 &&
-    !metrics.brokeFirst30LowBefore11
-  ) {
-    return makeEntry(bars, ENTRY_1015, 'CE', 'orb_break_high_narrow30', barIntervalMinutes);
-  }
+  const chop1015 = passesChopFilters(metrics1015, cfg, symbol);
+  if (chop1015.ok) {
+    if (
+      cfg.enableOrbHigh &&
+      narrow30At1015 &&
+      metrics1015.brokeFirst30HighBefore11 &&
+      !metrics1015.brokeFirst30LowBefore11
+    ) {
+      return makeEntry(bars, ENTRY_1015, 'CE', 'orb_break_high_narrow30', barIntervalMinutes);
+    }
 
-  if (
-    cfg.enableOrbLow &&
-    narrow30 &&
-    metrics.brokeFirst30LowBefore11 &&
-    !metrics.brokeFirst30HighBefore11
-  ) {
-    return makeEntry(bars, ENTRY_1015, 'PE', 'orb_break_low_narrow30', barIntervalMinutes);
-  }
+    if (
+      cfg.enableOrbLow &&
+      narrow30At1015 &&
+      metrics1015.brokeFirst30LowBefore11 &&
+      !metrics1015.brokeFirst30HighBefore11
+    ) {
+      return makeEntry(bars, ENTRY_1015, 'PE', 'orb_break_low_narrow30', barIntervalMinutes);
+    }
 
-  if (cfg.enablePdl && metrics.brokePDLBefore1030) {
-    return makeEntry(bars, ENTRY_1015, 'PE', 'pdl_break_1030', barIntervalMinutes);
+    if (cfg.enablePdl && metrics1015.brokePDLBefore1030) {
+      return makeEntry(bars, ENTRY_1015, 'PE', 'pdl_break_1030', barIntervalMinutes);
+    }
   }
 
   if (cfg.enableFirstHour) {
-    if (metrics.firstHourGreen) {
+    const metrics1200 = computeDayMetricsAtTime(bars, prevDay, ENTRY_1200);
+    if (!metrics1200) return { skip: true, skipReason: 'no_metrics' };
+
+    const chop1200 = passesChopFilters(metrics1200, cfg, symbol);
+    if (!chop1200.ok) return { skip: true, skipReason: chop1200.skipReason };
+
+    if (metrics1200.firstHourGreen) {
       return makeEntry(bars, ENTRY_1200, 'CE', 'first_hour_green', barIntervalMinutes);
     }
-    if (metrics.firstHourRed) {
+    if (metrics1200.firstHourRed) {
       return makeEntry(bars, ENTRY_1200, 'PE', 'first_hour_red', barIntervalMinutes);
     }
   }
