@@ -15,7 +15,7 @@ const {
 const { buildMorningPatternContext, resolveMorningPattern, parsePatternConfig } = require('./morningPatternSignals');
 
 const DEFAULT_STOP_LOSS_POINTS = 15;
-const DEFAULT_TARGET_POINTS = 25;
+const DEFAULT_TARGET_POINTS = 70;
 const EOD_EXIT = 920;
 
 function runMorningPatternBacktest({ candles, settings }) {
