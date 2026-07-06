@@ -1,0 +1,56 @@
+
+══════════════════════════════════════════════════════════════════
+ PATTERN RESEARCH — NIFTY 5m — 2022, 2023, 2024, 2025, 2026
+══════════════════════════════════════════════════════════════════
+Candles: 81600 | Source: disk-cache
+Trading days: 1088 | Patterns found: 392 | Tradeable: 7
+
+Outcome model (per occurrence):
+  Entry = next bar open | Target +15 pts | Stop -10 pts | Horizon 6 bars
+  Encoding: Each bar → dir(U/D/F) + size(S/M/L) + closePos(L/M/H). Sequences joined with >. Entry = next bar open.
+
+── BEST TRADEABLE PATTERN ──
+  First 3 bar colours: D → U → U
+  Side: PE | Win rate: 63.5% | Samples: 100 | ~1.9/month
+  Long WR: 23.6% | Short WR: 63.5% | Avg next-bar pts: -6.08
+
+── TOP PATTERNS (all) ──
+Sequence              | Context          | Side | Win%   | N     | /mo    | Trade?
+UMH→UMH                | sliding_morning  | PE   | 44.8%  | 1285  | 24.2   | no
+DML→DML                | sliding_morning  | CE   | 44.8%  | 1143  | 21.6   | no
+UMH→DML                | sliding_morning  | PE   | 41.9%  | 1374  | 25.9   | no
+DML→UMH                | sliding_morning  | CE   | 41.2%  | 1311  | 24.7   | no
+D→U→U                  | dir_prefix       | PE   | 63.5%  | 100   | 1.9    | yes
+ULH→DLL                | sliding_morning  | CE   | 50.6%  | 323   | 6.1    | no
+DLL→ULH                | sliding_morning  | CE   | 47.2%  | 438   | 8.3    | no
+ULH→UMH                | sliding_morning  | PE   | 46.6%  | 459   | 8.7    | no
+DML→UMH→DML            | sliding_morning  | PE   | 50.6%  | 254   | 4.8    | no
+D→D→D                  | dir_prefix       | PE   | 62.2%  | 86    | 1.7    | no
+DLL→UMH                | sliding_morning  | CE   | 44.3%  | 508   | 9.6    | no
+U→F                    | dir_prefix       | PE   | 64.5%  | 68    | 1.3    | no
+UMH→UMM                | sliding_morning  | PE   | 45.5%  | 378   | 7.1    | no
+UMH→DLL                | sliding_morning  | CE   | 45.3%  | 353   | 6.7    | no
+DMM→UMH                | sliding_morning  | PE   | 43.4%  | 456   | 8.6    | no
+DML→UMM                | sliding_morning  | CE   | 45.1%  | 360   | 6.8    | no
+DML→USH                | sliding_morning  | CE   | 45.1%  | 336   | 6.3    | no
+UMH→DMM                | sliding_morning  | PE   | 43.4%  | 420   | 7.9    | no
+DML→DMM                | sliding_morning  | PE   | 42.7%  | 426   | 8      | no
+DSL→DML                | sliding_morning  | CE   | 45.2%  | 297   | 5.6    | no
+
+── SESSION OPEN (first N bars → next bar) ──
+  DLL→ULH → CE 55.6% (n=94, ~1.8/mo)
+  DLL→DLL → CE 46.9% (n=72, ~1.4/mo)
+  ULH→DLL → CE 45% (n=56, ~1.1/mo)
+  ULH→ULH → CE 40.5% (n=64, ~1.4/mo)
+
+── DIR-ONLY OPEN (U/D/F colours) ──
+  D→U→U → PE 63.5% (n=100)
+  D→D→D → PE 62.2% (n=86)
+  U→F → PE 64.5% (n=68)
+  U→U → PE 48.9% (n=184)
+  D→U → CE 45.9% (n=221)
+  D→F → PE 55.6% (n=80)
+  U→D → CE 47.7% (n=152)
+  F→U → PE 57.1% (n=60)
+
+Historical pattern mining only. High win rates on past data do not guarantee future results. Validate with walk-forward tests before live trading.

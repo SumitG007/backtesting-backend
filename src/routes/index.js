@@ -19,6 +19,10 @@ const {
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  runStrategyTen,
+  getStrategyTenRunTrades,
+  getStrategyTenValidation,
+  postStrategyTenValidation,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -55,6 +59,11 @@ const {
   getManualActions,
   postManualWalletReset,
 } = require('../controllers/manualConsoleController');
+const {
+  getPatternResearch,
+  getPatternResearchReport,
+  getMultiScenarioResearch,
+} = require('../controllers/patternResearchController');
 
 const router = express.Router();
 
@@ -70,6 +79,9 @@ router.get('/data/candles/day', getCandlesDay);
 router.get('/data/option-stocks.csv', exportOptionStocksCsv);
 router.get('/data/future-stocks.csv', exportFutureStocksCsv);
 router.get('/data/instrument-summary', getInstrumentSummary);
+router.get('/research/patterns', getPatternResearch);
+router.get('/research/patterns/report.txt', getPatternResearchReport);
+router.get('/research/patterns/multi', getMultiScenarioResearch);
 router.get('/results/drishti', getDrishtiDashboard);
 router.get('/dashboard/drishti', getDrishtiDashboard);
 // Strategy 2 — short straddle (entry day + next day exit)
@@ -92,6 +104,11 @@ router.post('/strategy5/run', runStrategyNine);
 router.post('/strategy5/validation', postStrategyNineValidation);
 router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
 router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
+// Strategy 6 — morning pattern stack (research-backed)
+router.post('/strategy6/run', runStrategyTen);
+router.post('/strategy6/validation', postStrategyTenValidation);
+router.get('/strategy6/runs/:runId/trades', getStrategyTenRunTrades);
+router.get('/strategy6/runs/:runId/validation', getStrategyTenValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

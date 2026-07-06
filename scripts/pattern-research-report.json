@@ -1,0 +1,3239 @@
+{
+  "symbol": "NIFTY",
+  "interval": "5",
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "intervalMeta": {
+    "intervalMinutes": 5,
+    "intervalLabel": "5 minutes",
+    "note": "Patterns measure day-close bias (green/red) unless you run the index prototype backtest."
+  },
+  "dataLoad": {
+    "source": "disk-cache",
+    "totalCandles": 81600,
+    "byYear": {
+      "2022": {
+        "candleCount": 18695,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2023": {
+        "candleCount": 18546,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2024": {
+        "candleCount": 18642,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2025": {
+        "candleCount": 18639,
+        "fromDate": null,
+        "toDate": null
+      },
+      "2026": {
+        "candleCount": 7078,
+        "fromDate": null,
+        "toDate": null
+      }
+    }
+  },
+  "overview": {
+    "tradingDays": 1088,
+    "totalBars": 81561,
+    "byYear": {
+      "2022": 252,
+      "2023": 245,
+      "2024": 248,
+      "2025": 249,
+      "2026": 94
+    }
+  },
+  "researchConfig": {
+    "minSamples": 35,
+    "sequenceLengths": [
+      2,
+      3,
+      4
+    ],
+    "outcome": {
+      "targetPoints": 15,
+      "stopPoints": 10,
+      "horizonBars": 6,
+      "barIntervalMinutes": 5
+    },
+    "encoding": "Each bar → dir(U/D/F) + size(S/M/L) + closePos(L/M/H). Sequences joined with >. Entry = next bar open."
+  },
+  "summary": {
+    "patternsFound": 392,
+    "tradeablePatterns": 7,
+    "bestPattern": {
+      "id": "sliding_morning_len2_UMH_UMH",
+      "sequence": "UMH>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → UMH",
+      "sampleSize": 1285,
+      "longWinRate": 36,
+      "shortWinRate": 44.8,
+      "avgNext1Points": -0.94,
+      "avgHorizonPoints": -0.17,
+      "longWins": 316,
+      "longLosses": 561,
+      "shortWins": 382,
+      "shortLosses": 471,
+      "byYear": {
+        "2022": {
+          "sampleSize": 352,
+          "longWinRate": 37.5,
+          "shortWinRate": 43.5
+        },
+        "2023": {
+          "sampleSize": 306,
+          "longWinRate": 35.6,
+          "shortWinRate": 41.4
+        },
+        "2024": {
+          "sampleSize": 234,
+          "longWinRate": 31.6,
+          "shortWinRate": 51
+        },
+        "2025": {
+          "sampleSize": 276,
+          "longWinRate": 40,
+          "shortWinRate": 43.3
+        },
+        "2026": {
+          "sampleSize": 117,
+          "longWinRate": 30,
+          "shortWinRate": 51.7
+        }
+      },
+      "longWinRateStdAcrossYears": 3.69,
+      "shortWinRateStdAcrossYears": 4.29,
+      "bestSide": "PE",
+      "bestWinRate": 44.8,
+      "uniqueDays": 705,
+      "occurrencesPerMonth": 24.2,
+      "tradeable": false
+    },
+    "bestTradeable": {
+      "id": "dir_prefix_len3_D_U_U",
+      "sequence": "D>U>U",
+      "context": "dir_prefix",
+      "sequenceLength": 3,
+      "label": "First 3 bar colours: D → U → U",
+      "sampleSize": 100,
+      "longWinRate": 23.6,
+      "shortWinRate": 63.5,
+      "avgNext1Points": -6.08,
+      "avgHorizonPoints": -9.33,
+      "longWins": 13,
+      "longLosses": 42,
+      "shortWins": 33,
+      "shortLosses": 19,
+      "byYear": {
+        "2022": {
+          "sampleSize": 26,
+          "longWinRate": 16.7,
+          "shortWinRate": 70
+        },
+        "2023": {
+          "sampleSize": 25,
+          "longWinRate": 33.3,
+          "shortWinRate": 50
+        },
+        "2024": {
+          "sampleSize": 22,
+          "longWinRate": 10,
+          "shortWinRate": 77.8
+        },
+        "2025": {
+          "sampleSize": 20,
+          "longWinRate": 27.3,
+          "shortWinRate": 61.5
+        },
+        "2026": {
+          "sampleSize": 7,
+          "longWinRate": 28.6,
+          "shortWinRate": 66.7
+        }
+      },
+      "longWinRateStdAcrossYears": 8.54,
+      "shortWinRateStdAcrossYears": 9.26,
+      "bestSide": "PE",
+      "bestWinRate": 63.5,
+      "uniqueDays": 100,
+      "occurrencesPerMonth": 1.9,
+      "tradeable": true
+    }
+  },
+  "topPatterns": [
+    {
+      "id": "sliding_morning_len2_UMH_UMH",
+      "sequence": "UMH>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → UMH",
+      "sampleSize": 1285,
+      "longWinRate": 36,
+      "shortWinRate": 44.8,
+      "avgNext1Points": -0.94,
+      "avgHorizonPoints": -0.17,
+      "longWins": 316,
+      "longLosses": 561,
+      "shortWins": 382,
+      "shortLosses": 471,
+      "byYear": {
+        "2022": {
+          "sampleSize": 352,
+          "longWinRate": 37.5,
+          "shortWinRate": 43.5
+        },
+        "2023": {
+          "sampleSize": 306,
+          "longWinRate": 35.6,
+          "shortWinRate": 41.4
+        },
+        "2024": {
+          "sampleSize": 234,
+          "longWinRate": 31.6,
+          "shortWinRate": 51
+        },
+        "2025": {
+          "sampleSize": 276,
+          "longWinRate": 40,
+          "shortWinRate": 43.3
+        },
+        "2026": {
+          "sampleSize": 117,
+          "longWinRate": 30,
+          "shortWinRate": 51.7
+        }
+      },
+      "longWinRateStdAcrossYears": 3.69,
+      "shortWinRateStdAcrossYears": 4.29,
+      "bestSide": "PE",
+      "bestWinRate": 44.8,
+      "uniqueDays": 705,
+      "occurrencesPerMonth": 24.2,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DML_DML",
+      "sequence": "DML>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → DML",
+      "sampleSize": 1143,
+      "longWinRate": 44.8,
+      "shortWinRate": 33.3,
+      "avgNext1Points": 0.85,
+      "avgHorizonPoints": 0.36,
+      "longWins": 311,
+      "longLosses": 383,
+      "shortWins": 239,
+      "shortLosses": 479,
+      "byYear": {
+        "2022": {
+          "sampleSize": 269,
+          "longWinRate": 40,
+          "shortWinRate": 34.5
+        },
+        "2023": {
+          "sampleSize": 251,
+          "longWinRate": 49.2,
+          "shortWinRate": 30.9
+        },
+        "2024": {
+          "sampleSize": 219,
+          "longWinRate": 47.9,
+          "shortWinRate": 29.5
+        },
+        "2025": {
+          "sampleSize": 272,
+          "longWinRate": 46,
+          "shortWinRate": 33.7
+        },
+        "2026": {
+          "sampleSize": 132,
+          "longWinRate": 36.5,
+          "shortWinRate": 42.6
+        }
+      },
+      "longWinRateStdAcrossYears": 4.87,
+      "shortWinRateStdAcrossYears": 4.56,
+      "bestSide": "CE",
+      "bestWinRate": 44.8,
+      "uniqueDays": 643,
+      "occurrencesPerMonth": 21.6,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_DML",
+      "sequence": "UMH>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → DML",
+      "sampleSize": 1374,
+      "longWinRate": 37.8,
+      "shortWinRate": 41.9,
+      "avgNext1Points": -1.17,
+      "avgHorizonPoints": -0.25,
+      "longWins": 343,
+      "longLosses": 565,
+      "shortWins": 393,
+      "shortLosses": 545,
+      "byYear": {
+        "2022": {
+          "sampleSize": 309,
+          "longWinRate": 32.1,
+          "shortWinRate": 44.9
+        },
+        "2023": {
+          "sampleSize": 302,
+          "longWinRate": 35.9,
+          "shortWinRate": 42.4
+        },
+        "2024": {
+          "sampleSize": 333,
+          "longWinRate": 47.6,
+          "shortWinRate": 33.2
+        },
+        "2025": {
+          "sampleSize": 309,
+          "longWinRate": 38.5,
+          "shortWinRate": 44.7
+        },
+        "2026": {
+          "sampleSize": 121,
+          "longWinRate": 29.6,
+          "shortWinRate": 49.3
+        }
+      },
+      "longWinRateStdAcrossYears": 6.23,
+      "shortWinRateStdAcrossYears": 5.34,
+      "bestSide": "PE",
+      "bestWinRate": 41.9,
+      "uniqueDays": 786,
+      "occurrencesPerMonth": 25.9,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DML_UMH",
+      "sequence": "DML>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → UMH",
+      "sampleSize": 1311,
+      "longWinRate": 41.2,
+      "shortWinRate": 38.9,
+      "avgNext1Points": 0.44,
+      "avgHorizonPoints": -1.26,
+      "longWins": 370,
+      "longLosses": 528,
+      "shortWins": 347,
+      "shortLosses": 546,
+      "byYear": {
+        "2022": {
+          "sampleSize": 327,
+          "longWinRate": 42.4,
+          "shortWinRate": 40.7
+        },
+        "2023": {
+          "sampleSize": 286,
+          "longWinRate": 42.1,
+          "shortWinRate": 35.8
+        },
+        "2024": {
+          "sampleSize": 293,
+          "longWinRate": 37.8,
+          "shortWinRate": 40.6
+        },
+        "2025": {
+          "sampleSize": 308,
+          "longWinRate": 42.9,
+          "shortWinRate": 38.4
+        },
+        "2026": {
+          "sampleSize": 97,
+          "longWinRate": 36.2,
+          "shortWinRate": 39.1
+        }
+      },
+      "longWinRateStdAcrossYears": 2.74,
+      "shortWinRateStdAcrossYears": 1.79,
+      "bestSide": "CE",
+      "bestWinRate": 41.2,
+      "uniqueDays": 805,
+      "occurrencesPerMonth": 24.7,
+      "tradeable": false
+    },
+    {
+      "id": "dir_prefix_len3_D_U_U",
+      "sequence": "D>U>U",
+      "context": "dir_prefix",
+      "sequenceLength": 3,
+      "label": "First 3 bar colours: D → U → U",
+      "sampleSize": 100,
+      "longWinRate": 23.6,
+      "shortWinRate": 63.5,
+      "avgNext1Points": -6.08,
+      "avgHorizonPoints": -9.33,
+      "longWins": 13,
+      "longLosses": 42,
+      "shortWins": 33,
+      "shortLosses": 19,
+      "byYear": {
+        "2022": {
+          "sampleSize": 26,
+          "longWinRate": 16.7,
+          "shortWinRate": 70
+        },
+        "2023": {
+          "sampleSize": 25,
+          "longWinRate": 33.3,
+          "shortWinRate": 50
+        },
+        "2024": {
+          "sampleSize": 22,
+          "longWinRate": 10,
+          "shortWinRate": 77.8
+        },
+        "2025": {
+          "sampleSize": 20,
+          "longWinRate": 27.3,
+          "shortWinRate": 61.5
+        },
+        "2026": {
+          "sampleSize": 7,
+          "longWinRate": 28.6,
+          "shortWinRate": 66.7
+        }
+      },
+      "longWinRateStdAcrossYears": 8.54,
+      "shortWinRateStdAcrossYears": 9.26,
+      "bestSide": "PE",
+      "bestWinRate": 63.5,
+      "uniqueDays": 100,
+      "occurrencesPerMonth": 1.9,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len2_ULH_DLL",
+      "sequence": "ULH>DLL",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: ULH → DLL",
+      "sampleSize": 323,
+      "longWinRate": 50.6,
+      "shortWinRate": 33.5,
+      "avgNext1Points": 0.35,
+      "avgHorizonPoints": 8.24,
+      "longWins": 87,
+      "longLosses": 85,
+      "shortWins": 58,
+      "shortLosses": 115,
+      "byYear": {
+        "2022": {
+          "sampleSize": 78,
+          "longWinRate": 34.3,
+          "shortWinRate": 47.4
+        },
+        "2023": {
+          "sampleSize": 65,
+          "longWinRate": 51,
+          "shortWinRate": 30.4
+        },
+        "2024": {
+          "sampleSize": 65,
+          "longWinRate": 65.6,
+          "shortWinRate": 21.2
+        },
+        "2025": {
+          "sampleSize": 80,
+          "longWinRate": 53.7,
+          "shortWinRate": 31.7
+        },
+        "2026": {
+          "sampleSize": 35,
+          "longWinRate": 46.7,
+          "shortWinRate": 40
+        }
+      },
+      "longWinRateStdAcrossYears": 10.15,
+      "shortWinRateStdAcrossYears": 8.92,
+      "bestSide": "CE",
+      "bestWinRate": 50.6,
+      "uniqueDays": 282,
+      "occurrencesPerMonth": 6.1,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DLL_ULH",
+      "sequence": "DLL>ULH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DLL → ULH",
+      "sampleSize": 438,
+      "longWinRate": 47.2,
+      "shortWinRate": 35.4,
+      "avgNext1Points": 0.92,
+      "avgHorizonPoints": 4.57,
+      "longWins": 111,
+      "longLosses": 124,
+      "shortWins": 87,
+      "shortLosses": 159,
+      "byYear": {
+        "2022": {
+          "sampleSize": 103,
+          "longWinRate": 50.8,
+          "shortWinRate": 35.6
+        },
+        "2023": {
+          "sampleSize": 113,
+          "longWinRate": 49.2,
+          "shortWinRate": 30.7
+        },
+        "2024": {
+          "sampleSize": 103,
+          "longWinRate": 36.7,
+          "shortWinRate": 42.6
+        },
+        "2025": {
+          "sampleSize": 86,
+          "longWinRate": 52.2,
+          "shortWinRate": 33.3
+        },
+        "2026": {
+          "sampleSize": 33,
+          "longWinRate": 42.9,
+          "shortWinRate": 45.5
+        }
+      },
+      "longWinRateStdAcrossYears": 5.78,
+      "shortWinRateStdAcrossYears": 5.61,
+      "bestSide": "CE",
+      "bestWinRate": 47.2,
+      "uniqueDays": 368,
+      "occurrencesPerMonth": 8.3,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_ULH_UMH",
+      "sequence": "ULH>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: ULH → UMH",
+      "sampleSize": 459,
+      "longWinRate": 34.4,
+      "shortWinRate": 46.6,
+      "avgNext1Points": -2.73,
+      "avgHorizonPoints": -2.69,
+      "longWins": 96,
+      "longLosses": 183,
+      "shortWins": 125,
+      "shortLosses": 143,
+      "byYear": {
+        "2022": {
+          "sampleSize": 106,
+          "longWinRate": 30.8,
+          "shortWinRate": 45.8
+        },
+        "2023": {
+          "sampleSize": 94,
+          "longWinRate": 36.1,
+          "shortWinRate": 48.6
+        },
+        "2024": {
+          "sampleSize": 96,
+          "longWinRate": 27.1,
+          "shortWinRate": 54.7
+        },
+        "2025": {
+          "sampleSize": 124,
+          "longWinRate": 35.8,
+          "shortWinRate": 43.9
+        },
+        "2026": {
+          "sampleSize": 39,
+          "longWinRate": 62.5,
+          "shortWinRate": 27.8
+        }
+      },
+      "longWinRateStdAcrossYears": 12.48,
+      "shortWinRateStdAcrossYears": 8.96,
+      "bestSide": "PE",
+      "bestWinRate": 46.6,
+      "uniqueDays": 377,
+      "occurrencesPerMonth": 8.7,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len3_DML_UMH_DML",
+      "sequence": "DML>UMH>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: DML → UMH → DML",
+      "sampleSize": 254,
+      "longWinRate": 34.1,
+      "shortWinRate": 50.6,
+      "avgNext1Points": -2.88,
+      "avgHorizonPoints": -6.36,
+      "longWins": 60,
+      "longLosses": 116,
+      "shortWins": 89,
+      "shortLosses": 87,
+      "byYear": {
+        "2022": {
+          "sampleSize": 61,
+          "longWinRate": 28.6,
+          "shortWinRate": 48.9
+        },
+        "2023": {
+          "sampleSize": 50,
+          "longWinRate": 38.5,
+          "shortWinRate": 47.7
+        },
+        "2024": {
+          "sampleSize": 60,
+          "longWinRate": 41.5,
+          "shortWinRate": 48.6
+        },
+        "2025": {
+          "sampleSize": 61,
+          "longWinRate": 28.6,
+          "shortWinRate": 59.5
+        },
+        "2026": {
+          "sampleSize": 22,
+          "longWinRate": 33.3,
+          "shortWinRate": 40
+        }
+      },
+      "longWinRateStdAcrossYears": 5.2,
+      "shortWinRateStdAcrossYears": 6.21,
+      "bestSide": "PE",
+      "bestWinRate": 50.6,
+      "uniqueDays": 219,
+      "occurrencesPerMonth": 4.8,
+      "tradeable": false
+    },
+    {
+      "id": "dir_prefix_len3_D_D_D",
+      "sequence": "D>D>D",
+      "context": "dir_prefix",
+      "sequenceLength": 3,
+      "label": "First 3 bar colours: D → D → D",
+      "sampleSize": 86,
+      "longWinRate": 26.3,
+      "shortWinRate": 62.2,
+      "avgNext1Points": -1.44,
+      "avgHorizonPoints": -3.99,
+      "longWins": 10,
+      "longLosses": 28,
+      "shortWins": 23,
+      "shortLosses": 14,
+      "byYear": {
+        "2022": {
+          "sampleSize": 20,
+          "longWinRate": 20,
+          "shortWinRate": 66.7
+        },
+        "2023": {
+          "sampleSize": 19,
+          "longWinRate": 44.4,
+          "shortWinRate": 37.5
+        },
+        "2024": {
+          "sampleSize": 19,
+          "longWinRate": 25,
+          "shortWinRate": 75
+        },
+        "2025": {
+          "sampleSize": 20,
+          "longWinRate": 8.3,
+          "shortWinRate": 88.9
+        },
+        "2026": {
+          "sampleSize": 8,
+          "longWinRate": 66.7,
+          "shortWinRate": 25
+        }
+      },
+      "longWinRateStdAcrossYears": 20.54,
+      "shortWinRateStdAcrossYears": 23.78,
+      "bestSide": "PE",
+      "bestWinRate": 62.2,
+      "uniqueDays": 86,
+      "occurrencesPerMonth": 1.7,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DLL_UMH",
+      "sequence": "DLL>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DLL → UMH",
+      "sampleSize": 508,
+      "longWinRate": 44.3,
+      "shortWinRate": 36.2,
+      "avgNext1Points": 0.9,
+      "avgHorizonPoints": -0.11,
+      "longWins": 139,
+      "longLosses": 175,
+      "shortWins": 110,
+      "shortLosses": 194,
+      "byYear": {
+        "2022": {
+          "sampleSize": 98,
+          "longWinRate": 52.5,
+          "shortWinRate": 25.8
+        },
+        "2023": {
+          "sampleSize": 133,
+          "longWinRate": 33,
+          "shortWinRate": 45.7
+        },
+        "2024": {
+          "sampleSize": 108,
+          "longWinRate": 50.9,
+          "shortWinRate": 28.6
+        },
+        "2025": {
+          "sampleSize": 127,
+          "longWinRate": 47.5,
+          "shortWinRate": 38.7
+        },
+        "2026": {
+          "sampleSize": 42,
+          "longWinRate": 44.4,
+          "shortWinRate": 35.3
+        }
+      },
+      "longWinRateStdAcrossYears": 6.92,
+      "shortWinRateStdAcrossYears": 7.12,
+      "bestSide": "CE",
+      "bestWinRate": 44.3,
+      "uniqueDays": 412,
+      "occurrencesPerMonth": 9.6,
+      "tradeable": false
+    },
+    {
+      "id": "dir_prefix_len2_U_F",
+      "sequence": "U>F",
+      "context": "dir_prefix",
+      "sequenceLength": 2,
+      "label": "First 2 bar colours: U → F",
+      "sampleSize": 68,
+      "longWinRate": 25,
+      "shortWinRate": 64.5,
+      "avgNext1Points": -5.38,
+      "avgHorizonPoints": -8.91,
+      "longWins": 9,
+      "longLosses": 27,
+      "shortWins": 20,
+      "shortLosses": 11,
+      "byYear": {
+        "2022": {
+          "sampleSize": 14,
+          "longWinRate": 0,
+          "shortWinRate": 100
+        },
+        "2023": {
+          "sampleSize": 14,
+          "longWinRate": 50,
+          "shortWinRate": 44.4
+        },
+        "2024": {
+          "sampleSize": 19,
+          "longWinRate": 16.7,
+          "shortWinRate": 57.1
+        },
+        "2025": {
+          "sampleSize": 18,
+          "longWinRate": 20,
+          "shortWinRate": 75
+        },
+        "2026": {
+          "sampleSize": 3,
+          "longWinRate": 100,
+          "shortWinRate": 0
+        }
+      },
+      "longWinRateStdAcrossYears": 35.23,
+      "shortWinRateStdAcrossYears": 33.37,
+      "bestSide": "PE",
+      "bestWinRate": 64.5,
+      "uniqueDays": 68,
+      "occurrencesPerMonth": 1.3,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_UMM",
+      "sequence": "UMH>UMM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → UMM",
+      "sampleSize": 378,
+      "longWinRate": 36.1,
+      "shortWinRate": 45.5,
+      "avgNext1Points": 0.33,
+      "avgHorizonPoints": 0.76,
+      "longWins": 90,
+      "longLosses": 159,
+      "shortWins": 116,
+      "shortLosses": 139,
+      "byYear": {
+        "2022": {
+          "sampleSize": 83,
+          "longWinRate": 33.3,
+          "shortWinRate": 47.5
+        },
+        "2023": {
+          "sampleSize": 87,
+          "longWinRate": 35.4,
+          "shortWinRate": 43.8
+        },
+        "2024": {
+          "sampleSize": 67,
+          "longWinRate": 37.2,
+          "shortWinRate": 47.8
+        },
+        "2025": {
+          "sampleSize": 108,
+          "longWinRate": 35.6,
+          "shortWinRate": 45.7
+        },
+        "2026": {
+          "sampleSize": 33,
+          "longWinRate": 47.1,
+          "shortWinRate": 37.5
+        }
+      },
+      "longWinRateStdAcrossYears": 4.85,
+      "shortWinRateStdAcrossYears": 3.76,
+      "bestSide": "PE",
+      "bestWinRate": 45.5,
+      "uniqueDays": 327,
+      "occurrencesPerMonth": 7.1,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_DLL",
+      "sequence": "UMH>DLL",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → DLL",
+      "sampleSize": 353,
+      "longWinRate": 45.3,
+      "shortWinRate": 34.2,
+      "avgNext1Points": 0.56,
+      "avgHorizonPoints": 0.82,
+      "longWins": 91,
+      "longLosses": 110,
+      "shortWins": 68,
+      "shortLosses": 131,
+      "byYear": {
+        "2022": {
+          "sampleSize": 70,
+          "longWinRate": 46.7,
+          "shortWinRate": 33.3
+        },
+        "2023": {
+          "sampleSize": 89,
+          "longWinRate": 40,
+          "shortWinRate": 32.8
+        },
+        "2024": {
+          "sampleSize": 75,
+          "longWinRate": 50,
+          "shortWinRate": 36.1
+        },
+        "2025": {
+          "sampleSize": 89,
+          "longWinRate": 45.7,
+          "shortWinRate": 36
+        },
+        "2026": {
+          "sampleSize": 30,
+          "longWinRate": 55.6,
+          "shortWinRate": 30
+        }
+      },
+      "longWinRateStdAcrossYears": 5.14,
+      "shortWinRateStdAcrossYears": 2.27,
+      "bestSide": "CE",
+      "bestWinRate": 45.3,
+      "uniqueDays": 312,
+      "occurrencesPerMonth": 6.7,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DMM_UMH",
+      "sequence": "DMM>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DMM → UMH",
+      "sampleSize": 456,
+      "longWinRate": 36.2,
+      "shortWinRate": 43.4,
+      "avgNext1Points": -0.64,
+      "avgHorizonPoints": -2.01,
+      "longWins": 110,
+      "longLosses": 194,
+      "shortWins": 128,
+      "shortLosses": 167,
+      "byYear": {
+        "2022": {
+          "sampleSize": 101,
+          "longWinRate": 33.8,
+          "shortWinRate": 42.6
+        },
+        "2023": {
+          "sampleSize": 107,
+          "longWinRate": 37.3,
+          "shortWinRate": 44.9
+        },
+        "2024": {
+          "sampleSize": 96,
+          "longWinRate": 35.5,
+          "shortWinRate": 44.8
+        },
+        "2025": {
+          "sampleSize": 103,
+          "longWinRate": 37.9,
+          "shortWinRate": 37.7
+        },
+        "2026": {
+          "sampleSize": 49,
+          "longWinRate": 36.7,
+          "shortWinRate": 50
+        }
+      },
+      "longWinRateStdAcrossYears": 1.46,
+      "shortWinRateStdAcrossYears": 3.98,
+      "bestSide": "PE",
+      "bestWinRate": 43.4,
+      "uniqueDays": 382,
+      "occurrencesPerMonth": 8.6,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DML_UMM",
+      "sequence": "DML>UMM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → UMM",
+      "sampleSize": 360,
+      "longWinRate": 45.1,
+      "shortWinRate": 35.9,
+      "avgNext1Points": 0.6,
+      "avgHorizonPoints": 4.68,
+      "longWins": 105,
+      "longLosses": 128,
+      "shortWins": 85,
+      "shortLosses": 152,
+      "byYear": {
+        "2022": {
+          "sampleSize": 94,
+          "longWinRate": 46.7,
+          "shortWinRate": 37.1
+        },
+        "2023": {
+          "sampleSize": 91,
+          "longWinRate": 37.3,
+          "shortWinRate": 38.9
+        },
+        "2024": {
+          "sampleSize": 78,
+          "longWinRate": 43.2,
+          "shortWinRate": 34.8
+        },
+        "2025": {
+          "sampleSize": 63,
+          "longWinRate": 56.3,
+          "shortWinRate": 28.9
+        },
+        "2026": {
+          "sampleSize": 34,
+          "longWinRate": 42.9,
+          "shortWinRate": 41.7
+        }
+      },
+      "longWinRateStdAcrossYears": 6.28,
+      "shortWinRateStdAcrossYears": 4.33,
+      "bestSide": "CE",
+      "bestWinRate": 45.1,
+      "uniqueDays": 313,
+      "occurrencesPerMonth": 6.8,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DML_USH",
+      "sequence": "DML>USH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → USH",
+      "sampleSize": 336,
+      "longWinRate": 45.1,
+      "shortWinRate": 34.6,
+      "avgNext1Points": 0.1,
+      "avgHorizonPoints": -2.69,
+      "longWins": 105,
+      "longLosses": 128,
+      "shortWins": 80,
+      "shortLosses": 151,
+      "byYear": {
+        "2022": {
+          "sampleSize": 62,
+          "longWinRate": 40.4,
+          "shortWinRate": 40
+        },
+        "2023": {
+          "sampleSize": 78,
+          "longWinRate": 41.4,
+          "shortWinRate": 36.1
+        },
+        "2024": {
+          "sampleSize": 91,
+          "longWinRate": 57.4,
+          "shortWinRate": 26.2
+        },
+        "2025": {
+          "sampleSize": 82,
+          "longWinRate": 39.2,
+          "shortWinRate": 38
+        },
+        "2026": {
+          "sampleSize": 23,
+          "longWinRate": 33.3,
+          "shortWinRate": 40
+        }
+      },
+      "longWinRateStdAcrossYears": 8.04,
+      "shortWinRateStdAcrossYears": 5.14,
+      "bestSide": "CE",
+      "bestWinRate": 45.1,
+      "uniqueDays": 288,
+      "occurrencesPerMonth": 6.3,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_DMM",
+      "sequence": "UMH>DMM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → DMM",
+      "sampleSize": 420,
+      "longWinRate": 37,
+      "shortWinRate": 43.4,
+      "avgNext1Points": 0.01,
+      "avgHorizonPoints": -1.3,
+      "longWins": 102,
+      "longLosses": 174,
+      "shortWins": 121,
+      "shortLosses": 158,
+      "byYear": {
+        "2022": {
+          "sampleSize": 94,
+          "longWinRate": 39.7,
+          "shortWinRate": 42.4
+        },
+        "2023": {
+          "sampleSize": 92,
+          "longWinRate": 29.5,
+          "shortWinRate": 45.7
+        },
+        "2024": {
+          "sampleSize": 103,
+          "longWinRate": 30,
+          "shortWinRate": 54.2
+        },
+        "2025": {
+          "sampleSize": 97,
+          "longWinRate": 42.1,
+          "shortWinRate": 36.9
+        },
+        "2026": {
+          "sampleSize": 34,
+          "longWinRate": 60,
+          "shortWinRate": 26.3
+        }
+      },
+      "longWinRateStdAcrossYears": 11.09,
+      "shortWinRateStdAcrossYears": 9.29,
+      "bestSide": "PE",
+      "bestWinRate": 43.4,
+      "uniqueDays": 358,
+      "occurrencesPerMonth": 7.9,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DML_DMM",
+      "sequence": "DML>DMM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → DMM",
+      "sampleSize": 426,
+      "longWinRate": 40.1,
+      "shortWinRate": 42.7,
+      "avgNext1Points": 0.01,
+      "avgHorizonPoints": 0.93,
+      "longWins": 117,
+      "longLosses": 175,
+      "shortWins": 122,
+      "shortLosses": 164,
+      "byYear": {
+        "2022": {
+          "sampleSize": 105,
+          "longWinRate": 36.4,
+          "shortWinRate": 50
+        },
+        "2023": {
+          "sampleSize": 92,
+          "longWinRate": 38,
+          "shortWinRate": 39.7
+        },
+        "2024": {
+          "sampleSize": 100,
+          "longWinRate": 46.7,
+          "shortWinRate": 40
+        },
+        "2025": {
+          "sampleSize": 87,
+          "longWinRate": 38.3,
+          "shortWinRate": 45.3
+        },
+        "2026": {
+          "sampleSize": 42,
+          "longWinRate": 45.8,
+          "shortWinRate": 32.1
+        }
+      },
+      "longWinRateStdAcrossYears": 4.31,
+      "shortWinRateStdAcrossYears": 6.01,
+      "bestSide": "PE",
+      "bestWinRate": 42.7,
+      "uniqueDays": 356,
+      "occurrencesPerMonth": 8,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DSL_DML",
+      "sequence": "DSL>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DSL → DML",
+      "sampleSize": 297,
+      "longWinRate": 45.2,
+      "shortWinRate": 35.1,
+      "avgNext1Points": 0.17,
+      "avgHorizonPoints": 0.68,
+      "longWins": 89,
+      "longLosses": 108,
+      "shortWins": 71,
+      "shortLosses": 131,
+      "byYear": {
+        "2022": {
+          "sampleSize": 70,
+          "longWinRate": 36.2,
+          "shortWinRate": 40
+        },
+        "2023": {
+          "sampleSize": 63,
+          "longWinRate": 51.2,
+          "shortWinRate": 24
+        },
+        "2024": {
+          "sampleSize": 51,
+          "longWinRate": 44.7,
+          "shortWinRate": 40
+        },
+        "2025": {
+          "sampleSize": 78,
+          "longWinRate": 51.9,
+          "shortWinRate": 35.2
+        },
+        "2026": {
+          "sampleSize": 35,
+          "longWinRate": 35.3,
+          "shortWinRate": 44.4
+        }
+      },
+      "longWinRateStdAcrossYears": 7.09,
+      "shortWinRateStdAcrossYears": 6.99,
+      "bestSide": "CE",
+      "bestWinRate": 45.2,
+      "uniqueDays": 264,
+      "occurrencesPerMonth": 5.6,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DLL_DLL",
+      "sequence": "DLL>DLL",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DLL → DLL",
+      "sampleSize": 342,
+      "longWinRate": 44.1,
+      "shortWinRate": 34.1,
+      "avgNext1Points": 3.53,
+      "avgHorizonPoints": 8.73,
+      "longWins": 71,
+      "longLosses": 90,
+      "shortWins": 57,
+      "shortLosses": 110,
+      "byYear": {
+        "2022": {
+          "sampleSize": 90,
+          "longWinRate": 41.9,
+          "shortWinRate": 37.8
+        },
+        "2023": {
+          "sampleSize": 86,
+          "longWinRate": 46.2,
+          "shortWinRate": 32.1
+        },
+        "2024": {
+          "sampleSize": 72,
+          "longWinRate": 43.3,
+          "shortWinRate": 32.1
+        },
+        "2025": {
+          "sampleSize": 67,
+          "longWinRate": 37,
+          "shortWinRate": 41.4
+        },
+        "2026": {
+          "sampleSize": 27,
+          "longWinRate": 66.7,
+          "shortWinRate": 16.7
+        }
+      },
+      "longWinRateStdAcrossYears": 10.28,
+      "shortWinRateStdAcrossYears": 8.44,
+      "bestSide": "CE",
+      "bestWinRate": 44.1,
+      "uniqueDays": 281,
+      "occurrencesPerMonth": 6.5,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DMM_DML",
+      "sequence": "DMM>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DMM → DML",
+      "sampleSize": 427,
+      "longWinRate": 42.2,
+      "shortWinRate": 37.7,
+      "avgNext1Points": 1.16,
+      "avgHorizonPoints": 1.5,
+      "longWins": 114,
+      "longLosses": 156,
+      "shortWins": 107,
+      "shortLosses": 177,
+      "byYear": {
+        "2022": {
+          "sampleSize": 110,
+          "longWinRate": 44.8,
+          "shortWinRate": 33.3
+        },
+        "2023": {
+          "sampleSize": 95,
+          "longWinRate": 40.6,
+          "shortWinRate": 39.5
+        },
+        "2024": {
+          "sampleSize": 101,
+          "longWinRate": 55.6,
+          "shortWinRate": 27.4
+        },
+        "2025": {
+          "sampleSize": 79,
+          "longWinRate": 35.2,
+          "shortWinRate": 47.1
+        },
+        "2026": {
+          "sampleSize": 42,
+          "longWinRate": 26.9,
+          "shortWinRate": 50
+        }
+      },
+      "longWinRateStdAcrossYears": 9.59,
+      "shortWinRateStdAcrossYears": 8.4,
+      "bestSide": "CE",
+      "bestWinRate": 42.2,
+      "uniqueDays": 360,
+      "occurrencesPerMonth": 8.1,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_ULH_DML",
+      "sequence": "ULH>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: ULH → DML",
+      "sampleSize": 469,
+      "longWinRate": 41.5,
+      "shortWinRate": 41.5,
+      "avgNext1Points": -0.38,
+      "avgHorizonPoints": -1.29,
+      "longWins": 122,
+      "longLosses": 172,
+      "shortWins": 120,
+      "shortLosses": 169,
+      "byYear": {
+        "2022": {
+          "sampleSize": 97,
+          "longWinRate": 49.2,
+          "shortWinRate": 31.3
+        },
+        "2023": {
+          "sampleSize": 105,
+          "longWinRate": 44.9,
+          "shortWinRate": 40
+        },
+        "2024": {
+          "sampleSize": 133,
+          "longWinRate": 40.3,
+          "shortWinRate": 40.6
+        },
+        "2025": {
+          "sampleSize": 98,
+          "longWinRate": 40,
+          "shortWinRate": 46.7
+        },
+        "2026": {
+          "sampleSize": 36,
+          "longWinRate": 10.5,
+          "shortWinRate": 75
+        }
+      },
+      "longWinRateStdAcrossYears": 13.66,
+      "shortWinRateStdAcrossYears": 14.97,
+      "bestSide": "CE",
+      "bestWinRate": 41.5,
+      "uniqueDays": 388,
+      "occurrencesPerMonth": 8.8,
+      "tradeable": false
+    },
+    {
+      "id": "dir_prefix_len2_U_U",
+      "sequence": "U>U",
+      "context": "dir_prefix",
+      "sequenceLength": 2,
+      "label": "First 2 bar colours: U → U",
+      "sampleSize": 184,
+      "longWinRate": 32,
+      "shortWinRate": 48.9,
+      "avgNext1Points": -2.61,
+      "avgHorizonPoints": -5.58,
+      "longWins": 32,
+      "longLosses": 68,
+      "shortWins": 45,
+      "shortLosses": 47,
+      "byYear": {
+        "2022": {
+          "sampleSize": 52,
+          "longWinRate": 38.5,
+          "shortWinRate": 47.8
+        },
+        "2023": {
+          "sampleSize": 39,
+          "longWinRate": 23.1,
+          "shortWinRate": 45.8
+        },
+        "2024": {
+          "sampleSize": 31,
+          "longWinRate": 27.8,
+          "shortWinRate": 57.1
+        },
+        "2025": {
+          "sampleSize": 46,
+          "longWinRate": 39.1,
+          "shortWinRate": 43.5
+        },
+        "2026": {
+          "sampleSize": 16,
+          "longWinRate": 28.6,
+          "shortWinRate": 62.5
+        }
+      },
+      "longWinRateStdAcrossYears": 6.31,
+      "shortWinRateStdAcrossYears": 7.24,
+      "bestSide": "PE",
+      "bestWinRate": 48.9,
+      "uniqueDays": 184,
+      "occurrencesPerMonth": 3.5,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_FMM",
+      "sequence": "UMH>FMM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → FMM",
+      "sampleSize": 267,
+      "longWinRate": 36.9,
+      "shortWinRate": 45.4,
+      "avgNext1Points": -2.28,
+      "avgHorizonPoints": -4.04,
+      "longWins": 66,
+      "longLosses": 113,
+      "shortWins": 84,
+      "shortLosses": 101,
+      "byYear": {
+        "2022": {
+          "sampleSize": 42,
+          "longWinRate": 34.5,
+          "shortWinRate": 51.4
+        },
+        "2023": {
+          "sampleSize": 77,
+          "longWinRate": 32.1,
+          "shortWinRate": 43.6
+        },
+        "2024": {
+          "sampleSize": 60,
+          "longWinRate": 31,
+          "shortWinRate": 52.5
+        },
+        "2025": {
+          "sampleSize": 66,
+          "longWinRate": 51.1,
+          "shortWinRate": 36.4
+        },
+        "2026": {
+          "sampleSize": 22,
+          "longWinRate": 25,
+          "shortWinRate": 45.5
+        }
+      },
+      "longWinRateStdAcrossYears": 8.76,
+      "shortWinRateStdAcrossYears": 5.82,
+      "bestSide": "PE",
+      "bestWinRate": 45.4,
+      "uniqueDays": 235,
+      "occurrencesPerMonth": 5.1,
+      "tradeable": false
+    },
+    {
+      "id": "session_prefix_len2_DLL_ULH",
+      "sequence": "DLL>ULH",
+      "context": "session_prefix",
+      "sequenceLength": 2,
+      "label": "First 2 bars: DLL → ULH",
+      "sampleSize": 94,
+      "longWinRate": 55.6,
+      "shortWinRate": 30.6,
+      "avgNext1Points": 3.93,
+      "avgHorizonPoints": 3.34,
+      "longWins": 25,
+      "longLosses": 20,
+      "shortWins": 15,
+      "shortLosses": 34,
+      "byYear": {
+        "2022": {
+          "sampleSize": 26,
+          "longWinRate": 62.5,
+          "shortWinRate": 26.7
+        },
+        "2023": {
+          "sampleSize": 26,
+          "longWinRate": 57.1,
+          "shortWinRate": 29.4
+        },
+        "2024": {
+          "sampleSize": 20,
+          "longWinRate": 33.3,
+          "shortWinRate": 50
+        },
+        "2025": {
+          "sampleSize": 17,
+          "longWinRate": 57.1,
+          "shortWinRate": 30
+        },
+        "2026": {
+          "sampleSize": 5,
+          "longWinRate": 50,
+          "shortWinRate": 0
+        }
+      },
+      "longWinRateStdAcrossYears": 10.16,
+      "shortWinRateStdAcrossYears": 15.95,
+      "bestSide": "CE",
+      "bestWinRate": 55.6,
+      "uniqueDays": 94,
+      "occurrencesPerMonth": 1.8,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len3_DML_UMH_UMH",
+      "sequence": "DML>UMH>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: DML → UMH → UMH",
+      "sampleSize": 279,
+      "longWinRate": 36.6,
+      "shortWinRate": 44.8,
+      "avgNext1Points": 0.05,
+      "avgHorizonPoints": 1.75,
+      "longWins": 74,
+      "longLosses": 128,
+      "shortWins": 87,
+      "shortLosses": 107,
+      "byYear": {
+        "2022": {
+          "sampleSize": 77,
+          "longWinRate": 39.7,
+          "shortWinRate": 45.5
+        },
+        "2023": {
+          "sampleSize": 63,
+          "longWinRate": 32,
+          "shortWinRate": 46.8
+        },
+        "2024": {
+          "sampleSize": 59,
+          "longWinRate": 27.8,
+          "shortWinRate": 45.9
+        },
+        "2025": {
+          "sampleSize": 59,
+          "longWinRate": 44.7,
+          "shortWinRate": 40.9
+        },
+        "2026": {
+          "sampleSize": 21,
+          "longWinRate": 36.4,
+          "shortWinRate": 45.5
+        }
+      },
+      "longWinRateStdAcrossYears": 5.88,
+      "shortWinRateStdAcrossYears": 2.07,
+      "bestSide": "PE",
+      "bestWinRate": 44.8,
+      "uniqueDays": 260,
+      "occurrencesPerMonth": 5.3,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_DSL_UMH",
+      "sequence": "DSL>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DSL → UMH",
+      "sampleSize": 368,
+      "longWinRate": 40.4,
+      "shortWinRate": 42.6,
+      "avgNext1Points": -1.41,
+      "avgHorizonPoints": -1.64,
+      "longWins": 105,
+      "longLosses": 155,
+      "shortWins": 110,
+      "shortLosses": 148,
+      "byYear": {
+        "2022": {
+          "sampleSize": 87,
+          "longWinRate": 41.9,
+          "shortWinRate": 45.3
+        },
+        "2023": {
+          "sampleSize": 88,
+          "longWinRate": 53.7,
+          "shortWinRate": 28.2
+        },
+        "2024": {
+          "sampleSize": 84,
+          "longWinRate": 35.6,
+          "shortWinRate": 46.4
+        },
+        "2025": {
+          "sampleSize": 83,
+          "longWinRate": 30.4,
+          "shortWinRate": 50
+        },
+        "2026": {
+          "sampleSize": 26,
+          "longWinRate": 31.3,
+          "shortWinRate": 61.5
+        }
+      },
+      "longWinRateStdAcrossYears": 8.58,
+      "shortWinRateStdAcrossYears": 10.71,
+      "bestSide": "PE",
+      "bestWinRate": 42.6,
+      "uniqueDays": 311,
+      "occurrencesPerMonth": 6.9,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len2_UMH_USH",
+      "sequence": "UMH>USH",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: UMH → USH",
+      "sampleSize": 421,
+      "longWinRate": 37.7,
+      "shortWinRate": 41.6,
+      "avgNext1Points": 0.36,
+      "avgHorizonPoints": 0.77,
+      "longWins": 112,
+      "longLosses": 185,
+      "shortWins": 122,
+      "shortLosses": 171,
+      "byYear": {
+        "2022": {
+          "sampleSize": 104,
+          "longWinRate": 38.2,
+          "shortWinRate": 39.4
+        },
+        "2023": {
+          "sampleSize": 96,
+          "longWinRate": 35.2,
+          "shortWinRate": 42.4
+        },
+        "2024": {
+          "sampleSize": 79,
+          "longWinRate": 41,
+          "shortWinRate": 42.4
+        },
+        "2025": {
+          "sampleSize": 116,
+          "longWinRate": 35.8,
+          "shortWinRate": 44.4
+        },
+        "2026": {
+          "sampleSize": 26,
+          "longWinRate": 43.8,
+          "shortWinRate": 31.3
+        }
+      },
+      "longWinRateStdAcrossYears": 3.23,
+      "shortWinRateStdAcrossYears": 4.62,
+      "bestSide": "PE",
+      "bestWinRate": 41.6,
+      "uniqueDays": 358,
+      "occurrencesPerMonth": 7.9,
+      "tradeable": false
+    },
+    {
+      "id": "sliding_morning_len3_DML_DML_DML",
+      "sequence": "DML>DML>DML",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: DML → DML → DML",
+      "sampleSize": 189,
+      "longWinRate": 47.9,
+      "shortWinRate": 33,
+      "avgNext1Points": 0.66,
+      "avgHorizonPoints": 4.24,
+      "longWins": 56,
+      "longLosses": 61,
+      "shortWins": 37,
+      "shortLosses": 75,
+      "byYear": {
+        "2022": {
+          "sampleSize": 34,
+          "longWinRate": 39.1,
+          "shortWinRate": 38.1
+        },
+        "2023": {
+          "sampleSize": 44,
+          "longWinRate": 46.9,
+          "shortWinRate": 41.2
+        },
+        "2024": {
+          "sampleSize": 26,
+          "longWinRate": 76.9,
+          "shortWinRate": 8.3
+        },
+        "2025": {
+          "sampleSize": 52,
+          "longWinRate": 51.6,
+          "shortWinRate": 25.8
+        },
+        "2026": {
+          "sampleSize": 33,
+          "longWinRate": 33.3,
+          "shortWinRate": 42.9
+        }
+      },
+      "longWinRateStdAcrossYears": 15.05,
+      "shortWinRateStdAcrossYears": 12.95,
+      "bestSide": "CE",
+      "bestWinRate": 47.9,
+      "uniqueDays": 144,
+      "occurrencesPerMonth": 3.6,
+      "tradeable": false
+    }
+  ],
+  "topTradeable": [
+    {
+      "id": "dir_prefix_len3_D_U_U",
+      "sequence": "D>U>U",
+      "context": "dir_prefix",
+      "sequenceLength": 3,
+      "label": "First 3 bar colours: D → U → U",
+      "sampleSize": 100,
+      "longWinRate": 23.6,
+      "shortWinRate": 63.5,
+      "avgNext1Points": -6.08,
+      "avgHorizonPoints": -9.33,
+      "longWins": 13,
+      "longLosses": 42,
+      "shortWins": 33,
+      "shortLosses": 19,
+      "byYear": {
+        "2022": {
+          "sampleSize": 26,
+          "longWinRate": 16.7,
+          "shortWinRate": 70
+        },
+        "2023": {
+          "sampleSize": 25,
+          "longWinRate": 33.3,
+          "shortWinRate": 50
+        },
+        "2024": {
+          "sampleSize": 22,
+          "longWinRate": 10,
+          "shortWinRate": 77.8
+        },
+        "2025": {
+          "sampleSize": 20,
+          "longWinRate": 27.3,
+          "shortWinRate": 61.5
+        },
+        "2026": {
+          "sampleSize": 7,
+          "longWinRate": 28.6,
+          "shortWinRate": 66.7
+        }
+      },
+      "longWinRateStdAcrossYears": 8.54,
+      "shortWinRateStdAcrossYears": 9.26,
+      "bestSide": "PE",
+      "bestWinRate": 63.5,
+      "uniqueDays": 100,
+      "occurrencesPerMonth": 1.9,
+      "tradeable": true
+    },
+    {
+      "id": "session_prefix_len2_DLL_ULH",
+      "sequence": "DLL>ULH",
+      "context": "session_prefix",
+      "sequenceLength": 2,
+      "label": "First 2 bars: DLL → ULH",
+      "sampleSize": 94,
+      "longWinRate": 55.6,
+      "shortWinRate": 30.6,
+      "avgNext1Points": 3.93,
+      "avgHorizonPoints": 3.34,
+      "longWins": 25,
+      "longLosses": 20,
+      "shortWins": 15,
+      "shortLosses": 34,
+      "byYear": {
+        "2022": {
+          "sampleSize": 26,
+          "longWinRate": 62.5,
+          "shortWinRate": 26.7
+        },
+        "2023": {
+          "sampleSize": 26,
+          "longWinRate": 57.1,
+          "shortWinRate": 29.4
+        },
+        "2024": {
+          "sampleSize": 20,
+          "longWinRate": 33.3,
+          "shortWinRate": 50
+        },
+        "2025": {
+          "sampleSize": 17,
+          "longWinRate": 57.1,
+          "shortWinRate": 30
+        },
+        "2026": {
+          "sampleSize": 5,
+          "longWinRate": 50,
+          "shortWinRate": 0
+        }
+      },
+      "longWinRateStdAcrossYears": 10.16,
+      "shortWinRateStdAcrossYears": 15.95,
+      "bestSide": "CE",
+      "bestWinRate": 55.6,
+      "uniqueDays": 94,
+      "occurrencesPerMonth": 1.8,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len3_UMH_ULH_UMH",
+      "sequence": "UMH>ULH>UMH",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: UMH → ULH → UMH",
+      "sampleSize": 63,
+      "longWinRate": 30.4,
+      "shortWinRate": 59.1,
+      "avgNext1Points": -3.1,
+      "avgHorizonPoints": -7.83,
+      "longWins": 14,
+      "longLosses": 32,
+      "shortWins": 26,
+      "shortLosses": 18,
+      "byYear": {
+        "2022": {
+          "sampleSize": 12,
+          "longWinRate": 45.5,
+          "shortWinRate": 54.5
+        },
+        "2023": {
+          "sampleSize": 12,
+          "longWinRate": 45.5,
+          "shortWinRate": 54.5
+        },
+        "2024": {
+          "sampleSize": 11,
+          "longWinRate": 14.3,
+          "shortWinRate": 66.7
+        },
+        "2025": {
+          "sampleSize": 18,
+          "longWinRate": 15.4,
+          "shortWinRate": 66.7
+        },
+        "2026": {
+          "sampleSize": 10,
+          "longWinRate": 25,
+          "shortWinRate": 50
+        }
+      },
+      "longWinRateStdAcrossYears": 13.87,
+      "shortWinRateStdAcrossYears": 6.91,
+      "bestSide": "PE",
+      "bestWinRate": 59.1,
+      "uniqueDays": 62,
+      "occurrencesPerMonth": 1.2,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len2_DML_DLM",
+      "sequence": "DML>DLM",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: DML → DLM",
+      "sampleSize": 71,
+      "longWinRate": 56.5,
+      "shortWinRate": 31.8,
+      "avgNext1Points": 0.97,
+      "avgHorizonPoints": 6.28,
+      "longWins": 26,
+      "longLosses": 20,
+      "shortWins": 14,
+      "shortLosses": 30,
+      "byYear": {
+        "2022": {
+          "sampleSize": 14,
+          "longWinRate": 70,
+          "shortWinRate": 30
+        },
+        "2023": {
+          "sampleSize": 12,
+          "longWinRate": 45.5,
+          "shortWinRate": 45.5
+        },
+        "2024": {
+          "sampleSize": 22,
+          "longWinRate": 60,
+          "shortWinRate": 23.1
+        },
+        "2025": {
+          "sampleSize": 17,
+          "longWinRate": 50,
+          "shortWinRate": 37.5
+        },
+        "2026": {
+          "sampleSize": 6,
+          "longWinRate": 50,
+          "shortWinRate": 0
+        }
+      },
+      "longWinRateStdAcrossYears": 8.83,
+      "shortWinRateStdAcrossYears": 15.53,
+      "bestSide": "CE",
+      "bestWinRate": 56.5,
+      "uniqueDays": 69,
+      "occurrencesPerMonth": 1.3,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len2_USM_DLL",
+      "sequence": "USM>DLL",
+      "context": "sliding_morning",
+      "sequenceLength": 2,
+      "label": "Morning 2-bar sequence: USM → DLL",
+      "sampleSize": 36,
+      "longWinRate": 29.2,
+      "shortWinRate": 59.1,
+      "avgNext1Points": -0.2,
+      "avgHorizonPoints": -8.59,
+      "longWins": 7,
+      "longLosses": 17,
+      "shortWins": 13,
+      "shortLosses": 9,
+      "byYear": {
+        "2022": {
+          "sampleSize": 5,
+          "longWinRate": 25,
+          "shortWinRate": 50
+        },
+        "2023": {
+          "sampleSize": 13,
+          "longWinRate": 27.3,
+          "shortWinRate": 72.7
+        },
+        "2024": {
+          "sampleSize": 6,
+          "longWinRate": 50,
+          "shortWinRate": 33.3
+        },
+        "2025": {
+          "sampleSize": 11,
+          "longWinRate": 28.6,
+          "shortWinRate": 50
+        },
+        "2026": {
+          "sampleSize": 1,
+          "longWinRate": null,
+          "shortWinRate": null
+        }
+      },
+      "longWinRateStdAcrossYears": 10.06,
+      "shortWinRateStdAcrossYears": 14.01,
+      "bestSide": "PE",
+      "bestWinRate": 59.1,
+      "uniqueDays": 35,
+      "occurrencesPerMonth": 0.7,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len3_UMH_USH_DSL",
+      "sequence": "UMH>USH>DSL",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: UMH → USH → DSL",
+      "sampleSize": 38,
+      "longWinRate": 29,
+      "shortWinRate": 58.1,
+      "avgNext1Points": 0.45,
+      "avgHorizonPoints": -3.69,
+      "longWins": 9,
+      "longLosses": 22,
+      "shortWins": 18,
+      "shortLosses": 13,
+      "byYear": {
+        "2022": {
+          "sampleSize": 6,
+          "longWinRate": 50,
+          "shortWinRate": 40
+        },
+        "2023": {
+          "sampleSize": 13,
+          "longWinRate": 45.5,
+          "shortWinRate": 50
+        },
+        "2024": {
+          "sampleSize": 4,
+          "longWinRate": 0,
+          "shortWinRate": 66.7
+        },
+        "2025": {
+          "sampleSize": 15,
+          "longWinRate": 16.7,
+          "shortWinRate": 72.7
+        }
+      },
+      "longWinRateStdAcrossYears": 20.63,
+      "shortWinRateStdAcrossYears": 13.02,
+      "bestSide": "PE",
+      "bestWinRate": 58.1,
+      "uniqueDays": 37,
+      "occurrencesPerMonth": 0.8,
+      "tradeable": true
+    },
+    {
+      "id": "sliding_morning_len3_DLL_ULH_UMM",
+      "sequence": "DLL>ULH>UMM",
+      "context": "sliding_morning",
+      "sequenceLength": 3,
+      "label": "Morning 3-bar sequence: DLL → ULH → UMM",
+      "sampleSize": 36,
+      "longWinRate": 56.3,
+      "shortWinRate": 28.6,
+      "avgNext1Points": 2.37,
+      "avgHorizonPoints": 4.61,
+      "longWins": 9,
+      "longLosses": 7,
+      "shortWins": 6,
+      "shortLosses": 15,
+      "byYear": {
+        "2022": {
+          "sampleSize": 10,
+          "longWinRate": 50,
+          "shortWinRate": 40
+        },
+        "2023": {
+          "sampleSize": 8,
+          "longWinRate": 75,
+          "shortWinRate": 14.3
+        },
+        "2024": {
+          "sampleSize": 11,
+          "longWinRate": 40,
+          "shortWinRate": 40
+        },
+        "2025": {
+          "sampleSize": 5,
+          "longWinRate": 66.7,
+          "shortWinRate": 25
+        },
+        "2026": {
+          "sampleSize": 2,
+          "longWinRate": null,
+          "shortWinRate": null
+        }
+      },
+      "longWinRateStdAcrossYears": 13.72,
+      "shortWinRateStdAcrossYears": 10.86,
+      "bestSide": "CE",
+      "bestWinRate": 56.3,
+      "uniqueDays": 36,
+      "occurrencesPerMonth": 0.7,
+      "tradeable": true
+    }
+  ],
+  "byCategory": {
+    "sessionPrefix": [
+      {
+        "id": "session_prefix_len2_DLL_ULH",
+        "sequence": "DLL>ULH",
+        "context": "session_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bars: DLL → ULH",
+        "sampleSize": 94,
+        "longWinRate": 55.6,
+        "shortWinRate": 30.6,
+        "avgNext1Points": 3.93,
+        "avgHorizonPoints": 3.34,
+        "longWins": 25,
+        "longLosses": 20,
+        "shortWins": 15,
+        "shortLosses": 34,
+        "byYear": {
+          "2022": {
+            "sampleSize": 26,
+            "longWinRate": 62.5,
+            "shortWinRate": 26.7
+          },
+          "2023": {
+            "sampleSize": 26,
+            "longWinRate": 57.1,
+            "shortWinRate": 29.4
+          },
+          "2024": {
+            "sampleSize": 20,
+            "longWinRate": 33.3,
+            "shortWinRate": 50
+          },
+          "2025": {
+            "sampleSize": 17,
+            "longWinRate": 57.1,
+            "shortWinRate": 30
+          },
+          "2026": {
+            "sampleSize": 5,
+            "longWinRate": 50,
+            "shortWinRate": 0
+          }
+        },
+        "longWinRateStdAcrossYears": 10.16,
+        "shortWinRateStdAcrossYears": 15.95,
+        "bestSide": "CE",
+        "bestWinRate": 55.6,
+        "uniqueDays": 94,
+        "occurrencesPerMonth": 1.8,
+        "tradeable": true
+      },
+      {
+        "id": "session_prefix_len2_DLL_DLL",
+        "sequence": "DLL>DLL",
+        "context": "session_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bars: DLL → DLL",
+        "sampleSize": 72,
+        "longWinRate": 46.9,
+        "shortWinRate": 25.6,
+        "avgNext1Points": 4.06,
+        "avgHorizonPoints": 12.47,
+        "longWins": 15,
+        "longLosses": 17,
+        "shortWins": 10,
+        "shortLosses": 29,
+        "byYear": {
+          "2022": {
+            "sampleSize": 12,
+            "longWinRate": 37.5,
+            "shortWinRate": 44.4
+          },
+          "2023": {
+            "sampleSize": 16,
+            "longWinRate": 55.6,
+            "shortWinRate": 11.1
+          },
+          "2024": {
+            "sampleSize": 14,
+            "longWinRate": 75,
+            "shortWinRate": 14.3
+          },
+          "2025": {
+            "sampleSize": 22,
+            "longWinRate": 30,
+            "shortWinRate": 40
+          },
+          "2026": {
+            "sampleSize": 8,
+            "longWinRate": 100,
+            "shortWinRate": 0
+          }
+        },
+        "longWinRateStdAcrossYears": 25.49,
+        "shortWinRateStdAcrossYears": 17.25,
+        "bestSide": "CE",
+        "bestWinRate": 46.9,
+        "uniqueDays": 72,
+        "occurrencesPerMonth": 1.4,
+        "tradeable": false
+      },
+      {
+        "id": "session_prefix_len2_ULH_DLL",
+        "sequence": "ULH>DLL",
+        "context": "session_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bars: ULH → DLL",
+        "sampleSize": 56,
+        "longWinRate": 45,
+        "shortWinRate": 39.1,
+        "avgNext1Points": -4.35,
+        "avgHorizonPoints": 5.37,
+        "longWins": 9,
+        "longLosses": 11,
+        "shortWins": 9,
+        "shortLosses": 14,
+        "byYear": {
+          "2022": {
+            "sampleSize": 20,
+            "longWinRate": 50,
+            "shortWinRate": 28.6
+          },
+          "2023": {
+            "sampleSize": 4,
+            "longWinRate": 0,
+            "shortWinRate": 100
+          },
+          "2024": {
+            "sampleSize": 9,
+            "longWinRate": 33.3,
+            "shortWinRate": 50
+          },
+          "2025": {
+            "sampleSize": 15,
+            "longWinRate": 71.4,
+            "shortWinRate": 14.3
+          },
+          "2026": {
+            "sampleSize": 8,
+            "longWinRate": 25,
+            "shortWinRate": 75
+          }
+        },
+        "longWinRateStdAcrossYears": 23.97,
+        "shortWinRateStdAcrossYears": 30.96,
+        "bestSide": "CE",
+        "bestWinRate": 45,
+        "uniqueDays": 56,
+        "occurrencesPerMonth": 1.1,
+        "tradeable": false
+      },
+      {
+        "id": "session_prefix_len2_ULH_ULH",
+        "sequence": "ULH>ULH",
+        "context": "session_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bars: ULH → ULH",
+        "sampleSize": 64,
+        "longWinRate": 40.5,
+        "shortWinRate": 34.5,
+        "avgNext1Points": -1.94,
+        "avgHorizonPoints": 5.09,
+        "longWins": 15,
+        "longLosses": 22,
+        "shortWins": 10,
+        "shortLosses": 19,
+        "byYear": {
+          "2022": {
+            "sampleSize": 17,
+            "longWinRate": 62.5,
+            "shortWinRate": 25
+          },
+          "2023": {
+            "sampleSize": 18,
+            "longWinRate": 26.7,
+            "shortWinRate": 54.5
+          },
+          "2024": {
+            "sampleSize": 8,
+            "longWinRate": 33.3,
+            "shortWinRate": 33.3
+          },
+          "2025": {
+            "sampleSize": 19,
+            "longWinRate": 50,
+            "shortWinRate": 14.3
+          },
+          "2026": {
+            "sampleSize": 2,
+            "longWinRate": null,
+            "shortWinRate": null
+          }
+        },
+        "longWinRateStdAcrossYears": 14.04,
+        "shortWinRateStdAcrossYears": 14.75,
+        "bestSide": "CE",
+        "bestWinRate": 40.5,
+        "uniqueDays": 64,
+        "occurrencesPerMonth": 1.4,
+        "tradeable": false
+      }
+    ],
+    "dirPrefix": [
+      {
+        "id": "dir_prefix_len3_D_U_U",
+        "sequence": "D>U>U",
+        "context": "dir_prefix",
+        "sequenceLength": 3,
+        "label": "First 3 bar colours: D → U → U",
+        "sampleSize": 100,
+        "longWinRate": 23.6,
+        "shortWinRate": 63.5,
+        "avgNext1Points": -6.08,
+        "avgHorizonPoints": -9.33,
+        "longWins": 13,
+        "longLosses": 42,
+        "shortWins": 33,
+        "shortLosses": 19,
+        "byYear": {
+          "2022": {
+            "sampleSize": 26,
+            "longWinRate": 16.7,
+            "shortWinRate": 70
+          },
+          "2023": {
+            "sampleSize": 25,
+            "longWinRate": 33.3,
+            "shortWinRate": 50
+          },
+          "2024": {
+            "sampleSize": 22,
+            "longWinRate": 10,
+            "shortWinRate": 77.8
+          },
+          "2025": {
+            "sampleSize": 20,
+            "longWinRate": 27.3,
+            "shortWinRate": 61.5
+          },
+          "2026": {
+            "sampleSize": 7,
+            "longWinRate": 28.6,
+            "shortWinRate": 66.7
+          }
+        },
+        "longWinRateStdAcrossYears": 8.54,
+        "shortWinRateStdAcrossYears": 9.26,
+        "bestSide": "PE",
+        "bestWinRate": 63.5,
+        "uniqueDays": 100,
+        "occurrencesPerMonth": 1.9,
+        "tradeable": true
+      },
+      {
+        "id": "dir_prefix_len3_D_D_D",
+        "sequence": "D>D>D",
+        "context": "dir_prefix",
+        "sequenceLength": 3,
+        "label": "First 3 bar colours: D → D → D",
+        "sampleSize": 86,
+        "longWinRate": 26.3,
+        "shortWinRate": 62.2,
+        "avgNext1Points": -1.44,
+        "avgHorizonPoints": -3.99,
+        "longWins": 10,
+        "longLosses": 28,
+        "shortWins": 23,
+        "shortLosses": 14,
+        "byYear": {
+          "2022": {
+            "sampleSize": 20,
+            "longWinRate": 20,
+            "shortWinRate": 66.7
+          },
+          "2023": {
+            "sampleSize": 19,
+            "longWinRate": 44.4,
+            "shortWinRate": 37.5
+          },
+          "2024": {
+            "sampleSize": 19,
+            "longWinRate": 25,
+            "shortWinRate": 75
+          },
+          "2025": {
+            "sampleSize": 20,
+            "longWinRate": 8.3,
+            "shortWinRate": 88.9
+          },
+          "2026": {
+            "sampleSize": 8,
+            "longWinRate": 66.7,
+            "shortWinRate": 25
+          }
+        },
+        "longWinRateStdAcrossYears": 20.54,
+        "shortWinRateStdAcrossYears": 23.78,
+        "bestSide": "PE",
+        "bestWinRate": 62.2,
+        "uniqueDays": 86,
+        "occurrencesPerMonth": 1.7,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_U_F",
+        "sequence": "U>F",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: U → F",
+        "sampleSize": 68,
+        "longWinRate": 25,
+        "shortWinRate": 64.5,
+        "avgNext1Points": -5.38,
+        "avgHorizonPoints": -8.91,
+        "longWins": 9,
+        "longLosses": 27,
+        "shortWins": 20,
+        "shortLosses": 11,
+        "byYear": {
+          "2022": {
+            "sampleSize": 14,
+            "longWinRate": 0,
+            "shortWinRate": 100
+          },
+          "2023": {
+            "sampleSize": 14,
+            "longWinRate": 50,
+            "shortWinRate": 44.4
+          },
+          "2024": {
+            "sampleSize": 19,
+            "longWinRate": 16.7,
+            "shortWinRate": 57.1
+          },
+          "2025": {
+            "sampleSize": 18,
+            "longWinRate": 20,
+            "shortWinRate": 75
+          },
+          "2026": {
+            "sampleSize": 3,
+            "longWinRate": 100,
+            "shortWinRate": 0
+          }
+        },
+        "longWinRateStdAcrossYears": 35.23,
+        "shortWinRateStdAcrossYears": 33.37,
+        "bestSide": "PE",
+        "bestWinRate": 64.5,
+        "uniqueDays": 68,
+        "occurrencesPerMonth": 1.3,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_U_U",
+        "sequence": "U>U",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: U → U",
+        "sampleSize": 184,
+        "longWinRate": 32,
+        "shortWinRate": 48.9,
+        "avgNext1Points": -2.61,
+        "avgHorizonPoints": -5.58,
+        "longWins": 32,
+        "longLosses": 68,
+        "shortWins": 45,
+        "shortLosses": 47,
+        "byYear": {
+          "2022": {
+            "sampleSize": 52,
+            "longWinRate": 38.5,
+            "shortWinRate": 47.8
+          },
+          "2023": {
+            "sampleSize": 39,
+            "longWinRate": 23.1,
+            "shortWinRate": 45.8
+          },
+          "2024": {
+            "sampleSize": 31,
+            "longWinRate": 27.8,
+            "shortWinRate": 57.1
+          },
+          "2025": {
+            "sampleSize": 46,
+            "longWinRate": 39.1,
+            "shortWinRate": 43.5
+          },
+          "2026": {
+            "sampleSize": 16,
+            "longWinRate": 28.6,
+            "shortWinRate": 62.5
+          }
+        },
+        "longWinRateStdAcrossYears": 6.31,
+        "shortWinRateStdAcrossYears": 7.24,
+        "bestSide": "PE",
+        "bestWinRate": 48.9,
+        "uniqueDays": 184,
+        "occurrencesPerMonth": 3.5,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_D_U",
+        "sequence": "D>U",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: D → U",
+        "sampleSize": 221,
+        "longWinRate": 45.9,
+        "shortWinRate": 37.7,
+        "avgNext1Points": 1.85,
+        "avgHorizonPoints": -2.09,
+        "longWins": 50,
+        "longLosses": 59,
+        "shortWins": 43,
+        "shortLosses": 71,
+        "byYear": {
+          "2022": {
+            "sampleSize": 52,
+            "longWinRate": 55.2,
+            "shortWinRate": 32.1
+          },
+          "2023": {
+            "sampleSize": 54,
+            "longWinRate": 43.8,
+            "shortWinRate": 37.1
+          },
+          "2024": {
+            "sampleSize": 53,
+            "longWinRate": 40,
+            "shortWinRate": 45.8
+          },
+          "2025": {
+            "sampleSize": 44,
+            "longWinRate": 40.9,
+            "shortWinRate": 40.9
+          },
+          "2026": {
+            "sampleSize": 18,
+            "longWinRate": 50,
+            "shortWinRate": 20
+          }
+        },
+        "longWinRateStdAcrossYears": 5.79,
+        "shortWinRateStdAcrossYears": 8.82,
+        "bestSide": "CE",
+        "bestWinRate": 45.9,
+        "uniqueDays": 221,
+        "occurrencesPerMonth": 4.2,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_D_F",
+        "sequence": "D>F",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: D → F",
+        "sampleSize": 80,
+        "longWinRate": 27,
+        "shortWinRate": 55.6,
+        "avgNext1Points": 0.58,
+        "avgHorizonPoints": -9.13,
+        "longWins": 10,
+        "longLosses": 27,
+        "shortWins": 20,
+        "shortLosses": 16,
+        "byYear": {
+          "2022": {
+            "sampleSize": 11,
+            "longWinRate": 28.6,
+            "shortWinRate": 66.7
+          },
+          "2023": {
+            "sampleSize": 24,
+            "longWinRate": 38.5,
+            "shortWinRate": 42.9
+          },
+          "2024": {
+            "sampleSize": 21,
+            "longWinRate": 37.5,
+            "shortWinRate": 33.3
+          },
+          "2025": {
+            "sampleSize": 18,
+            "longWinRate": 0,
+            "shortWinRate": 71.4
+          },
+          "2026": {
+            "sampleSize": 6,
+            "longWinRate": 0,
+            "shortWinRate": 100
+          }
+        },
+        "longWinRateStdAcrossYears": 17.43,
+        "shortWinRateStdAcrossYears": 23.41,
+        "bestSide": "PE",
+        "bestWinRate": 55.6,
+        "uniqueDays": 80,
+        "occurrencesPerMonth": 1.5,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_U_D",
+        "sequence": "U>D",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: U → D",
+        "sampleSize": 152,
+        "longWinRate": 47.7,
+        "shortWinRate": 38.9,
+        "avgNext1Points": -2.53,
+        "avgHorizonPoints": 2.56,
+        "longWins": 31,
+        "longLosses": 34,
+        "shortWins": 28,
+        "shortLosses": 44,
+        "byYear": {
+          "2022": {
+            "sampleSize": 42,
+            "longWinRate": 46.7,
+            "shortWinRate": 36.8
+          },
+          "2023": {
+            "sampleSize": 18,
+            "longWinRate": 50,
+            "shortWinRate": 36.4
+          },
+          "2024": {
+            "sampleSize": 34,
+            "longWinRate": 33.3,
+            "shortWinRate": 46.7
+          },
+          "2025": {
+            "sampleSize": 41,
+            "longWinRate": 57.9,
+            "shortWinRate": 30
+          },
+          "2026": {
+            "sampleSize": 17,
+            "longWinRate": 42.9,
+            "shortWinRate": 57.1
+          }
+        },
+        "longWinRateStdAcrossYears": 8.11,
+        "shortWinRateStdAcrossYears": 9.49,
+        "bestSide": "CE",
+        "bestWinRate": 47.7,
+        "uniqueDays": 152,
+        "occurrencesPerMonth": 2.9,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_F_U",
+        "sequence": "F>U",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: F → U",
+        "sampleSize": 60,
+        "longWinRate": 28.1,
+        "shortWinRate": 57.1,
+        "avgNext1Points": -2.01,
+        "avgHorizonPoints": -3.31,
+        "longWins": 9,
+        "longLosses": 23,
+        "shortWins": 16,
+        "shortLosses": 12,
+        "byYear": {
+          "2022": {
+            "sampleSize": 14,
+            "longWinRate": 36.4,
+            "shortWinRate": 55.6
+          },
+          "2023": {
+            "sampleSize": 15,
+            "longWinRate": 27.3,
+            "shortWinRate": 54.5
+          },
+          "2024": {
+            "sampleSize": 16,
+            "longWinRate": 0,
+            "shortWinRate": 100
+          },
+          "2025": {
+            "sampleSize": 11,
+            "longWinRate": 40,
+            "shortWinRate": 50
+          },
+          "2026": {
+            "sampleSize": 4,
+            "longWinRate": null,
+            "shortWinRate": 0
+          }
+        },
+        "longWinRateStdAcrossYears": 15.67,
+        "shortWinRateStdAcrossYears": 31.72,
+        "bestSide": "PE",
+        "bestWinRate": 57.1,
+        "uniqueDays": 60,
+        "occurrencesPerMonth": 1.2,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len2_D_D",
+        "sequence": "D>D",
+        "context": "dir_prefix",
+        "sequenceLength": 2,
+        "label": "First 2 bar colours: D → D",
+        "sampleSize": 210,
+        "longWinRate": 33.7,
+        "shortWinRate": 43.8,
+        "avgNext1Points": -0.6,
+        "avgHorizonPoints": -1.9,
+        "longWins": 34,
+        "longLosses": 67,
+        "shortWins": 46,
+        "shortLosses": 59,
+        "byYear": {
+          "2022": {
+            "sampleSize": 39,
+            "longWinRate": 30.4,
+            "shortWinRate": 54.2
+          },
+          "2023": {
+            "sampleSize": 53,
+            "longWinRate": 42.9,
+            "shortWinRate": 30
+          },
+          "2024": {
+            "sampleSize": 52,
+            "longWinRate": 33.3,
+            "shortWinRate": 42.9
+          },
+          "2025": {
+            "sampleSize": 48,
+            "longWinRate": 26.1,
+            "shortWinRate": 54.5
+          },
+          "2026": {
+            "sampleSize": 18,
+            "longWinRate": 33.3,
+            "shortWinRate": 37.5
+          }
+        },
+        "longWinRateStdAcrossYears": 5.52,
+        "shortWinRateStdAcrossYears": 9.52,
+        "bestSide": "PE",
+        "bestWinRate": 43.8,
+        "uniqueDays": 210,
+        "occurrencesPerMonth": 4,
+        "tradeable": false
+      },
+      {
+        "id": "dir_prefix_len3_U_D_D",
+        "sequence": "U>D>D",
+        "context": "dir_prefix",
+        "sequenceLength": 3,
+        "label": "First 3 bar colours: U → D → D",
+        "sampleSize": 73,
+        "longWinRate": 53.6,
+        "shortWinRate": 25,
+        "avgNext1Points": 7.53,
+        "avgHorizonPoints": 9.61,
+        "longWins": 15,
+        "longLosses": 13,
+        "shortWins": 8,
+        "shortLosses": 24,
+        "byYear": {
+          "2022": {
+            "sampleSize": 20,
+            "longWinRate": 88.9,
+            "shortWinRate": 0
+          },
+          "2023": {
+            "sampleSize": 9,
+            "longWinRate": 50,
+            "shortWinRate": 50
+          },
+          "2024": {
+            "sampleSize": 20,
+            "longWinRate": 33.3,
+            "shortWinRate": 28.6
+          },
+          "2025": {
+            "sampleSize": 16,
+            "longWinRate": 33.3,
+            "shortWinRate": 22.2
+          },
+          "2026": {
+            "sampleSize": 8,
+            "longWinRate": 33.3,
+            "shortWinRate": 66.7
+          }
+        },
+        "longWinRateStdAcrossYears": 21.56,
+        "shortWinRateStdAcrossYears": 23.01,
+        "bestSide": "CE",
+        "bestWinRate": 53.6,
+        "uniqueDays": 73,
+        "occurrencesPerMonth": 1.4,
+        "tradeable": false
+      }
+    ],
+    "slidingMorning": [
+      {
+        "id": "sliding_morning_len2_UMH_UMH",
+        "sequence": "UMH>UMH",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: UMH → UMH",
+        "sampleSize": 1285,
+        "longWinRate": 36,
+        "shortWinRate": 44.8,
+        "avgNext1Points": -0.94,
+        "avgHorizonPoints": -0.17,
+        "longWins": 316,
+        "longLosses": 561,
+        "shortWins": 382,
+        "shortLosses": 471,
+        "byYear": {
+          "2022": {
+            "sampleSize": 352,
+            "longWinRate": 37.5,
+            "shortWinRate": 43.5
+          },
+          "2023": {
+            "sampleSize": 306,
+            "longWinRate": 35.6,
+            "shortWinRate": 41.4
+          },
+          "2024": {
+            "sampleSize": 234,
+            "longWinRate": 31.6,
+            "shortWinRate": 51
+          },
+          "2025": {
+            "sampleSize": 276,
+            "longWinRate": 40,
+            "shortWinRate": 43.3
+          },
+          "2026": {
+            "sampleSize": 117,
+            "longWinRate": 30,
+            "shortWinRate": 51.7
+          }
+        },
+        "longWinRateStdAcrossYears": 3.69,
+        "shortWinRateStdAcrossYears": 4.29,
+        "bestSide": "PE",
+        "bestWinRate": 44.8,
+        "uniqueDays": 705,
+        "occurrencesPerMonth": 24.2,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_DML_DML",
+        "sequence": "DML>DML",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: DML → DML",
+        "sampleSize": 1143,
+        "longWinRate": 44.8,
+        "shortWinRate": 33.3,
+        "avgNext1Points": 0.85,
+        "avgHorizonPoints": 0.36,
+        "longWins": 311,
+        "longLosses": 383,
+        "shortWins": 239,
+        "shortLosses": 479,
+        "byYear": {
+          "2022": {
+            "sampleSize": 269,
+            "longWinRate": 40,
+            "shortWinRate": 34.5
+          },
+          "2023": {
+            "sampleSize": 251,
+            "longWinRate": 49.2,
+            "shortWinRate": 30.9
+          },
+          "2024": {
+            "sampleSize": 219,
+            "longWinRate": 47.9,
+            "shortWinRate": 29.5
+          },
+          "2025": {
+            "sampleSize": 272,
+            "longWinRate": 46,
+            "shortWinRate": 33.7
+          },
+          "2026": {
+            "sampleSize": 132,
+            "longWinRate": 36.5,
+            "shortWinRate": 42.6
+          }
+        },
+        "longWinRateStdAcrossYears": 4.87,
+        "shortWinRateStdAcrossYears": 4.56,
+        "bestSide": "CE",
+        "bestWinRate": 44.8,
+        "uniqueDays": 643,
+        "occurrencesPerMonth": 21.6,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_UMH_DML",
+        "sequence": "UMH>DML",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: UMH → DML",
+        "sampleSize": 1374,
+        "longWinRate": 37.8,
+        "shortWinRate": 41.9,
+        "avgNext1Points": -1.17,
+        "avgHorizonPoints": -0.25,
+        "longWins": 343,
+        "longLosses": 565,
+        "shortWins": 393,
+        "shortLosses": 545,
+        "byYear": {
+          "2022": {
+            "sampleSize": 309,
+            "longWinRate": 32.1,
+            "shortWinRate": 44.9
+          },
+          "2023": {
+            "sampleSize": 302,
+            "longWinRate": 35.9,
+            "shortWinRate": 42.4
+          },
+          "2024": {
+            "sampleSize": 333,
+            "longWinRate": 47.6,
+            "shortWinRate": 33.2
+          },
+          "2025": {
+            "sampleSize": 309,
+            "longWinRate": 38.5,
+            "shortWinRate": 44.7
+          },
+          "2026": {
+            "sampleSize": 121,
+            "longWinRate": 29.6,
+            "shortWinRate": 49.3
+          }
+        },
+        "longWinRateStdAcrossYears": 6.23,
+        "shortWinRateStdAcrossYears": 5.34,
+        "bestSide": "PE",
+        "bestWinRate": 41.9,
+        "uniqueDays": 786,
+        "occurrencesPerMonth": 25.9,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_DML_UMH",
+        "sequence": "DML>UMH",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: DML → UMH",
+        "sampleSize": 1311,
+        "longWinRate": 41.2,
+        "shortWinRate": 38.9,
+        "avgNext1Points": 0.44,
+        "avgHorizonPoints": -1.26,
+        "longWins": 370,
+        "longLosses": 528,
+        "shortWins": 347,
+        "shortLosses": 546,
+        "byYear": {
+          "2022": {
+            "sampleSize": 327,
+            "longWinRate": 42.4,
+            "shortWinRate": 40.7
+          },
+          "2023": {
+            "sampleSize": 286,
+            "longWinRate": 42.1,
+            "shortWinRate": 35.8
+          },
+          "2024": {
+            "sampleSize": 293,
+            "longWinRate": 37.8,
+            "shortWinRate": 40.6
+          },
+          "2025": {
+            "sampleSize": 308,
+            "longWinRate": 42.9,
+            "shortWinRate": 38.4
+          },
+          "2026": {
+            "sampleSize": 97,
+            "longWinRate": 36.2,
+            "shortWinRate": 39.1
+          }
+        },
+        "longWinRateStdAcrossYears": 2.74,
+        "shortWinRateStdAcrossYears": 1.79,
+        "bestSide": "CE",
+        "bestWinRate": 41.2,
+        "uniqueDays": 805,
+        "occurrencesPerMonth": 24.7,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_ULH_DLL",
+        "sequence": "ULH>DLL",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: ULH → DLL",
+        "sampleSize": 323,
+        "longWinRate": 50.6,
+        "shortWinRate": 33.5,
+        "avgNext1Points": 0.35,
+        "avgHorizonPoints": 8.24,
+        "longWins": 87,
+        "longLosses": 85,
+        "shortWins": 58,
+        "shortLosses": 115,
+        "byYear": {
+          "2022": {
+            "sampleSize": 78,
+            "longWinRate": 34.3,
+            "shortWinRate": 47.4
+          },
+          "2023": {
+            "sampleSize": 65,
+            "longWinRate": 51,
+            "shortWinRate": 30.4
+          },
+          "2024": {
+            "sampleSize": 65,
+            "longWinRate": 65.6,
+            "shortWinRate": 21.2
+          },
+          "2025": {
+            "sampleSize": 80,
+            "longWinRate": 53.7,
+            "shortWinRate": 31.7
+          },
+          "2026": {
+            "sampleSize": 35,
+            "longWinRate": 46.7,
+            "shortWinRate": 40
+          }
+        },
+        "longWinRateStdAcrossYears": 10.15,
+        "shortWinRateStdAcrossYears": 8.92,
+        "bestSide": "CE",
+        "bestWinRate": 50.6,
+        "uniqueDays": 282,
+        "occurrencesPerMonth": 6.1,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_DLL_ULH",
+        "sequence": "DLL>ULH",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: DLL → ULH",
+        "sampleSize": 438,
+        "longWinRate": 47.2,
+        "shortWinRate": 35.4,
+        "avgNext1Points": 0.92,
+        "avgHorizonPoints": 4.57,
+        "longWins": 111,
+        "longLosses": 124,
+        "shortWins": 87,
+        "shortLosses": 159,
+        "byYear": {
+          "2022": {
+            "sampleSize": 103,
+            "longWinRate": 50.8,
+            "shortWinRate": 35.6
+          },
+          "2023": {
+            "sampleSize": 113,
+            "longWinRate": 49.2,
+            "shortWinRate": 30.7
+          },
+          "2024": {
+            "sampleSize": 103,
+            "longWinRate": 36.7,
+            "shortWinRate": 42.6
+          },
+          "2025": {
+            "sampleSize": 86,
+            "longWinRate": 52.2,
+            "shortWinRate": 33.3
+          },
+          "2026": {
+            "sampleSize": 33,
+            "longWinRate": 42.9,
+            "shortWinRate": 45.5
+          }
+        },
+        "longWinRateStdAcrossYears": 5.78,
+        "shortWinRateStdAcrossYears": 5.61,
+        "bestSide": "CE",
+        "bestWinRate": 47.2,
+        "uniqueDays": 368,
+        "occurrencesPerMonth": 8.3,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_ULH_UMH",
+        "sequence": "ULH>UMH",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: ULH → UMH",
+        "sampleSize": 459,
+        "longWinRate": 34.4,
+        "shortWinRate": 46.6,
+        "avgNext1Points": -2.73,
+        "avgHorizonPoints": -2.69,
+        "longWins": 96,
+        "longLosses": 183,
+        "shortWins": 125,
+        "shortLosses": 143,
+        "byYear": {
+          "2022": {
+            "sampleSize": 106,
+            "longWinRate": 30.8,
+            "shortWinRate": 45.8
+          },
+          "2023": {
+            "sampleSize": 94,
+            "longWinRate": 36.1,
+            "shortWinRate": 48.6
+          },
+          "2024": {
+            "sampleSize": 96,
+            "longWinRate": 27.1,
+            "shortWinRate": 54.7
+          },
+          "2025": {
+            "sampleSize": 124,
+            "longWinRate": 35.8,
+            "shortWinRate": 43.9
+          },
+          "2026": {
+            "sampleSize": 39,
+            "longWinRate": 62.5,
+            "shortWinRate": 27.8
+          }
+        },
+        "longWinRateStdAcrossYears": 12.48,
+        "shortWinRateStdAcrossYears": 8.96,
+        "bestSide": "PE",
+        "bestWinRate": 46.6,
+        "uniqueDays": 377,
+        "occurrencesPerMonth": 8.7,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len3_DML_UMH_DML",
+        "sequence": "DML>UMH>DML",
+        "context": "sliding_morning",
+        "sequenceLength": 3,
+        "label": "Morning 3-bar sequence: DML → UMH → DML",
+        "sampleSize": 254,
+        "longWinRate": 34.1,
+        "shortWinRate": 50.6,
+        "avgNext1Points": -2.88,
+        "avgHorizonPoints": -6.36,
+        "longWins": 60,
+        "longLosses": 116,
+        "shortWins": 89,
+        "shortLosses": 87,
+        "byYear": {
+          "2022": {
+            "sampleSize": 61,
+            "longWinRate": 28.6,
+            "shortWinRate": 48.9
+          },
+          "2023": {
+            "sampleSize": 50,
+            "longWinRate": 38.5,
+            "shortWinRate": 47.7
+          },
+          "2024": {
+            "sampleSize": 60,
+            "longWinRate": 41.5,
+            "shortWinRate": 48.6
+          },
+          "2025": {
+            "sampleSize": 61,
+            "longWinRate": 28.6,
+            "shortWinRate": 59.5
+          },
+          "2026": {
+            "sampleSize": 22,
+            "longWinRate": 33.3,
+            "shortWinRate": 40
+          }
+        },
+        "longWinRateStdAcrossYears": 5.2,
+        "shortWinRateStdAcrossYears": 6.21,
+        "bestSide": "PE",
+        "bestWinRate": 50.6,
+        "uniqueDays": 219,
+        "occurrencesPerMonth": 4.8,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_DLL_UMH",
+        "sequence": "DLL>UMH",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: DLL → UMH",
+        "sampleSize": 508,
+        "longWinRate": 44.3,
+        "shortWinRate": 36.2,
+        "avgNext1Points": 0.9,
+        "avgHorizonPoints": -0.11,
+        "longWins": 139,
+        "longLosses": 175,
+        "shortWins": 110,
+        "shortLosses": 194,
+        "byYear": {
+          "2022": {
+            "sampleSize": 98,
+            "longWinRate": 52.5,
+            "shortWinRate": 25.8
+          },
+          "2023": {
+            "sampleSize": 133,
+            "longWinRate": 33,
+            "shortWinRate": 45.7
+          },
+          "2024": {
+            "sampleSize": 108,
+            "longWinRate": 50.9,
+            "shortWinRate": 28.6
+          },
+          "2025": {
+            "sampleSize": 127,
+            "longWinRate": 47.5,
+            "shortWinRate": 38.7
+          },
+          "2026": {
+            "sampleSize": 42,
+            "longWinRate": 44.4,
+            "shortWinRate": 35.3
+          }
+        },
+        "longWinRateStdAcrossYears": 6.92,
+        "shortWinRateStdAcrossYears": 7.12,
+        "bestSide": "CE",
+        "bestWinRate": 44.3,
+        "uniqueDays": 412,
+        "occurrencesPerMonth": 9.6,
+        "tradeable": false
+      },
+      {
+        "id": "sliding_morning_len2_UMH_UMM",
+        "sequence": "UMH>UMM",
+        "context": "sliding_morning",
+        "sequenceLength": 2,
+        "label": "Morning 2-bar sequence: UMH → UMM",
+        "sampleSize": 378,
+        "longWinRate": 36.1,
+        "shortWinRate": 45.5,
+        "avgNext1Points": 0.33,
+        "avgHorizonPoints": 0.76,
+        "longWins": 90,
+        "longLosses": 159,
+        "shortWins": 116,
+        "shortLosses": 139,
+        "byYear": {
+          "2022": {
+            "sampleSize": 83,
+            "longWinRate": 33.3,
+            "shortWinRate": 47.5
+          },
+          "2023": {
+            "sampleSize": 87,
+            "longWinRate": 35.4,
+            "shortWinRate": 43.8
+          },
+          "2024": {
+            "sampleSize": 67,
+            "longWinRate": 37.2,
+            "shortWinRate": 47.8
+          },
+          "2025": {
+            "sampleSize": 108,
+            "longWinRate": 35.6,
+            "shortWinRate": 45.7
+          },
+          "2026": {
+            "sampleSize": 33,
+            "longWinRate": 47.1,
+            "shortWinRate": 37.5
+          }
+        },
+        "longWinRateStdAcrossYears": 4.85,
+        "shortWinRateStdAcrossYears": 3.76,
+        "bestSide": "PE",
+        "bestWinRate": 45.5,
+        "uniqueDays": 327,
+        "occurrencesPerMonth": 7.1,
+        "tradeable": false
+      }
+    ]
+  },
+  "meta": {
+    "durationMs": 30034,
+    "disclaimer": "Historical pattern mining only. High win rates on past data do not guarantee future results. Validate with walk-forward tests before live trading.",
+    "liveWorkflow": "Wait for sequence to form → verify match → enter on next bar open → use reported best side (CE/PE) with configured SL/target."
+  }
+}

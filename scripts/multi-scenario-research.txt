@@ -1,0 +1,69 @@
+
+══════════════════════════════════════════════════════════════════
+ MULTI-SCENARIO PATTERN RESEARCH — NIFTY 5m
+ Years: 2022, 2023, 2024, 2025, 2026 | Trading days: 1088
+══════════════════════════════════════════════════════════════════
+Patterns scored: 2110 | Scenarios: 5
+
+── ★ BEST OVERALL (win rate × trades × year stability) ──
+  Morning 3-bar sequence: UMH → DSM → DML
+  CE | WR 90% | Trades 45 | ~0.9/mo | Years+ undefined% | Scenario T10_S10_H6
+
+── ★ MOST TRADES (WR ≥ 52%) ──
+  Morning 2-bar sequence: UMH → DML
+  PE | WR 52.7% | Trades 1374 | Scenario T10_S10_H6
+
+── ★ BEST DAILY / MORNING STRUCTURE ──
+  Narrow first 30m + break OR high before 11:00 (no low break) → entry 10:15 IST → CE
+  WR 65% | Trades 217 | ~4.1/mo
+
+── TOP 15 BY SCORE (all scenarios) ──
+Label                                          | Side | WR%   | Trades | /mo  | Yrs% | Scenario
+Morning 3-bar sequence: UMH → DSM → DML        | CE   | 90    | 45     | 0.9  | unde | T10_S10_H6
+Narrow first 30m + break OR high before 11:00  | CE   | 65    | 217    | 4.1  | 80   | T15_S15_H8
+Narrow first 30m + break OR high before 11:00  | CE   | 64.2  | 217    | 4.1  | 80   | T10_S10_H6
+Narrow first 30m + break OR low before 11:00 ( | PE   | 62.5  | 210    | 4    | 100  | T10_S10_H6
+Narrow first 30m + break OR low before 11:00 ( | PE   | 62.3  | 210    | 4    | 100  | T15_S15_H8
+Morning 2-bar sequence: DLM → FMM              | CE   | 85.7  | 35     | 0.7  | unde | T15_S15_H8
+Break previous day low before 10:30 → entry 10 | PE   | 60.2  | 372    | 7    | 80   | T10_S10_H6
+Morning 3-bar sequence: ULH → DML → DLL        | CE   | 76.5  | 45     | 0.9  | unde | T10_S10_H6
+Morning 2-bar sequence: FLM → DML              | PE   | 76.9  | 37     | 0.7  | unde | T10_S10_H6
+Morning 3-bar sequence: ULH → DML → DLL        | CE   | 75    | 45     | 0.9  | unde | T15_S15_H8
+Morning 3-bar sequence: ULH → DLL → ULH        | CE   | 74.2  | 51     | 1    | unde | T15_S15_H8
+First 2 bar colours: U → F                     | PE   | 72.2  | 68     | 1.3  | unde | T15_S15_H8
+First 3 bar colours: D → U → U                 | PE   | 70.2  | 100    | 1.9  | unde | T10_S10_H6
+Morning 3-bar sequence: UMH → DSM → DML        | CE   | 74.1  | 45     | 0.9  | unde | T15_S15_H8
+First hour green (close before 10:00 > open) → | CE   | 58.1  | 501    | 9.5  | 80   | T10_S10_H6
+
+── TOP 15 BY TRADE COUNT (WR ≥ 52%) ──
+  [1374 trades, 52.7%] PE — Morning 2-bar sequence: UMH → DML (T10_S10_H6)
+  [1311 trades, 52.3%] CE — Morning 2-bar sequence: DML → UMH (T10_S10_H6)
+  [1285 trades, 55.4%] PE — Morning 2-bar sequence: UMH → UMH (T10_S10_H6)
+  [1285 trades, 53.6%] PE — Morning 2-bar sequence: UMH → UMH (T15_S15_H8)
+  [1143 trades, 57.2%] CE — Morning 2-bar sequence: DML → DML (T10_S10_H6)
+  [1143 trades, 55.4%] CE — Morning 2-bar sequence: DML → DML (T15_S15_H8)
+  [575 trades, 52.7%] PE — First hour red (close before 10:00 < open) → entry 12:00 IST → PE (T10_S10_H6)
+  [575 trades, 52%] PE — First hour red (close before 10:00 < open) → entry 12:00 IST → PE (T15_S15_H8)
+  [555 trades, 52.3%] PE — Previous day red close → bearish bias → entry 10:15 IST → PE (T10_S10_H6)
+  [518 trades, 54.8%] CE — Previous day green close → bullish bias → entry 10:15 IST → CE (T10_S10_H6)
+  [518 trades, 53.2%] CE — Previous day green close → bullish bias → entry 10:15 IST → CE (T15_S15_H8)
+  [508 trades, 56.3%] CE — Morning 2-bar sequence: DLL → UMH (T10_S10_H6)
+  [508 trades, 52.9%] CE — Morning 2-bar sequence: DLL → UMH (T15_S15_H8)
+  [501 trades, 58.1%] CE — First hour green (close before 10:00 > open) → entry 12:00 IST → CE (T10_S10_H6)
+  [501 trades, 56%] CE — First hour green (close before 10:00 > open) → entry 12:00 IST → CE (T15_S15_H8)
+
+── PER SCENARIO BEST ──
+  T10_S10_H6 TG10/SL10: CE 90% n=45 — Morning 3-bar sequence: UMH → DSM → DML
+  T15_S10_H6 TG15/SL10: PE 66.7% n=41 — Morning 2-bar sequence: DLM → DMM
+  T20_S10_H6 TG20/SL10: PE 54.1% n=68 — First 2 bar colours: U → F
+  T15_S15_H8 TG15/SL15: CE 65% n=217 — Narrow first 30m + break OR high before 11:00 (no low break)
+  T20_S15_H8 TG20/SL15: PE 65% n=68 — First 2 bar colours: U → F
+
+── YEAR BREAKDOWN (best overall) ──
+  2022: 13 signals | win rate 100%
+  2023: 14 signals | win rate 90%
+  2024: 8 signals | win rate 100%
+  2025: 5 signals | win rate null%
+  2026: 5 signals | win rate 66.7%
+
+Multi-scenario mining on historical data. Validate top patterns with walk-forward before live trading.

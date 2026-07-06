@@ -27,6 +27,12 @@ const {
   getStrategyNineValidation,
   postStrategyNineValidation,
 } = require('./strategyNineHandlers');
+const {
+  runStrategyTen,
+  getStrategyTenRunTrades,
+  getStrategyTenValidation,
+  postStrategyTenValidation,
+} = require('./strategyTenHandlers');
 
 module.exports = {
   health,
@@ -48,4 +54,8 @@ module.exports = {
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  runStrategyTen,
+  getStrategyTenRunTrades,
+  getStrategyTenValidation,
+  postStrategyTenValidation,
 };
