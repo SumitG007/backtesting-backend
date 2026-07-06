@@ -168,6 +168,11 @@ function passesChopFilters(metrics, patternConfig, symbol) {
   return { ok: true };
 }
 
+function signalCutoffMinutes(entryMinutes, barIntervalMinutes) {
+  const interval = Math.max(1, Number(barIntervalMinutes) || 5);
+  return entryMinutes - interval;
+}
+
 function resolveMorningPattern({ dayKey, bars, filterCtx, barIntervalMinutes, patternConfig, symbol }) {
   if (!bars?.length) return { skip: true, skipReason: 'no_metrics' };
 
@@ -175,7 +180,11 @@ function resolveMorningPattern({ dayKey, bars, filterCtx, barIntervalMinutes, pa
   const prevDay = filterCtx.prevDayByKey?.get(dayKey) ?? null;
   const first30Median = filterCtx.first30MedianByDay.get(dayKey) ?? Infinity;
 
-  const metrics1015 = computeDayMetricsAtTime(bars, prevDay, ENTRY_1015);
+  const metrics1015 = computeDayMetricsAtTime(
+    bars,
+    prevDay,
+    signalCutoffMinutes(ENTRY_1015, barIntervalMinutes),
+  );
   if (!metrics1015) return { skip: true, skipReason: 'no_metrics' };
 
   const narrow30At1015 =
@@ -209,7 +218,11 @@ function resolveMorningPattern({ dayKey, bars, filterCtx, barIntervalMinutes, pa
   }
 
   if (cfg.enableFirstHour) {
-    const metrics1200 = computeDayMetricsAtTime(bars, prevDay, ENTRY_1200);
+    const metrics1200 = computeDayMetricsAtTime(
+      bars,
+      prevDay,
+      signalCutoffMinutes(ENTRY_1200, barIntervalMinutes),
+    );
     if (!metrics1200) return { skip: true, skipReason: 'no_metrics' };
 
     const chop1200 = passesChopFilters(metrics1200, cfg, symbol);
