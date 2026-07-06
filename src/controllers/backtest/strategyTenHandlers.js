@@ -40,7 +40,7 @@ function buildSettings(req) {
       strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
       perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
       barIntervalMinutes: parseNumberInput(req.body?.barIntervalMinutes, Number(interval) || 5),
-      stackMode: parseStringInput(req.body?.stackMode, 'strict'),
+      stackMode: parseStringInput(req.body?.stackMode, 'tight_chop'),
     },
     yearNum: parseNumberInput(year, 2026),
   };

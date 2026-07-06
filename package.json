@@ -11,6 +11,7 @@
     "research:patterns": "node scripts/runPatternResearch.js",
     "research:multi": "node scripts/runMultiScenarioResearch.js",
     "scenarios:s6": "node scripts/runStrategy6ScenarioSweep.js",
+    "research:monthly": "node scripts/runMonthlyPatternResearch.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
     "scenarios:s3": "node scripts/runStrategy3MultiYear.js",
     "cache:candles": "node scripts/saveCandleCache.js",

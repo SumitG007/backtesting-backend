@@ -16,13 +16,16 @@ const MIN_MORNING_RANGE = {
 };
 
 const DEFAULT_PATTERN_CONFIG = {
-  stackMode: 'strict',
+  stackMode: 'tight_chop',
   skipBothOrbBreak: true,
   skipLowMorningRange: true,
+  minMorningRange: null,
   enableOrbHigh: true,
   enableOrbLow: true,
   enablePdl: true,
   enableFirstHour: true,
+  enableFhGreen: true,
+  enableFhRed: true,
 };
 
 function parsePatternConfig(settings = {}) {
@@ -73,14 +76,39 @@ function parsePatternConfig(settings = {}) {
       enableOrbLow: false,
       enableFirstHour: false,
     };
+  } else if (stackMode === 'tight_chop') {
+    cfg = {
+      ...cfg,
+      skipBothOrbBreak: true,
+      skipLowMorningRange: true,
+      minMorningRange: 50,
+    };
+  } else if (stackMode === 'no_fh_red') {
+    cfg = {
+      ...cfg,
+      enableFirstHour: true,
+      enableFhGreen: true,
+      enableFhRed: false,
+    };
   }
 
   if (raw.skipBothOrbBreak != null) cfg.skipBothOrbBreak = Boolean(raw.skipBothOrbBreak);
   if (raw.skipLowMorningRange != null) cfg.skipLowMorningRange = Boolean(raw.skipLowMorningRange);
+  if (raw.minMorningRange != null && Number.isFinite(Number(raw.minMorningRange))) {
+    cfg.minMorningRange = Number(raw.minMorningRange);
+  }
   if (raw.enableOrbHigh != null) cfg.enableOrbHigh = Boolean(raw.enableOrbHigh);
   if (raw.enableOrbLow != null) cfg.enableOrbLow = Boolean(raw.enableOrbLow);
   if (raw.enablePdl != null) cfg.enablePdl = Boolean(raw.enablePdl);
-  if (raw.enableFirstHour != null) cfg.enableFirstHour = Boolean(raw.enableFirstHour);
+  if (raw.enableFirstHour != null) {
+    cfg.enableFirstHour = Boolean(raw.enableFirstHour);
+    if (!cfg.enableFirstHour) {
+      cfg.enableFhGreen = false;
+      cfg.enableFhRed = false;
+    }
+  }
+  if (raw.enableFhGreen != null) cfg.enableFhGreen = Boolean(raw.enableFhGreen);
+  if (raw.enableFhRed != null) cfg.enableFhRed = Boolean(raw.enableFhRed);
 
   return cfg;
 }
@@ -158,7 +186,10 @@ function passesChopFilters(metrics, patternConfig, symbol) {
 
   if (patternConfig.skipLowMorningRange) {
     const sym = String(symbol || 'NIFTY').toUpperCase();
-    const minRange = MIN_MORNING_RANGE[sym] || MIN_MORNING_RANGE.NIFTY;
+    const minRange =
+      Number.isFinite(patternConfig.minMorningRange) && patternConfig.minMorningRange > 0
+        ? patternConfig.minMorningRange
+        : MIN_MORNING_RANGE[sym] || MIN_MORNING_RANGE.NIFTY;
     const morningRange = Number(metrics.morningRange);
     if (Number.isFinite(morningRange) && morningRange < minRange) {
       return { ok: false, skipReason: 'low_morning_range' };
@@ -228,10 +259,10 @@ function resolveMorningPattern({ dayKey, bars, filterCtx, barIntervalMinutes, pa
     const chop1200 = passesChopFilters(metrics1200, cfg, symbol);
     if (!chop1200.ok) return { skip: true, skipReason: chop1200.skipReason };
 
-    if (metrics1200.firstHourGreen) {
+    if (cfg.enableFhGreen !== false && metrics1200.firstHourGreen) {
       return makeEntry(bars, ENTRY_1200, 'CE', 'first_hour_green', barIntervalMinutes);
     }
-    if (metrics1200.firstHourRed) {
+    if (cfg.enableFhRed !== false && metrics1200.firstHourRed) {
       return makeEntry(bars, ENTRY_1200, 'PE', 'first_hour_red', barIntervalMinutes);
     }
   }
