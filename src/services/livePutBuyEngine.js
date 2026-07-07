@@ -39,7 +39,7 @@ const MIN_HOLD_MS = 30000;
 const DEFAULT_ENTRY_MINUTES = 675; // 11:15 IST
 const EOD_EXIT = 920;
 const DEFAULT_STOP_LOSS_POINTS = 15;
-const DEFAULT_TARGET_PROFIT_POINTS = 150;
+const DEFAULT_TARGET_PROFIT_POINTS = 0;
 const TERMINAL_SKIP_REASONS = new Set(['neutral_day', 'direction_tie', 'bad_combo']);
 
 const engineState = {
@@ -124,14 +124,11 @@ function normalizeSettings(settings = {}) {
     }
   }
   const tgRaw = settings.targetProfitPoints;
-  let hasTarget = true;
-  let targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
-  if (tgRaw === '' || tgRaw === 0 || tgRaw === '0') {
+  let hasTarget = false;
+  let targetProfitPoints = 0;
+  if (tgRaw === '' || tgRaw === 0 || tgRaw === '0' || tgRaw === null || tgRaw === undefined) {
     hasTarget = false;
     targetProfitPoints = 0;
-  } else if (tgRaw === null || tgRaw === undefined) {
-    hasTarget = true;
-    targetProfitPoints = DEFAULT_TARGET_PROFIT_POINTS;
   } else {
     const rawTg = Number(tgRaw);
     if (!Number.isFinite(rawTg) || rawTg <= 0) {
@@ -1115,8 +1112,9 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
       : {};
     const normalized = normalizeSettings({ ...persisted, symbol: persisted.symbol || symbol });
     const prevSl = Number(persisted.stopLossPoints);
-    // Persist normalized defaults when SL legacy (10) or target never set.
-    if (!persisted.stopLossPoints || prevSl === 10 || persisted.targetProfitPoints == null) {
+    const prevTg = Number(persisted.targetProfitPoints);
+    // Persist normalized defaults when SL legacy (10), target never set, or legacy default 150.
+    if (!persisted.stopLossPoints || prevSl === 10 || persisted.targetProfitPoints == null || prevTg === 150) {
       wallet.strategy7EngineSettings = normalized;
       await wallet.save();
     }

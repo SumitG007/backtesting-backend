@@ -15,14 +15,6 @@ const {
   getStrategyEightRunTrades,
   getStrategyEightValidation,
   postStrategyEightValidation,
-  runStrategyNine,
-  getStrategyNineRunTrades,
-  getStrategyNineValidation,
-  postStrategyNineValidation,
-  runStrategyTen,
-  getStrategyTenRunTrades,
-  getStrategyTenValidation,
-  postStrategyTenValidation,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -99,16 +91,6 @@ router.post('/strategy4/run', runStrategyEight);
 router.post('/strategy4/validation', postStrategyEightValidation);
 router.get('/strategy4/runs/:runId/trades', getStrategyEightRunTrades);
 router.get('/strategy4/runs/:runId/validation', getStrategyEightValidation);
-// Strategy 5 — daily PUT buy at entry time
-router.post('/strategy5/run', runStrategyNine);
-router.post('/strategy5/validation', postStrategyNineValidation);
-router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
-router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
-// Strategy 6 — morning pattern stack (research-backed)
-router.post('/strategy6/run', runStrategyTen);
-router.post('/strategy6/validation', postStrategyTenValidation);
-router.get('/strategy6/runs/:runId/trades', getStrategyTenRunTrades);
-router.get('/strategy6/runs/:runId/validation', getStrategyTenValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

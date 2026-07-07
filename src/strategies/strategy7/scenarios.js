@@ -16,12 +16,12 @@ const BASE = {
   perTradeCost: 100,
   minDirectionScore: 2,
   stopLossPoints: 15,
-  targetProfitPoints: 150,
+  targetProfitPoints: 0,
 };
 
 /** @type {{ id: string, name: string, settings: Record<string, unknown> }[]} */
 const STRATEGY_THREE_SCENARIOS = [
-  { id: 'S01', name: 'SL15 TG150 (production default)', settings: { ...BASE } },
+  { id: 'S01', name: 'SL15 EOD (production default)', settings: { ...BASE } },
   { id: 'S02', name: 'SL15 TG30', settings: { ...BASE, targetProfitPoints: 30 } },
   { id: 'S03', name: 'SL15 TG50', settings: { ...BASE, targetProfitPoints: 50 } },
   { id: 'S04', name: 'SL15 TG80', settings: { ...BASE, targetProfitPoints: 80 } },

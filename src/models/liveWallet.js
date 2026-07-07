@@ -49,7 +49,7 @@ const liveWalletSchema = new mongoose.Schema(
       entryTime: { type: String, default: '11:15' },
       entryWindowMinutes: { type: Number, default: 0 },
       stopLossPoints: { type: Number, default: 15 },
-      targetProfitPoints: { type: Number, default: 150 },
+      targetProfitPoints: { type: Number, default: 0 },
       strikeMode: { type: String, default: 'ATM' },
       perTradeCost: { type: Number, default: 100 },
       minDirectionScore: { type: Number, default: 2 },

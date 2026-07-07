@@ -10,8 +10,6 @@
     "discover:market": "node scripts/runMarketDiscovery.js",
     "research:patterns": "node scripts/runPatternResearch.js",
     "research:multi": "node scripts/runMultiScenarioResearch.js",
-    "scenarios:s6": "node scripts/runStrategy6ScenarioSweep.js",
-    "research:monthly": "node scripts/runMonthlyPatternResearch.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
     "scenarios:s3": "node scripts/runStrategy3MultiYear.js",
     "analyze:s3": "node scripts/runStrategy3ProbabilityAnalysis.js",
