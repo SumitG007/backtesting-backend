@@ -14,10 +14,18 @@ function buildValidationReport(trades) {
   let lossStreak = 0;
   let maxWinStreak = 0;
   let maxLossStreak = 0;
+  let slTrades = 0;
+  let targetTrades = 0;
+  let eodTrades = 0;
   const monthlyMap = new Map();
 
   for (const trade of ordered) {
     const pnl = Number(trade.pnl || 0);
+    const reason = String(trade.reason || '').toUpperCase();
+    if (reason === 'STOP_LOSS') slTrades += 1;
+    else if (reason === 'TARGET') targetTrades += 1;
+    else if (reason === 'DAY_CLOSE') eodTrades += 1;
+
     equity += pnl;
     peak = Math.max(peak, equity);
     const dd = peak - equity;
@@ -43,13 +51,14 @@ function buildValidationReport(trades) {
     const ist = getIstClock(trade.entryTime);
     const monthKey = String(ist.dateKey || '').slice(0, 7);
     if (!monthlyMap.has(monthKey)) {
-      monthlyMap.set(monthKey, { month: monthKey, pnl: 0, trades: 0, wins: 0, losses: 0 });
+      monthlyMap.set(monthKey, { month: monthKey, pnl: 0, trades: 0, wins: 0, losses: 0, slTrades: 0 });
     }
     const monthStats = monthlyMap.get(monthKey);
     monthStats.pnl += pnl;
     monthStats.trades += 1;
     if (pnl > 0) monthStats.wins += 1;
     if (pnl < 0) monthStats.losses += 1;
+    if (reason === 'STOP_LOSS') monthStats.slTrades += 1;
   }
 
   const totalTrades = ordered.length;
@@ -76,6 +85,11 @@ function buildValidationReport(trades) {
       totalTrades,
       wins,
       losses,
+      profitTrades: wins,
+      lossTrades: losses,
+      slTrades,
+      targetTrades,
+      eodTrades,
       winRate: Number(winRate.toFixed(2)),
       netPnl: Number(netPnl.toFixed(2)),
       grossProfit: Number(grossProfit.toFixed(2)),
