@@ -10,7 +10,6 @@ const { isBlockedSignalCombo } = require('./badComboBlocklist');
 
 const DEFAULT_BAR_INTERVAL_MINUTES = 5;
 const DEFAULT_MIN_DIRECTION_SCORE = 2;
-const DEFAULT_SKIP_BAD_COMBOS = true;
 
 const ALL_PE_SIGNALS = [
   'below_open',
@@ -231,7 +230,6 @@ function evaluatePutBuyDirection({
   barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES,
   requireFollowingBar = true,
   followingBarsDayBars = null,
-  skipBadCombos = DEFAULT_SKIP_BAD_COMBOS,
 }) {
   const barsAsOfEntry = sliceBarsAsOfDecision(dayBars, entryDecisionMinutes, barIntervalMinutes);
   if (!barsAsOfEntry.length) {
@@ -251,7 +249,6 @@ function evaluatePutBuyDirection({
     enabledCeSignals,
     barIntervalMinutes,
     requireFollowingBar,
-    skipBadCombos,
   });
 }
 
@@ -276,7 +273,6 @@ function resolvePutBuyEntry({
   requireFollowingBar = true,
   /** Full session bars for following-bar check when dayBars is sliced at entry. */
   followingBarsDayBars = null,
-  skipBadCombos = DEFAULT_SKIP_BAD_COMBOS,
 }) {
   const decisionMinutes = Number.isFinite(entryDecisionMinutes)
     ? entryDecisionMinutes
@@ -302,7 +298,7 @@ function resolvePutBuyEntry({
   const minScore = Math.max(1, Number(minDirectionScore) || DEFAULT_MIN_DIRECTION_SCORE);
 
   if (bias.peScore >= minScore && bias.peScore > bias.ceScore) {
-    if (skipBadCombos && isBlockedSignalCombo('PE', bias.peSignals)) {
+    if (isBlockedSignalCombo('PE', bias.peSignals)) {
       return {
         skip: true,
         skipReason: 'bad_combo',
@@ -325,7 +321,7 @@ function resolvePutBuyEntry({
   }
 
   if (bias.ceScore >= minScore && bias.ceScore > bias.peScore) {
-    if (skipBadCombos && isBlockedSignalCombo('CE', bias.ceSignals)) {
+    if (isBlockedSignalCombo('CE', bias.ceSignals)) {
       return {
         skip: true,
         skipReason: 'bad_combo',
@@ -357,11 +353,6 @@ function resolvePutBuyEntry({
   };
 }
 
-function parseSkipBadCombos(raw) {
-  if (raw === undefined || raw === null) return DEFAULT_SKIP_BAD_COMBOS;
-  return raw !== false && raw !== 'false' && raw !== 0 && raw !== '0';
-}
-
 function parseDirectionSettings(settings = {}) {
   const rawMin = Number(settings.minDirectionScore);
   const minDirectionScore =
@@ -376,9 +367,7 @@ function parseDirectionSettings(settings = {}) {
     ALL_CE_SIGNALS,
   );
 
-  const skipBadCombos = parseSkipBadCombos(settings.skipBadCombos);
-
-  return { minDirectionScore, enabledPeSignals, enabledCeSignals, skipBadCombos };
+  return { minDirectionScore, enabledPeSignals, enabledCeSignals };
 }
 
 module.exports = {
@@ -386,8 +375,6 @@ module.exports = {
   ALL_CE_SIGNALS,
   DEFAULT_BAR_INTERVAL_MINUTES,
   DEFAULT_MIN_DIRECTION_SCORE,
-  DEFAULT_SKIP_BAD_COMBOS,
-  parseSkipBadCombos,
   buildPutBuyFilterContext,
   buildDayMetricsForKey,
   scoreDirectionalBias,

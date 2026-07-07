@@ -396,9 +396,6 @@ function coerceLiveEngineSetting(key, value) {
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
-  if (key === 'skipBadCombos') {
-    return value !== false && value !== 'false' && value !== 0 && value !== '0';
-  }
   if (key === 'minDirectionScore') {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 1) return 2;

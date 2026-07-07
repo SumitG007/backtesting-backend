@@ -60,7 +60,6 @@ const engineState = {
     strikeMode: 'ATM',
     perTradeCost: 100,
     minDirectionScore: 2,
-    skipBadCombos: true,
   },
   lotSize: 65,
   expiry: null,
@@ -145,7 +144,7 @@ function normalizeSettings(settings = {}) {
   }
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
-  const { minDirectionScore, enabledPeSignals, enabledCeSignals, skipBadCombos } = parseDirectionSettings(settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
 
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
@@ -161,7 +160,6 @@ function normalizeSettings(settings = {}) {
     minDirectionScore,
     enabledPeSignals,
     enabledCeSignals,
-    skipBadCombos,
   };
 }
 
@@ -263,7 +261,7 @@ async function evaluateDirectionResolution(clock) {
   const intraByDay = new Map([[prevKey, prevBars], [clock.dateKey, todayBars]]);
   const sortedKeys = [prevKey, clock.dateKey];
   const ctx = buildPutBuyFilterContext(sortedKeys, intraByDay);
-  const { minDirectionScore, enabledPeSignals, enabledCeSignals, skipBadCombos } = parseDirectionSettings(engineState.settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(engineState.settings);
   const decisionMinutes = entryMinutes;
   const resolution = evaluatePutBuyDirection({
     dayKey: clock.dateKey,
@@ -274,7 +272,6 @@ async function evaluateDirectionResolution(clock) {
     enabledPeSignals,
     enabledCeSignals,
     requireFollowingBar: false,
-    skipBadCombos,
   });
   engineState.lastDirectionEval = {
     at: new Date().toISOString(),

@@ -47,7 +47,7 @@ function runSimple920Backtest({ candles, settings }) {
   const entryToMin = parseClockMinutes(settings.entryToTime ?? settings.entryTime, entryFromMin);
   const entryDecisionMinutes = Math.min(entryFromMin, entryToMin);
 
-  const { minDirectionScore, enabledPeSignals, enabledCeSignals, skipBadCombos } = parseDirectionSettings(settings);
+  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
 
   const intraByDay = buildIntradayByDay(Array.isArray(candles) ? candles : []);
   const sortedKeys = Array.from(intraByDay.keys()).sort();
@@ -73,7 +73,6 @@ function runSimple920Backtest({ candles, settings }) {
       enabledPeSignals,
       enabledCeSignals,
       requireFollowingBar: true,
-      skipBadCombos,
     });
 
     if (entryDecision.skip) {
@@ -143,7 +142,6 @@ function runSimple920Backtest({ candles, settings }) {
   const summary = buildStrategyRunSummary(trades);
   summary.skippedDays = skippedDays;
   summary.skippedBadCombos = skippedBadCombos;
-  summary.skipBadCombos = skipBadCombos;
   summary.minDirectionScore = minDirectionScore;
   summary.putTrades = putTrades;
   summary.callTrades = callTrades;

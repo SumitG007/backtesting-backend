@@ -1,6 +1,6 @@
 /**
  * Strategy 3 — signal combos with negative multi-year expectancy (2022–2026).
- * Skip at entry when skipBadCombos is enabled (no lookahead).
+ * Skip at entry when the fired PE/CE pattern matches the blocklist (no lookahead).
  */
 
 /** @type {ReadonlySet<string>} */

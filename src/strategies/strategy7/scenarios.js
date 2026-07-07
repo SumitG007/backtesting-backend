@@ -15,7 +15,6 @@ const BASE = {
   lotCount: 10,
   perTradeCost: 100,
   minDirectionScore: 2,
-  skipBadCombos: true,
   stopLossPoints: 15,
   targetProfitPoints: 150,
 };

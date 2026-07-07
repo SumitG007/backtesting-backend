@@ -10,7 +10,7 @@ const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
-const { parseNumberInput, parseStringInput, parsePremiumExitPoints, parseBooleanInput } = require('./parsers');
+const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
 const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
@@ -56,7 +56,6 @@ function buildSettings(req) {
       entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
       entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
       minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
-      skipBadCombos: parseBooleanInput(req.body?.skipBadCombos, true),
       enabledPeSignals: parseEnabledSignalsFromBody(req.body, 'enabledPeSignals', 'peSignalFilters'),
       enabledCeSignals: parseEnabledSignalsFromBody(req.body, 'enabledCeSignals', 'ceSignalFilters'),
     },
