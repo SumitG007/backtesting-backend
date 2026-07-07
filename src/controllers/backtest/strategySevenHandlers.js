@@ -10,6 +10,7 @@ const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
+const { parseDirectionSettings } = require('../../strategies/strategy7/putBuyDayFilters');
 const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
@@ -38,26 +39,33 @@ function buildSettings(req) {
   const rawIv = String(parseStringInput(req.body?.interval, TIER.defaultInterval));
   const interval = ['1', '5', '15'].includes(rawIv) ? rawIv : TIER.defaultInterval;
   const entryTime = parseStringInput(req.body?.entryTime ?? req.body?.entryFromTime, '11:15');
+  const rawSettings = {
+    symbol: String(symbol).toUpperCase(),
+    interval,
+    strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
+    stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
+    targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
+    basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
+    premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
+    lotCount: parseNumberInput(req.body?.lotCount, 10),
+    lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
+    strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
+    perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
+    entryTime,
+    entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
+    entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
+    minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
+    enabledPeSignals: parseEnabledSignalsFromBody(req.body, 'enabledPeSignals', 'peSignalFilters'),
+    enabledCeSignals: parseEnabledSignalsFromBody(req.body, 'enabledCeSignals', 'ceSignalFilters'),
+  };
+  const normalizedDecision = parseDirectionSettings(rawSettings);
 
   return {
     settings: {
-      symbol: String(symbol).toUpperCase(),
-      interval,
-      strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-      stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 15),
-      targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 0),
-      basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
-      premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
-      lotCount: parseNumberInput(req.body?.lotCount, 10),
-      lotSize: parseNumberInput(req.body?.lotSize, getLotSize(symbol)),
-      strikeStep: parseNumberInput(req.body?.strikeStep, getStrikeStep(symbol)),
-      perTradeCost: parseNumberInput(req.body?.perTradeCost, 100),
-      entryTime,
-      entryFromTime: parseStringInput(req.body?.entryFromTime, entryTime),
-      entryToTime: parseStringInput(req.body?.entryToTime, entryTime),
-      minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
-      enabledPeSignals: parseEnabledSignalsFromBody(req.body, 'enabledPeSignals', 'peSignalFilters'),
-      enabledCeSignals: parseEnabledSignalsFromBody(req.body, 'enabledCeSignals', 'ceSignalFilters'),
+      ...rawSettings,
+      minDirectionScore: normalizedDecision.minDirectionScore,
+      enabledPeSignals: normalizedDecision.enabledPeSignals,
+      enabledCeSignals: normalizedDecision.enabledCeSignals,
     },
     yearNum: parseNumberInput(year, 2026),
   };

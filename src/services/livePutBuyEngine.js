@@ -258,7 +258,11 @@ async function evaluateDirectionResolution(clock) {
   const intraByDay = new Map([[prevKey, prevBars], [clock.dateKey, todayBars]]);
   const sortedKeys = [prevKey, clock.dateKey];
   const ctx = buildPutBuyFilterContext(sortedKeys, intraByDay);
-  const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(engineState.settings);
+  const {
+    minDirectionScore = 2,
+    enabledPeSignals,
+    enabledCeSignals,
+  } = engineState.settings || {};
   const decisionMinutes = entryMinutes;
   const resolution = evaluatePutBuyDirection({
     dayKey: clock.dateKey,
