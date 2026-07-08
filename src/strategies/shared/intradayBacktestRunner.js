@@ -32,7 +32,7 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
   const entryFromMinutes = parseClockMinutes(settings.entryFromTime, 555);
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 915);
   const minBarsBetween = Math.max(1, Number(settings.minBarsBetweenTrades) || 3);
-  const warmup = Math.max(20, minWarmup || 30);
+  const warmup = minWarmup != null ? Math.max(3, Number(minWarmup) || 30) : 30;
 
   const intraByDay = buildIntradayByDay(execCandles || []);
   const trades = [];
@@ -209,7 +209,12 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
           stopPremium,
           hasTarget: common.hasTarget,
           targetPremium,
-          extra: { signal: signal.reason || 'SIGNAL' },
+          extra: {
+            signal: signal.reason || 'SIGNAL',
+            // Useful for UI/debug: index-based exits.
+            stopIndex: signal.stopIndex,
+            targetIndex: signal.targetIndex,
+          },
         })
       );
       dayTrades += 1;

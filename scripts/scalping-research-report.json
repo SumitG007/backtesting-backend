@@ -1,0 +1,185 @@
+{
+  "generatedAt": "2026-07-08T11:18:43.624Z",
+  "symbol": "NIFTY",
+  "interval": "5",
+  "years": [
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "lotCount": 10,
+  "results": [
+    {
+      "id": "O02",
+      "name": "Opening range breakout · spot SL/TG",
+      "entry": "orb",
+      "exit": "spot",
+      "sl": 0,
+      "tg": 0,
+      "totalTrades": 2005,
+      "ceTrades": 961,
+      "peTrades": 1044,
+      "winRate": 70.22,
+      "totalNet": 849240.1,
+      "profitFactor": 1.07,
+      "maxDrawdown": 702655.62,
+      "avgPnlPerTrade": 423.56,
+      "avgTradesPerDay": 1.98,
+      "exits": {
+        "PATTERN_TARGET": 1383,
+        "PATTERN_SL": 503,
+        "DAY_CLOSE": 119
+      },
+      "exitLabel": "T0/S0/P503/E119",
+      "byYear": {
+        "2022": {
+          "net": 436487.49,
+          "trades": 447,
+          "wins": 335,
+          "winRate": 74.9
+        },
+        "2023": {
+          "net": -546801.94,
+          "trades": 459,
+          "wins": 268,
+          "winRate": 58.4
+        },
+        "2024": {
+          "net": 955962.15,
+          "trades": 479,
+          "wins": 352,
+          "winRate": 73.5
+        },
+        "2025": {
+          "net": 309156.6,
+          "trades": 449,
+          "wins": 326,
+          "winRate": 72.6
+        },
+        "2026": {
+          "net": -305564.2,
+          "trades": 171,
+          "wins": 127,
+          "winRate": 74.3
+        }
+      },
+      "summary": {
+        "totalTrades": 2005,
+        "wins": 1408,
+        "losses": 597,
+        "lossCount": 597,
+        "winRate": 70.22,
+        "grossProfit": 13149292.51,
+        "grossLoss": -12300052.41,
+        "netPnl": 849240.1,
+        "avgWin": 9338.99,
+        "avgLoss": -20603.1,
+        "avgLossAbs": 20603.1,
+        "payoffRatio": 0.453,
+        "profitFactor": 1.069,
+        "expectancyPerTrade": 423.56,
+        "totalCharges": 200500,
+        "costPctOfGross": 0.79,
+        "bestTrade": 45353.24,
+        "worstTrade": -81234.79,
+        "exitsByReason": {
+          "TARGET": 0,
+          "STOP_LOSS": 0,
+          "TRAIL_STOP": 0,
+          "PARTIAL_TARGET": 0,
+          "EMA_EXIT": 0,
+          "TIME_EXIT": 0,
+          "DAY_CLOSE": 119,
+          "OTHER": 1886
+        }
+      }
+    },
+    {
+      "id": "O01",
+      "name": "Opening range breakout · SL 15 / TG 22",
+      "entry": "orb",
+      "exit": "prem",
+      "sl": 15,
+      "tg": 22,
+      "totalTrades": 2005,
+      "ceTrades": 961,
+      "peTrades": 1044,
+      "winRate": 42.84,
+      "totalNet": 505681.45,
+      "profitFactor": 1.05,
+      "maxDrawdown": 423417.37,
+      "avgPnlPerTrade": 252.21,
+      "avgTradesPerDay": 1.98,
+      "exits": {
+        "TARGET": 792,
+        "STOP_LOSS": 1114,
+        "DAY_CLOSE": 99
+      },
+      "exitLabel": "T792/S1114/P0/E99",
+      "byYear": {
+        "2022": {
+          "net": 485929.25,
+          "trades": 447,
+          "wins": 209,
+          "winRate": 46.8
+        },
+        "2023": {
+          "net": 67575.1,
+          "trades": 459,
+          "wins": 193,
+          "winRate": 42
+        },
+        "2024": {
+          "net": 192243.8,
+          "trades": 479,
+          "wins": 206,
+          "winRate": 43
+        },
+        "2025": {
+          "net": 121533.3,
+          "trades": 449,
+          "wins": 196,
+          "winRate": 43.7
+        },
+        "2026": {
+          "net": -361600,
+          "trades": 171,
+          "wins": 55,
+          "winRate": 32.2
+        }
+      },
+      "summary": {
+        "totalTrades": 2005,
+        "wins": 859,
+        "losses": 1146,
+        "lossCount": 1146,
+        "winRate": 42.84,
+        "grossProfit": 11600165.66,
+        "grossLoss": -11094484.21,
+        "netPnl": 505681.45,
+        "avgWin": 13504.27,
+        "avgLoss": -9681.05,
+        "avgLossAbs": 9681.05,
+        "payoffRatio": 1.395,
+        "profitFactor": 1.046,
+        "expectancyPerTrade": 252.21,
+        "totalCharges": 200500,
+        "costPctOfGross": 0.88,
+        "bestTrade": 14200,
+        "worstTrade": -9850,
+        "exitsByReason": {
+          "TARGET": 792,
+          "STOP_LOSS": 1114,
+          "TRAIL_STOP": 0,
+          "PARTIAL_TARGET": 0,
+          "EMA_EXIT": 0,
+          "TIME_EXIT": 0,
+          "DAY_CLOSE": 99,
+          "OTHER": 0
+        }
+      }
+    }
+  ]
+}
