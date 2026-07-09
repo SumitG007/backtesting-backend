@@ -17,10 +17,6 @@ function run() {
     const { runHeikinAshiBacktest } = require('../strategies/strategy8/heikinAshiBacktest');
     return runHeikinAshiBacktest(payload);
   }
-  if (strategyKey === 'strategy9_vwap_ema_trend') {
-    const { runVwapEmaTrendBacktest } = require('../strategies/strategy9/vwapEmaTrendBacktest');
-    return runVwapEmaTrendBacktest(payload);
-  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }

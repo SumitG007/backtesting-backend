@@ -33,6 +33,14 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
   const entryToMinutes = parseClockMinutes(settings.entryToTime, 915);
   const minBarsBetween = Math.max(1, Number(settings.minBarsBetweenTrades) || 3);
   const warmup = minWarmup != null ? Math.max(3, Number(minWarmup) || 30) : 30;
+  const dailyMaxLossAmount =
+    Number.isFinite(Number(settings.dailyMaxLossAmount)) && Number(settings.dailyMaxLossAmount) > 0
+      ? Number(settings.dailyMaxLossAmount)
+      : null;
+  const maxConsecutiveLosses =
+    Number.isFinite(Number(settings.maxConsecutiveLosses)) && Number(settings.maxConsecutiveLosses) > 0
+      ? Math.floor(Number(settings.maxConsecutiveLosses))
+      : null;
 
   const intraByDay = buildIntradayByDay(execCandles || []);
   const trades = [];
@@ -45,9 +53,13 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
 
     let dayTrades = 0;
     let lastEntry = -minBarsBetween;
+    let dayRealizedPnl = 0;
+    let dayConsecutiveLosses = 0;
 
     for (let j = warmup; j < dayBars.length - 1; j += 1) {
       if (dayTrades >= common.maxTradesPerDay) break;
+      if (dailyMaxLossAmount != null && dayRealizedPnl <= -dailyMaxLossAmount) break;
+      if (maxConsecutiveLosses != null && dayConsecutiveLosses >= maxConsecutiveLosses) break;
       const clock = getIstClock(dayBars[j][0]);
       if (clock.minutes < entryFromMinutes || clock.minutes > entryToMinutes) continue;
       if (j - lastEntry < minBarsBetween) continue;
@@ -187,36 +199,42 @@ function runIntradaySignalBacktest({ execCandles, settings, minWarmup, findSigna
         useIndexExits: common.usePatternExits && (signal.stopIndex != null || signal.targetIndex != null),
         stopIndex: signal.stopIndex,
         targetIndex: signal.targetIndex,
+        maxLossPremiumPoints: Number(settings.maxLossPremiumPoints),
+        breakevenTriggerPoints: Number(settings.breakevenTriggerPoints),
+        breakevenLockPoints: Number(settings.breakevenLockPoints),
+        maxHoldBars: Number(settings.maxHoldBars),
       });
 
-      trades.push(
-        buildLongOptionTrade({
-          symbol,
-          lotSize: common.lotSize,
-          lotCount: common.lotCount,
-          perTradeCost: common.perTradeCost,
-          dayBars,
-          entryIdx,
-          optionType,
-          strike,
-          entrySpot,
-          entryPremium,
-          exitIdx,
-          exitSpot,
-          exitPremium,
-          reason,
-          hasStopLoss: common.hasStopLoss,
-          stopPremium,
-          hasTarget: common.hasTarget,
-          targetPremium,
-          extra: {
-            signal: signal.reason || 'SIGNAL',
-            // Useful for UI/debug: index-based exits.
-            stopIndex: signal.stopIndex,
-            targetIndex: signal.targetIndex,
-          },
-        })
-      );
+      const trade = buildLongOptionTrade({
+        symbol,
+        lotSize: common.lotSize,
+        lotCount: common.lotCount,
+        perTradeCost: common.perTradeCost,
+        dayBars,
+        entryIdx,
+        optionType,
+        strike,
+        entrySpot,
+        entryPremium,
+        exitIdx,
+        exitSpot,
+        exitPremium,
+        reason,
+        hasStopLoss: common.hasStopLoss,
+        stopPremium,
+        hasTarget: common.hasTarget,
+        targetPremium,
+        extra: {
+          signal: signal.reason || 'SIGNAL',
+          // Useful for UI/debug: index-based exits.
+          stopIndex: signal.stopIndex,
+          targetIndex: signal.targetIndex,
+        },
+      });
+      trades.push(trade);
+      dayRealizedPnl += Number(trade.pnl) || 0;
+      if ((Number(trade.pnl) || 0) < 0) dayConsecutiveLosses += 1;
+      else dayConsecutiveLosses = 0;
       dayTrades += 1;
       lastEntry = entryIdx;
     }

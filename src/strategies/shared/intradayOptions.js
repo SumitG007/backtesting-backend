@@ -71,6 +71,10 @@ function simulateLongOptionExit({
   targetIndex,
   trailSlGapPoints = null,
   trailSlActivationPoints = null,
+  maxLossPremiumPoints = null,
+  breakevenTriggerPoints = null,
+  breakevenLockPoints = null,
+  maxHoldBars = null,
   eodExitMinutes = 930,
 }) {
   const premiumSide = premiumSideForLongOption(optionType);
@@ -98,12 +102,25 @@ function simulateLongOptionExit({
 
   let peakProfitPoints = 0;
   let trailStopPremium = null;
+  let dynamicStopPremium = hasStopLoss && stopPremium != null ? stopPremium : null;
+  const lossCapPremium =
+    Number.isFinite(maxLossPremiumPoints) && maxLossPremiumPoints > 0
+      ? Math.max(0.05, entryPremium - maxLossPremiumPoints)
+      : null;
+  if (lossCapPremium != null) {
+    dynamicStopPremium = dynamicStopPremium == null ? lossCapPremium : Math.max(dynamicStopPremium, lossCapPremium);
+  }
+  const beTrigger =
+    Number.isFinite(breakevenTriggerPoints) && breakevenTriggerPoints > 0 ? breakevenTriggerPoints : null;
+  const beLock = Number.isFinite(breakevenLockPoints) ? breakevenLockPoints : 0;
+  const maxHold = Number.isFinite(maxHoldBars) && maxHoldBars > 0 ? Math.floor(maxHoldBars) : null;
 
   for (let k = entryIdx + 1; k < dayBars.length; k += 1) {
     const hi = Number(dayBars[k][2]);
     const lo = Number(dayBars[k][3]);
     const cl = Number(dayBars[k][4]);
     if (![hi, lo, cl].every(Number.isFinite)) continue;
+    const barsHeld = k - entryIdx;
 
     if (useIndexExits && Number.isFinite(stopIndex)) {
       const hitSl = optionType === 'CE' ? lo <= stopIndex : hi >= stopIndex;
@@ -180,7 +197,23 @@ function simulateLongOptionExit({
       }
     }
 
-    if (hasStopLoss && stopPremium != null) {
+    if (dynamicStopPremium != null || beTrigger != null) {
+      if (beTrigger != null) {
+        const favSpotForBe = optionType === 'CE' ? hi : lo;
+        const favPremForBe = getOptionPremiumFromSpotMove({
+          side: premiumSide,
+          entrySpot,
+          currentSpot: favSpotForBe,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+        if (favPremForBe - entryPremium >= beTrigger) {
+          const beFloor = Math.max(0.05, entryPremium + beLock);
+          dynamicStopPremium = dynamicStopPremium == null ? beFloor : Math.max(dynamicStopPremium, beFloor);
+        }
+      }
       const adverseSpot = optionType === 'CE' ? lo : hi;
       const adversePrem = getOptionPremiumFromSpotMove({
         side: premiumSide,
@@ -191,11 +224,12 @@ function simulateLongOptionExit({
         strike,
         strikeStep,
       });
-      if (adversePrem <= stopPremium) {
+      const effectiveStopPremium = dynamicStopPremium;
+      if (effectiveStopPremium != null && adversePrem <= effectiveStopPremium) {
         exitIdx = k;
         exitSpot = adverseSpot;
-        exitPremium = stopPremium;
-        reason = 'STOP_LOSS';
+        exitPremium = effectiveStopPremium;
+        reason = effectiveStopPremium > entryPremium ? 'BREAKEVEN_STOP' : 'STOP_LOSS';
         break;
       }
     }
@@ -218,6 +252,22 @@ function simulateLongOptionExit({
         reason = 'TARGET';
         break;
       }
+    }
+
+    if (maxHold != null && barsHeld >= maxHold) {
+      exitIdx = k;
+      exitSpot = cl;
+      exitPremium = getOptionPremiumFromSpotMove({
+        side: premiumSide,
+        entrySpot,
+        currentSpot: exitSpot,
+        entryPremium,
+        premiumLeverage,
+        strike,
+        strikeStep,
+      });
+      reason = 'TIME_STOP';
+      break;
     }
 
     const kClock = getIstClock(dayBars[k][0]);

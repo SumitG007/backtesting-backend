@@ -15,10 +15,6 @@ const {
   getStrategyEightRunTrades,
   getStrategyEightValidation,
   postStrategyEightValidation,
-  runStrategyNine,
-  getStrategyNineRunTrades,
-  getStrategyNineValidation,
-  postStrategyNineValidation,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -95,11 +91,6 @@ router.post('/strategy4/run', runStrategyEight);
 router.post('/strategy4/validation', postStrategyEightValidation);
 router.get('/strategy4/runs/:runId/trades', getStrategyEightRunTrades);
 router.get('/strategy4/runs/:runId/validation', getStrategyEightValidation);
-// Strategy 5 — VWAP + EMA trend scalper
-router.post('/strategy5/run', runStrategyNine);
-router.post('/strategy5/validation', postStrategyNineValidation);
-router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
-router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);
