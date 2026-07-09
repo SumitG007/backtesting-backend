@@ -6,12 +6,12 @@
  * (especially near expiry). This module runs in the MAIN process (where the Dhan token is
  * hydrated) AFTER the worker returns, and — for every day whose option contract is still
  * resolvable in the instrument master — replaces the entry premium with the real historical
- * option price and re-simulates the exit (SL / target / EOD) on the real option candles.
+ * option price and re-simulates the exit (SL / target / trail / EOD) on the real option candles.
  *
  * Days whose contracts have already expired (not in the master) keep the synthetic model.
  */
 
-const { getIstClock } = require('../../utils/dateTime');
+const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
 const { fetchIntradayCandlesBySecurity } = require('../../services/dhanDataService');
 const {
   resolveOptionInstrument,
@@ -60,14 +60,81 @@ function findEntryBarIdx(optionBars, entryMinutes, barIntervalMinutes = 5) {
   return idx;
 }
 
+function isTruthy(value) {
+  return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+/** Mirrors worker exit flags (Strategy 3 fixed target; Strategy 9 trailing profit). */
+function parseRealExitSettings(settings = {}) {
+  const rawSl = Number(settings.stopLossPoints);
+  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
+  const stopLossPoints = hasStopLoss ? rawSl : 0;
+
+  const rawTg = Number(settings.targetProfitPoints);
+  const targetPoints = Number.isFinite(rawTg) && rawTg > 0 ? rawTg : 0;
+
+  const trailingTargetEnabled =
+    settings.trailingTargetEnabled == null
+      ? Number.isFinite(Number(settings.trailingStepPoints)) && Number(settings.trailingStepPoints) > 0
+      : isTruthy(settings.trailingTargetEnabled);
+  const rawTrailStep = Number(settings.trailingStepPoints);
+  const trailingStepPoints =
+    Number.isFinite(rawTrailStep) && rawTrailStep > 0 ? Math.min(5000, rawTrailStep) : 0;
+  const rawTrailActivation = Number(settings.trailingActivationPoints);
+  const trailingActivationPoints =
+    Number.isFinite(rawTrailActivation) && rawTrailActivation > 0
+      ? Math.min(5000, rawTrailActivation)
+      : targetPoints || trailingStepPoints * 2;
+
+  const useTrailing = trailingTargetEnabled && trailingStepPoints > 0;
+  const hasTarget = targetPoints > 0 && !useTrailing;
+  const eodExitMinutes = parseClockMinutes(settings.eodExitTime, EOD_EXIT_MIN);
+  const eodExitAtBarOpen = settings.eodExitAtBarOpen == null ? false : isTruthy(settings.eodExitAtBarOpen);
+
+  return {
+    hasStopLoss,
+    stopLossPoints,
+    hasTarget,
+    targetPoints,
+    useTrailing,
+    trailingActivationPoints,
+    trailingStepPoints,
+    eodExitMinutes,
+    eodExitAtBarOpen,
+  };
+}
+
 /**
  * Exit on REAL option candles. We hold a LONG option, so its own premium IS the P&L:
  * premium falling to stop = loss, rising to target = profit (true for both CE and PE).
+ * When trailing is enabled, fixed target is disabled (matches trailScalpPutCallBacktest).
  */
-function simulateRealOptionExit({ optionBars, entryIdx, entryPremium, hasStopLoss, stopLossPoints, hasTarget, targetPoints }) {
+function simulateRealOptionExit({
+  optionBars,
+  entryIdx,
+  entryPremium,
+  hasStopLoss,
+  stopLossPoints,
+  hasTarget,
+  targetPoints,
+  useTrailing = false,
+  trailingActivationPoints = 0,
+  trailingStepPoints = 0,
+  eodExitMinutes = EOD_EXIT_MIN,
+  eodExitAtBarOpen = false,
+}) {
   const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
   const targetPremium = hasTarget ? entryPremium + targetPoints : null;
+  const trailGap = useTrailing ? Math.min(5000, Math.max(0.01, trailingStepPoints)) : 0;
+  const trailActivation =
+    useTrailing && Number.isFinite(trailingActivationPoints) && trailingActivationPoints > 0
+      ? Math.min(5000, trailingActivationPoints)
+      : useTrailing
+        ? trailGap * 2
+        : 0;
 
+  let peakProfitPoints = 0;
+  let trailStopPremium = null;
   let exitIdx = optionBars.length - 1;
   let exitPremium = Number(optionBars[exitIdx][4]);
   let reason = 'DAY_CLOSE';
@@ -77,6 +144,20 @@ function simulateRealOptionExit({ optionBars, entryIdx, entryPremium, hasStopLos
     const lo = Number(optionBars[k][3]);
     const cl = Number(optionBars[k][4]);
     if (![hi, lo, cl].every(Number.isFinite)) continue;
+
+    if (useTrailing) {
+      const profitPts = hi - entryPremium;
+      if (profitPts > peakProfitPoints) peakProfitPoints = profitPts;
+      if (peakProfitPoints >= trailActivation) {
+        trailStopPremium = entryPremium + peakProfitPoints - trailGap;
+      }
+      if (trailStopPremium != null && lo <= trailStopPremium) {
+        exitIdx = k;
+        exitPremium = trailStopPremium;
+        reason = 'TRAIL_STOP';
+        break;
+      }
+    }
 
     if (hasStopLoss && stopPremium != null && lo <= stopPremium) {
       exitIdx = k;
@@ -90,9 +171,9 @@ function simulateRealOptionExit({ optionBars, entryIdx, entryPremium, hasStopLos
       reason = 'TARGET';
       break;
     }
-    if (getIstClock(optionBars[k][0]).minutes >= EOD_EXIT_MIN) {
+    if (getIstClock(optionBars[k][0]).minutes >= eodExitMinutes) {
       exitIdx = k;
-      exitPremium = cl;
+      exitPremium = eodExitAtBarOpen ? Number(optionBars[k][1]) : cl;
       reason = 'DAY_CLOSE';
       break;
     }
@@ -139,12 +220,8 @@ async function enrichStrategySevenTradesWithRealPremiums({ trades, settings }) {
 
   const symbol = String(settings.symbol || 'NIFTY').toUpperCase();
   const interval = String(settings.interval || '5');
-  const rawSl = Number(settings.stopLossPoints);
-  const hasStopLoss = Number.isFinite(rawSl) && rawSl > 0;
-  const stopLossPoints = hasStopLoss ? rawSl : 0;
-  const rawTg = Number(settings.targetProfitPoints);
-  const hasTarget = Number.isFinite(rawTg) && rawTg > 0;
-  const targetPoints = hasTarget ? rawTg : 0;
+  const barIntervalMinutes = Number(interval) || 5;
+  const exitSettings = parseRealExitSettings(settings);
 
   let sortedExpiries = [];
   try {
@@ -178,7 +255,7 @@ async function enrichStrategySevenTradesWithRealPremiums({ trades, settings }) {
         }
 
         if (optionBars && optionBars.length) {
-          const entryIdx = findEntryBarIdx(optionBars, entryMinutes);
+          const entryIdx = findEntryBarIdx(optionBars, entryMinutes, barIntervalMinutes);
           if (entryIdx >= 0) {
             const entryPremium = Number(optionBars[entryIdx][4]);
             if (Number.isFinite(entryPremium) && entryPremium > 0) {
@@ -186,10 +263,7 @@ async function enrichStrategySevenTradesWithRealPremiums({ trades, settings }) {
                 optionBars,
                 entryIdx,
                 entryPremium,
-                hasStopLoss,
-                stopLossPoints,
-                hasTarget,
-                targetPoints,
+                ...exitSettings,
               });
               enriched = reprice(trade, {
                 entryPremium,
@@ -241,5 +315,6 @@ async function fetchOptionDayBars({ symbol, strike, expiry, optionType, interval
 module.exports = {
   enrichStrategySevenTradesWithRealPremiums,
   resolveBacktestExpiryForDay,
+  parseRealExitSettings,
   simulateRealOptionExit,
 };

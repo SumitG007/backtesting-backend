@@ -1,6 +1,6 @@
 const { fetchWithRateLimitRetry, fetchYearCandlesByDayCached } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { STRATEGY_SEVEN_KEY } = require('../../strategies/keys');
+const { STRATEGY_SEVEN_KEY, STRATEGY_NINE_KEY } = require('../../strategies/keys');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 
@@ -11,8 +11,7 @@ const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/
  */
 function createRunBacktestForYear(strategyKey) {
   return async (year, settings) => {
-    if (strategyKey === STRATEGY_SEVEN_KEY) {
-      // Keep validation identical to Strategy 3 /run for every year.
+    if (strategyKey === STRATEGY_SEVEN_KEY || strategyKey === STRATEGY_NINE_KEY) {
       const payload = await fetchYearCandlesByDayCached({
         symbol: settings.symbol,
         interval: settings.interval,
@@ -36,6 +35,15 @@ function createRunBacktestForYear(strategyKey) {
         putTrades: result.summary?.putTrades,
         callTrades: result.summary?.callTrades,
         signalCounts: result.summary?.signalCounts,
+        maxTradesPerDay: result.summary?.maxTradesPerDay,
+        stopLossPoints: result.summary?.stopLossPoints,
+        targetProfitPoints: result.summary?.targetProfitPoints,
+        entryFromTime: result.summary?.entryFromTime,
+        entryToTime: result.summary?.entryToTime,
+        eodExitTime: result.summary?.eodExitTime,
+        trailingTargetEnabled: result.summary?.trailingTargetEnabled,
+        trailingStepPoints: result.summary?.trailingStepPoints,
+        trailingActivationPoints: result.summary?.trailingActivationPoints,
         realPremiumTrades: enriched.realCount,
         modelPremiumTrades: enriched.modelCount,
       };

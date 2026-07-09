@@ -76,6 +76,7 @@ function simulateLongOptionExit({
   breakevenLockPoints = null,
   maxHoldBars = null,
   eodExitMinutes = 930,
+  eodExitAtBarOpen = false,
 }) {
   const premiumSide = premiumSideForLongOption(optionType);
   const useTrail = Number.isFinite(trailSlGapPoints) && trailSlGapPoints > 0;
@@ -273,16 +274,29 @@ function simulateLongOptionExit({
     const kClock = getIstClock(dayBars[k][0]);
     if (kClock.minutes >= eodExitMinutes) {
       exitIdx = k;
-      exitSpot = cl;
-      exitPremium = getOptionPremiumFromSpotMove({
-        side: premiumSide,
-        entrySpot,
-        currentSpot: exitSpot,
-        entryPremium,
-        premiumLeverage,
-        strike,
-        strikeStep,
-      });
+      if (eodExitAtBarOpen) {
+        exitSpot = Number(dayBars[k][1]);
+        exitPremium = getOptionPremiumFromSpotMove({
+          side: premiumSide,
+          entrySpot,
+          currentSpot: exitSpot,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+      } else {
+        exitSpot = cl;
+        exitPremium = getOptionPremiumFromSpotMove({
+          side: premiumSide,
+          entrySpot,
+          currentSpot: exitSpot,
+          entryPremium,
+          premiumLeverage,
+          strike,
+          strikeStep,
+        });
+      }
       reason = 'DAY_CLOSE';
       break;
     }

@@ -17,6 +17,10 @@ function run() {
     const { runHeikinAshiBacktest } = require('../strategies/strategy8/heikinAshiBacktest');
     return runHeikinAshiBacktest(payload);
   }
+  if (strategyKey === 'strategy9_trail_scalp_put_call') {
+    const { runTrailScalpPutCallBacktest } = require('../strategies/strategy9/trailScalpPutCallBacktest');
+    return runTrailScalpPutCallBacktest(payload);
+  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }

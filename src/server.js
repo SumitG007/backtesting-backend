@@ -9,6 +9,7 @@ const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 const strategyFourPaperEngine = require('./services/liveShortStraddleEngine');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
+const strategyNinePaperEngine = require('./services/liveTrailScalpPutCallEngine');
 
 /** One-shot DB restore when REOPEN_STRATEGY_A_TRADE_ID is set (see npm run reopen:strategy-a). */
 async function runPendingStrategyAReopenFromEnv() {
@@ -34,9 +35,11 @@ async function bootBackgroundServices() {
     const s4 = require('./services/liveShortStraddleEngine');
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
     const s7 = require('./services/livePutBuyEngine');
+    const s9 = require('./services/liveTrailScalpPutCallEngine');
     await s4.reconcileOpenTrades();
     await s6.reconcileOpenTrades();
     await s7.reconcileOpenTrades();
+    await s9.reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
   }
@@ -94,9 +97,20 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const boot = await strategyNinePaperEngine.ensureEngineRunning();
+    if (boot.ok) {
+      console.log('Strategy 5 Trail Scalp paper-live engine started (always on)');
+    } else {
+      console.warn('Strategy 5 Trail Scalp paper-live engine boot:', boot.error || 'unknown');
+    }
+  } catch (err) {
+    console.warn('Strategy 5 Trail Scalp paper-live engine boot failed:', err.message);
+  }
+
+  try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
-    if (resume.strategy4?.resumed || resume.strategy6?.resumed || resume.strategy7?.resumed) {
+    if (resume.strategy4?.resumed || resume.strategy6?.resumed || resume.strategy7?.resumed || resume.strategy9?.resumed) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }
   } catch (err) {

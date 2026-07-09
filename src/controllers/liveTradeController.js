@@ -4,17 +4,20 @@ const LivePaperTrade = require('../models/livePaperTrade');
 const strategyFourEngine = require('../services/liveShortStraddleEngine');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategySevenEngine = require('../services/livePutBuyEngine');
+const strategyNineEngine = require('../services/liveTrailScalpPutCallEngine');
 const {
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
+  STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
+  STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -100,6 +103,13 @@ function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
 /** Engine snapshot first, then persisted wallet settings, then strategy-specific defaults. */
 function resolveHintEntrySettings(engine, strategyId, wallet) {
   const fromEngine = engine?.settings;
+  if (strategyId === 'strategy-5' && fromEngine) {
+    return {
+      entryTime: String(fromEngine.entryFromTime || '09:20'),
+      entryToTime: String(fromEngine.entryToTime || '15:15'),
+      entryWindowMinutes: 0,
+    };
+  }
   if (fromEngine?.entryTime) {
     const windowMins =
       strategyId === 'strategy-3'
@@ -131,6 +141,14 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
       entryWindowMinutes: 0,
     };
   }
+  if (strategyId === 'strategy-5') {
+    const w = wallet?.strategy9EngineSettings;
+    return {
+      entryTime: String(w?.entryFromTime || '09:20'),
+      entryToTime: String(w?.entryToTime || '15:15'),
+      entryWindowMinutes: 0,
+    };
+  }
   return {
     entryTime: '09:20',
     entryWindowMinutes: 2,
@@ -139,11 +157,26 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
 
 function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strategyLabel, strategyId, wallet }) {
   const label = strategyLabel || 'Paper-live';
-  const { entryTime, entryWindowMinutes } = resolveHintEntrySettings(engine, strategyId, wallet);
-  const entryWindowLabel = formatEntryWindowLabel(entryTime, entryWindowMinutes);
+  const { entryTime, entryWindowMinutes, entryToTime } = resolveHintEntrySettings(engine, strategyId, wallet);
+  const entryWindowLabel =
+    strategyId === 'strategy-5' && entryToTime
+      ? `${entryTime}–${entryToTime} (every 5m bar)`
+      : formatEntryWindowLabel(entryTime, entryWindowMinutes);
 
   if (openTrade) return null;
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
+  if (strategyId === 'strategy-5') {
+    const maxTrades = Number(engine?.settings?.maxTradesPerDay || engine?.maxTradesPerDay || 10);
+    const count = closedToday.length;
+    if (count >= maxTrades) {
+      return `Daily cap reached (${count}/${maxTrades} trades). No more auto-entries today.`;
+    }
+    if (closedToday.length > 0) {
+      const last = closedToday[0];
+      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.`;
+    }
+    return `No open position. Trail Scalp scans ${entryWindowLabel} IST on each 5m bar close (max ${maxTrades}/day).`;
+  }
   if (closedToday.length > 0) {
     const t = closedToday[0];
     const reason = t.reason || 'CLOSED';
@@ -206,6 +239,28 @@ function isPutBuyLiveStrategyId(strategyId) {
   return strategyId === 'strategy-3';
 }
 
+function isTrailScalpLiveStrategyId(strategyId) {
+  return strategyId === 'strategy-5';
+}
+
+function trailScalpPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategyNineEngine.STRATEGY_KEY,
+    startEngine: strategyNineEngine.startEngine,
+    stopEngine: strategyNineEngine.stopEngine,
+    updateEngineSettings: strategyNineEngine.updateEngineSettings,
+    getEngineSnapshot: strategyNineEngine.getEngineSnapshot,
+    ensureWallet: strategyNineEngine.ensureWallet,
+    recalcWallet: strategyNineEngine.recalcWalletFromTrades,
+    ensureRunning: strategyNineEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyNineEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyNineEngine.closeOpenPosition,
+    refreshOpenMark: strategyNineEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategyNineEngine.clearDailySkipState,
+  };
+}
+
 function putBuyPaperLiveCtx(strategyId) {
   return {
     strategyId,
@@ -228,6 +283,7 @@ const LIVE_STRATEGIES = {
   'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
+  'strategy-5': trailScalpPaperLiveCtx('strategy-5'),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
 };
 
@@ -311,7 +367,9 @@ async function getStatus(req, res) {
             ? 'Strategy A'
             : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
-              : 'Paper-live',
+              : ctx.strategyId === 'strategy-5'
+                ? 'Trail Scalp Put/Call'
+                : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -401,6 +459,14 @@ function coerceLiveEngineSetting(key, value) {
     if (!Number.isFinite(n) || n < 1) return 2;
     return Math.min(6, Math.floor(n));
   }
+  if (key === 'maxTradesPerDay') {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 1) return 10;
+    return Math.min(20, Math.floor(n));
+  }
+  if (key === 'trailingTargetEnabled') {
+    return value !== false && value !== 'false' && value !== 0 && value !== '0';
+  }
   if (key === 'symbol') {
     return String(value || 'NIFTY').trim().toUpperCase();
   }
@@ -437,10 +503,10 @@ async function resetWallet(req, res) {
       await wallet.save();
     }
     const wallet = await ctx.ensureWallet();
-    if (isPutBuyLiveStrategyId(ctx.strategyId)) {
+    if (isPutBuyLiveStrategyId(ctx.strategyId) || isTrailScalpLiveStrategyId(ctx.strategyId)) {
       if (typeof ctx.clearDailySkip === 'function') {
         await ctx.clearDailySkip();
-      } else {
+      } else if (isPutBuyLiveStrategyId(ctx.strategyId)) {
         wallet.strategy7SkippedDateKey = null;
         wallet.strategy7LastSkipReason = null;
         await wallet.save();
