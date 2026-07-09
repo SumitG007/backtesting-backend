@@ -9,6 +9,7 @@ function requireAuth(req, res, next) {
   const header = String(req.headers.authorization || '');
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
   const user = verifyAccessToken(token);
+  
   if (!user) {
     return res.status(401).json({ ok: false, error: 'Unauthorized — login required' });
   }
