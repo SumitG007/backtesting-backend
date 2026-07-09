@@ -2,7 +2,7 @@
  * Shared intraday session helpers + long-option backtest exit/trade builders.
  */
 
-const { getIstClock } = require('../../utils/dateTime');
+const { getIstClock, barCloseIsoFromCandle, wallClockIsoFromMinutes } = require('../../utils/dateTime');
 const { computeSessionHighLow } = require('./sessionRange');
 const { getOptionPremiumFromSpotMove } = require('../../utils/market');
 
@@ -305,6 +305,16 @@ function simulateLongOptionExit({
   return { exitIdx, exitSpot, exitPremium, reason };
 }
 
+function resolveTradeExitTimeIso(dayBars, exitIdx, { barIntervalMinutes = 5, reason, eodExitMinutes, eodExitAtBarOpen } = {}) {
+  const bar = dayBars[exitIdx];
+  if (!bar) return new Date().toISOString();
+  if (reason === 'DAY_CLOSE' && eodExitAtBarOpen && Number.isFinite(eodExitMinutes)) {
+    const { dateKey } = getIstClock(bar[0]);
+    return wallClockIsoFromMinutes(dateKey, eodExitMinutes);
+  }
+  return barCloseIsoFromCandle(bar, barIntervalMinutes);
+}
+
 function buildLongOptionTrade({
   symbol,
   lotSize,
@@ -325,12 +335,26 @@ function buildLongOptionTrade({
   hasTarget,
   targetPremium,
   entryTime = null,
+  exitTime = null,
+  barIntervalMinutes = 5,
+  eodExitMinutes = null,
+  eodExitAtBarOpen = false,
   extra = {},
 }) {
   const invested = entryPremium * lotSize * lotCount;
   const finalValue = exitPremium * lotSize * lotCount;
   const rawPnl = finalValue - invested;
   const pnl = rawPnl - perTradeCost;
+  const resolvedEntryTime =
+    entryTime ?? barCloseIsoFromCandle(dayBars[entryIdx], barIntervalMinutes);
+  const resolvedExitTime =
+    exitTime
+    ?? resolveTradeExitTimeIso(dayBars, exitIdx, {
+      barIntervalMinutes,
+      reason,
+      eodExitMinutes,
+      eodExitAtBarOpen,
+    });
 
   return {
     pair: symbol,
@@ -344,8 +368,8 @@ function buildLongOptionTrade({
     finalValue: Number(finalValue.toFixed(2)),
     closed: optionType,
     order: 'BUY',
-    entryTime: entryTime ?? dayBars[entryIdx][0],
-    exitTime: dayBars[exitIdx][0],
+    entryTime: resolvedEntryTime,
+    exitTime: resolvedExitTime,
     entryPrice: Number(entrySpot.toFixed(2)),
     exitPrice: Number(exitSpot.toFixed(2)),
     stopLoss: hasStopLoss && stopPremium != null ? Number(stopPremium.toFixed(2)) : null,
@@ -406,6 +430,7 @@ module.exports = {
   pickStrike,
   premiumSideForLongOption,
   simulateLongOptionExit,
+  resolveTradeExitTimeIso,
   buildLongOptionTrade,
   parseCommonOptionSettings,
 };

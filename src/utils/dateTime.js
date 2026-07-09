@@ -118,6 +118,18 @@ function buildIstWallClockTimestamp(dateKey, minutesFromMidnight) {
   ).getTime();
 }
 
+/** ISO timestamp at bar close (open minute + interval) in IST. */
+function barCloseIsoFromCandle(candle, barIntervalMinutes = 5) {
+  const clock = getIstClock(candle[0]);
+  const closeMin = clock.minutes + Math.max(1, Number(barIntervalMinutes) || 5);
+  return new Date(buildIstWallClockTimestamp(clock.dateKey, closeMin)).toISOString();
+}
+
+/** ISO timestamp for a session wall-clock minute on a given date key. */
+function wallClockIsoFromMinutes(dateKey, minutesFromMidnight) {
+  return new Date(buildIstWallClockTimestamp(dateKey, minutesFromMidnight)).toISOString();
+}
+
 module.exports = {
   toIntradayDateTime,
   parseDateOnly,
@@ -132,5 +144,7 @@ module.exports = {
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,
   buildIstWallClockTimestamp,
+  barCloseIsoFromCandle,
+  wallClockIsoFromMinutes,
   sleep,
 };

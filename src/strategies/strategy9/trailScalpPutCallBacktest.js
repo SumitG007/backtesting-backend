@@ -201,6 +201,9 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
             hasTarget,
             targetPremium,
             entryTime: entryTimeIso,
+            barIntervalMinutes,
+            eodExitMinutes,
+            eodExitAtBarOpen: true,
             extra: {
               dayTradeNumber: dayTrades + 1,
               signalBarIdx: entryDecision.entryIdx,

@@ -12,6 +12,7 @@
  */
 
 const { getIstClock, parseClockMinutes } = require('../../utils/dateTime');
+const { resolveTradeExitTimeIso } = require('../shared/intradayOptions');
 const { fetchIntradayCandlesBySecurity } = require('../../services/dhanDataService');
 const {
   resolveOptionInstrument,
@@ -122,6 +123,7 @@ function simulateRealOptionExit({
   trailingStepPoints = 0,
   eodExitMinutes = EOD_EXIT_MIN,
   eodExitAtBarOpen = false,
+  barIntervalMinutes = 5,
 }) {
   const stopPremium = hasStopLoss ? Math.max(0.05, entryPremium - stopLossPoints) : null;
   const targetPremium = hasTarget ? entryPremium + targetPoints : null;
@@ -179,7 +181,19 @@ function simulateRealOptionExit({
     }
   }
 
-  return { exitIdx, exitPremium, reason, stopPremium, targetPremium };
+  return {
+    exitIdx,
+    exitPremium,
+    reason,
+    stopPremium,
+    targetPremium,
+    exitTimeIso: resolveTradeExitTimeIso(optionBars, exitIdx, {
+      barIntervalMinutes,
+      reason,
+      eodExitMinutes,
+      eodExitAtBarOpen,
+    }),
+  };
 }
 
 function reprice(trade, { entryPremium, exitPremium, exitTimeIso, reason, stopPremium, targetPremium }) {
@@ -263,12 +277,13 @@ async function enrichStrategySevenTradesWithRealPremiums({ trades, settings }) {
                 optionBars,
                 entryIdx,
                 entryPremium,
+                barIntervalMinutes,
                 ...exitSettings,
               });
               enriched = reprice(trade, {
                 entryPremium,
                 exitPremium: exit.exitPremium,
-                exitTimeIso: optionBars[exit.exitIdx][0],
+                exitTimeIso: exit.exitTimeIso,
                 reason: exit.reason,
                 stopPremium: exit.stopPremium,
                 targetPremium: exit.targetPremium,
