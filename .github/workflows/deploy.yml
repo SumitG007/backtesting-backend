@@ -44,7 +44,7 @@ jobs:
             # npx prisma migrate deploy
 
             echo "Restarting PM2..."
-            pm2 reload backtesting_BE --update-env || pm2 restart backtesting_BE
+            pm2 reload BackTesting --update-env || pm2 restart BackTesting
 
             pm2 save
 
