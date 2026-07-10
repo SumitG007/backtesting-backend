@@ -25,6 +25,7 @@ const {
   buildPutBuyFilterContext,
   evaluatePutBuyDirection,
   parseDirectionSettings,
+  DEFAULT_BAR_INTERVAL_MINUTES,
 } = require('../strategies/strategy7/putBuyDayFilters');
 const { STRATEGY_SEVEN_PUT_BUY_LIVE_KEY } = require('../strategies/keys');
 
@@ -76,6 +77,7 @@ const engineState = {
   openTradeId: null,
   closingTrade: false,
   enteringTrade: false,
+  evaluatingEntry: false,
   pollTimer: null,
   positionPollTimer: null,
   lastSignalAt: null,
@@ -191,9 +193,19 @@ function liveEntryWindowMinutes() {
   return 0;
 }
 
+function entryDecisionMinutes() {
+  return parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+}
+
+/** Allow polls until the entry 5m bar is on Dhan (e.g. 11:15–11:19 for 11:15 entry). */
+function entryWindowEndMinutes() {
+  return entryDecisionMinutes() + DEFAULT_BAR_INTERVAL_MINUTES - 1;
+}
+
 function isInsideEntryWindow(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  return clock.minutes === entryMinutes;
+  const start = entryDecisionMinutes();
+  const end = entryWindowEndMinutes();
+  return clock.minutes >= start && clock.minutes <= end;
 }
 
 async function refreshTodayCandles(clock, { force = false } = {}) {
@@ -284,8 +296,7 @@ async function evaluateDirectionResolution(clock) {
 }
 
 async function maybeMarkEntryWindowClosedWithoutTrade(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  if (clock.minutes <= entryMinutes) return;
+  if (clock.minutes <= entryWindowEndMinutes()) return;
   if (engineState.tradeDateKey === clock.dateKey || engineState.skippedDateKey === clock.dateKey) return;
   if (engineState.openTradeId) return;
   const lastEval = engineState.lastDirectionEval;
@@ -326,8 +337,9 @@ function isEodExitTime(minutes) {
 }
 
 function isNearEntryWindow(clock) {
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
-  return clock.minutes >= entryMinutes - 25 && clock.minutes <= entryMinutes + 5;
+  const entryMinutes = entryDecisionMinutes();
+  const end = entryWindowEndMinutes();
+  return clock.minutes >= entryMinutes - 25 && clock.minutes <= end + 5;
 }
 
 function optionTickIsFresh() {
@@ -623,7 +635,8 @@ async function getEntryGate(clock) {
   }
   await syncEngineTradeStateFromDb(clock);
   await loadSkippedDayFromWallet(clock);
-  const entryMinutes = parseClockMinutes(engineState.settings.entryTime, DEFAULT_ENTRY_MINUTES);
+  const entryMinutes = entryDecisionMinutes();
+  const windowEnd = entryWindowEndMinutes();
   if (clock.minutes < entryMinutes) {
     return {
       ok: false,
@@ -633,12 +646,13 @@ async function getEntryGate(clock) {
       nowMinutes: clock.minutes,
     };
   }
-  if (clock.minutes > entryMinutes) {
+  if (clock.minutes > windowEnd) {
     return {
       ok: false,
       reason: 'AFTER_ENTRY_WINDOW',
       entryTime: engineState.settings.entryTime,
       entryMinutes,
+      entryWindowEndMinutes: windowEnd,
       nowMinutes: clock.minutes,
     };
   }
@@ -670,40 +684,48 @@ async function getEntryGate(clock) {
 }
 
 async function evaluateEntry() {
-  const clock = getIstClock(new Date());
-  await maybeMarkEntryWindowClosedWithoutTrade(clock);
-  const gate = await getEntryGate(clock);
-  if (!gate.ok) {
-    if (isNearEntryWindow(clock)) {
-      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), ...gate });
+  if (engineState.evaluatingEntry) return;
+  engineState.evaluatingEntry = true;
+  try {
+    const clock = getIstClock(new Date());
+    await maybeMarkEntryWindowClosedWithoutTrade(clock);
+    const gate = await getEntryGate(clock);
+    if (!gate.ok) {
+      if (isNearEntryWindow(clock)) {
+        logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), ...gate });
+      }
+      return;
     }
-    return;
-  }
 
-  const resolution = await evaluateDirectionResolution(clock);
-  if (!resolution || resolution.skip) {
-    if (resolution?.skip && TERMINAL_SKIP_REASONS.has(resolution.skipReason)) {
-      await persistSkippedDay(clock, resolution);
+    const resolution = await evaluateDirectionResolution(clock);
+    if (!resolution || resolution.skip) {
+      if (resolution?.skip && TERMINAL_SKIP_REASONS.has(resolution.skipReason)) {
+        await persistSkippedDay(clock, resolution);
+      }
+      if (resolution?.skipReason === 'entry_bar_not_ready' || isInsideEntryWindow(clock)) {
+        logEntry('ENTRY_SKIP', {
+          ist: istClockLabel(clock),
+          reason: resolution?.skipReason || 'direction_skip',
+          peScore: resolution?.peScore,
+          ceScore: resolution?.ceScore,
+          minDirectionScore: engineState.settings.minDirectionScore,
+        });
+      }
+      return;
     }
-    logEntry('ENTRY_SKIP', {
+
+    logEntry('ENTRY_TRIGGER', {
       ist: istClockLabel(clock),
-      reason: resolution?.skipReason || 'direction_skip',
-      peScore: resolution?.peScore,
-      ceScore: resolution?.ceScore,
-      minDirectionScore: engineState.settings.minDirectionScore,
+      optionType: resolution.optionType,
+      peScore: resolution.peScore,
+      ceScore: resolution.ceScore,
+      signals: resolution.signals,
+      ...gate,
     });
-    return;
+    await placeLongOption(clock, resolution);
+  } finally {
+    engineState.evaluatingEntry = false;
   }
-
-  logEntry('ENTRY_TRIGGER', {
-    ist: istClockLabel(clock),
-    optionType: resolution.optionType,
-    peScore: resolution.peScore,
-    ceScore: resolution.ceScore,
-    signals: resolution.signals,
-    ...gate,
-  });
-  await placeLongOption(clock, resolution);
 }
 
 async function placeLongOption(clock, resolution) {

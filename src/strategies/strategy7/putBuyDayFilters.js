@@ -212,6 +212,14 @@ function findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes 
   return bestIdx;
 }
 
+/** True when the last completed bar closes exactly at the entry clock (e.g. 11:10 bar at 11:15). */
+function isCanonicalEntryBarReady(dayBars, decisionMinutes, barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES) {
+  const entryIdx = findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes);
+  if (entryIdx == null) return false;
+  const barOpenMinutes = getIstClock(dayBars[entryIdx][0]).minutes;
+  return barOpenMinutes + barIntervalMinutes === decisionMinutes;
+}
+
 /** Candles + day metrics knowable at entry clock — excludes forming / future bars. */
 function sliceBarsAsOfDecision(dayBars, decisionMinutes, barIntervalMinutes = DEFAULT_BAR_INTERVAL_MINUTES) {
   const lastIdx = findLastCompletedBarIndex(dayBars, decisionMinutes, barIntervalMinutes);
@@ -284,6 +292,9 @@ function resolvePutBuyEntry({
   const missingFollowingBar = requireFollowingBar && entryIdx != null && entryIdx >= barsForFollowing.length - 1;
   if (entryIdx == null || missingFollowingBar) {
     return { skip: true, skipReason: 'no_entry_bar', entryIdx: null, optionType: null };
+  }
+  if (!isCanonicalEntryBarReady(dayBars, decisionMinutes, barIntervalMinutes)) {
+    return { skip: true, skipReason: 'entry_bar_not_ready', entryIdx: null, optionType: null };
   }
 
   const bias = scoreDirectionalBias(
@@ -380,6 +391,7 @@ module.exports = {
   scoreDirectionalBias,
   evaluatePeConfirm,
   findLastCompletedBarIndex,
+  isCanonicalEntryBarReady,
   sliceBarsAsOfDecision,
   evaluatePutBuyDirection,
   findEntryBarIndex,
