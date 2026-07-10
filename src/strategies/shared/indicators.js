@@ -2,8 +2,6 @@
  * Shared intraday indicators for strategy backtests.
  */
 
-const { getIstClock } = require('../../utils/dateTime');
-
 function calculateAtr(bars, period) {
   const n = Array.isArray(bars) ? bars.length : 0;
   const p = Math.max(2, period || 14);
@@ -233,73 +231,6 @@ function calculateMacd(closes, fast, slow, signal) {
   return { macdLine, signalLine };
 }
 
-/**
- * Convert OHLCV rows `[ts, o, h, l, c, vol]` into Heikin Ashi candles (same shape).
- *
- * HA_Close = (O + H + L + C) / 4
- * HA_Open  = (prev HA_Open + prev HA_Close) / 2  — first bar uses (O + C) / 2
- * HA_High  = max(H, HA_Open, HA_Close)
- * HA_Low   = min(L, HA_Open, HA_Close)
- *
- * @param {boolean} [options.resetPerDay=true] Reset HA open seed at each IST session day.
- */
-function convertCandlesToHeikinAshi(candles, options = {}) {
-  const resetPerDay = options.resetPerDay !== false;
-  const rows = Array.isArray(candles) ? candles : [];
-  const out = [];
-  let prevHaOpen = null;
-  let prevHaClose = null;
-  let currentDateKey = null;
-
-  for (let i = 0; i < rows.length; i += 1) {
-    const c = rows[i];
-    const ts = c[0];
-    const o = Number(c[1]);
-    const h = Number(c[2]);
-    const l = Number(c[3]);
-    const cl = Number(c[4]);
-    const vol = c[5];
-
-    if (![o, h, l, cl].every(Number.isFinite)) {
-      out.push([ts, null, null, null, null, vol]);
-      continue;
-    }
-
-    if (resetPerDay) {
-      const dateKey = getIstClock(ts).dateKey;
-      if (dateKey !== currentDateKey) {
-        currentDateKey = dateKey;
-        prevHaOpen = null;
-        prevHaClose = null;
-      }
-    }
-
-    const haClose = (o + h + l + cl) / 4;
-    const haOpen =
-      prevHaOpen != null && prevHaClose != null ? (prevHaOpen + prevHaClose) / 2 : (o + cl) / 2;
-    const haHigh = Math.max(h, haOpen, haClose);
-    const haLow = Math.min(l, haOpen, haClose);
-
-    out.push([ts, haOpen, haHigh, haLow, haClose, vol]);
-    prevHaOpen = haOpen;
-    prevHaClose = haClose;
-  }
-
-  return out;
-}
-
-function isHeikinAshiBullish(candle) {
-  const o = Number(candle?.[1]);
-  const c = Number(candle?.[4]);
-  return Number.isFinite(o) && Number.isFinite(c) && c > o;
-}
-
-function isHeikinAshiBearish(candle) {
-  const o = Number(candle?.[1]);
-  const c = Number(candle?.[4]);
-  return Number.isFinite(o) && Number.isFinite(c) && c < o;
-}
-
 module.exports = {
   calculateAtr,
   rollingVolumeAvg,
@@ -310,7 +241,4 @@ module.exports = {
   calculateStochastic,
   calculateDmi,
   calculateMacd,
-  convertCandlesToHeikinAshi,
-  isHeikinAshiBullish,
-  isHeikinAshiBearish,
 };

@@ -9,7 +9,7 @@ function health(_req, res) {
     ready: isPlatformReady(),
     build: {
       commit: process.env.GIT_COMMIT || null,
-      backtestRoutes: ['strategy2', 'strategy3', 'strategy4', 'strategy5'],
+      backtestRoutes: ['strategy2', 'strategy3', 'strategy5'],
       liveStrategies: ['strategy-2', 'strategy-3', 'strategy-4', 'strategy-5', 'strategy-6'],
     },
   });

@@ -11,10 +11,6 @@ const {
   getStrategySevenRunTrades,
   getStrategySevenValidation,
   postStrategySevenValidation,
-  runStrategyEight,
-  getStrategyEightRunTrades,
-  getStrategyEightValidation,
-  postStrategyEightValidation,
   runStrategyNine,
   getStrategyNineRunTrades,
   getStrategyNineValidation,
@@ -90,11 +86,6 @@ router.post('/strategy3/run', runStrategySeven);
 router.post('/strategy3/validation', postStrategySevenValidation);
 router.get('/strategy3/runs/:runId/trades', getStrategySevenRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategySevenValidation);
-// Strategy 4 — Heikin Ashi (scaffold)
-router.post('/strategy4/run', runStrategyEight);
-router.post('/strategy4/validation', postStrategyEightValidation);
-router.get('/strategy4/runs/:runId/trades', getStrategyEightRunTrades);
-router.get('/strategy4/runs/:runId/validation', getStrategyEightValidation);
 // Strategy 5 — Trail Scalp Put/Call (multi-entry intraday with trailing profit)
 router.post('/strategy5/run', runStrategyNine);
 router.post('/strategy5/validation', postStrategyNineValidation);
