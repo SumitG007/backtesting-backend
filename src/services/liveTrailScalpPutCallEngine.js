@@ -114,7 +114,7 @@ function isTruthy(value) {
 }
 
 function normalizeSettings(settings = {}) {
-  const lotCount = Math.max(1, Number(settings.lotCount) || 10);
+  const lotCount = Math.max(1, Number(settings.lotCount) || 5);
   const rawSl = Number(settings.stopLossPoints);
   const stopLossPoints =
     Number.isFinite(rawSl) && rawSl > 0
@@ -625,7 +625,7 @@ async function placeLongOption(clock, resolution, decisionMinutes) {
 
     const lotSize = engineState.lotSize || (await getCurrentLotSize(symbol));
     engineState.lotSize = lotSize;
-    const lots = Math.max(1, Number(engineState.settings.lotCount) || 10);
+    const lots = Math.max(1, Number(engineState.settings.lotCount) || 5);
     const qty = lotSize * lots;
     const stopLossPremium = Math.max(0.05, entryPremium - engineState.settings.stopLossPoints);
     const dayTradeNumber = engineState.dayTradeCount + 1;

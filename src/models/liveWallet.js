@@ -60,7 +60,7 @@ const liveWalletSchema = new mongoose.Schema(
     strategy7LastSkipReason: { type: String, default: null },
     strategy9EngineSettings: {
       symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 10 },
+      lotCount: { type: Number, default: 5 },
       entryFromTime: { type: String, default: '09:20' },
       entryToTime: { type: String, default: '15:15' },
       stopLossPoints: { type: Number, default: 8 },
