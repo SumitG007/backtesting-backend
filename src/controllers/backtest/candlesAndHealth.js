@@ -7,6 +7,11 @@ function health(_req, res) {
     ok: true,
     service: 'backtesting-api',
     ready: isPlatformReady(),
+    build: {
+      commit: process.env.GIT_COMMIT || null,
+      backtestRoutes: ['strategy2', 'strategy3', 'strategy4', 'strategy5'],
+      liveStrategies: ['strategy-2', 'strategy-3', 'strategy-4', 'strategy-5', 'strategy-6'],
+    },
   });
 }
 
