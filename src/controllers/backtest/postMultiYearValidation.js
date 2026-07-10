@@ -1,4 +1,5 @@
-const { runMultiYearValidation } = require('./multiYearValidation');
+const { runMultiYearValidation, VALIDATION_ASSUMPTIONS } = require('./multiYearValidation');
+const { buildValidationReport } = require('./buildValidationReport');
 const { createRunBacktestForYear } = require('./runBacktestForYear');
 
 /**
@@ -35,4 +36,46 @@ function createPostMultiYearValidationHandler({ strategyKey, buildSettings }) {
   };
 }
 
-module.exports = { createPostMultiYearValidationHandler };
+/**
+ * POST /api/strategyN/validation-year — same settings as /run, one calendar year only.
+ * @param {{ strategyKey: string, buildSettings: (req: import('express').Request) => { settings: Record<string, unknown>, yearNum?: number } }} opts
+ */
+function createPostSingleYearValidationHandler({ strategyKey, buildSettings }) {
+  return async function postSingleYearValidation(req, res) {
+    try {
+      const built = buildSettings(req);
+      const settings = built.settings || built;
+      const yearRaw = req.body?.year ?? built.yearNum;
+      const year = Number(yearRaw);
+      if (!Number.isFinite(year)) {
+        return res.status(400).json({ ok: false, error: 'year is required' });
+      }
+
+      const result = await createRunBacktestForYear(strategyKey)(year, settings);
+      const trades = Array.isArray(result?.trades) ? result.trades : [];
+      const validation = {
+        ...buildValidationReport(trades),
+        assumptions: VALIDATION_ASSUMPTIONS,
+      };
+
+      return res.json({
+        ok: true,
+        strategyKey,
+        year,
+        validation,
+        tradeCount: trades.length,
+      });
+    } catch (error) {
+      if (error.response) {
+        return res.status(error.response.status).json({
+          ok: false,
+          error: 'Dhan API error',
+          details: error.response.data,
+        });
+      }
+      return res.status(500).json({ ok: false, error: error.message });
+    }
+  };
+}
+
+module.exports = { createPostMultiYearValidationHandler, createPostSingleYearValidationHandler };

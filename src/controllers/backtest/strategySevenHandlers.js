@@ -14,7 +14,7 @@ const { parseDirectionSettings } = require('../../strategies/strategy7/putBuyDay
 const { parseNumberInput, parseStringInput, parsePremiumExitPoints } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
-const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
+const { createPostMultiYearValidationHandler, createPostSingleYearValidationHandler } = require('./postMultiYearValidation');
 
 const TIER = {
   key: STRATEGY_SEVEN_KEY,
@@ -161,9 +161,15 @@ const postStrategySevenValidation = createPostMultiYearValidationHandler({
   buildSettings,
 });
 
+const postStrategySevenValidationYear = createPostSingleYearValidationHandler({
+  strategyKey: STRATEGY_SEVEN_KEY,
+  buildSettings,
+});
+
 module.exports = {
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
   postStrategySevenValidation,
+  postStrategySevenValidationYear,
 };

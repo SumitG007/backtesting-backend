@@ -19,7 +19,7 @@ const {
 } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
-const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
+const { createPostMultiYearValidationHandler, createPostSingleYearValidationHandler } = require('./postMultiYearValidation');
 
 const TIER = {
   key: STRATEGY_NINE_KEY,
@@ -48,7 +48,7 @@ function buildSettings(req) {
     symbol: String(symbol).toUpperCase(),
     interval,
     strikeMode: parseStringInput(req.body?.strikeMode, 'ATM'),
-    stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 6),
+    stopLossPoints: parsePremiumExitPoints(req.body?.stopLossPoints, 8),
     targetProfitPoints: parsePremiumExitPoints(req.body?.targetProfitPoints, 4),
     basePremiumPct: parseNumberInput(req.body?.basePremiumPct, 0.5),
     premiumLeverage: parseNumberInput(req.body?.premiumLeverage, 8),
@@ -177,9 +177,15 @@ const postStrategyNineValidation = createPostMultiYearValidationHandler({
   buildSettings,
 });
 
+const postStrategyNineValidationYear = createPostSingleYearValidationHandler({
+  strategyKey: STRATEGY_NINE_KEY,
+  buildSettings,
+});
+
 module.exports = {
   runStrategyNine,
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  postStrategyNineValidationYear,
 };

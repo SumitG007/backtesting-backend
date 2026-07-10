@@ -11,7 +11,7 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { parseNumberInput, parseStringInput } = require('./parsers');
 const { getRunTradesByStrategy, getRunValidationByStrategy } = require('./tradeQueries');
 const { mapTradesForInsert } = require('./tradePersistence');
-const { createPostMultiYearValidationHandler } = require('./postMultiYearValidation');
+const { createPostMultiYearValidationHandler, createPostSingleYearValidationHandler } = require('./postMultiYearValidation');
 
 const TIER_SHORT_STRADDLE = {
   key: STRATEGY_SIX_KEY,
@@ -120,9 +120,15 @@ const postStrategyShortStraddleValidation = createPostMultiYearValidationHandler
   buildSettings: buildShortStraddleSettings,
 });
 
+const postStrategyShortStraddleValidationYear = createPostSingleYearValidationHandler({
+  strategyKey: STRATEGY_SIX_KEY,
+  buildSettings: buildShortStraddleSettings,
+});
+
 module.exports = {
   runStrategyShortStraddleNextDay,
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidationYear,
 };

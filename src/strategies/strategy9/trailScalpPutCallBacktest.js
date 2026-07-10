@@ -1,6 +1,6 @@
 /**
  * Trail Scalp Put/Call — up to 10 intraday trades/day.
- * Each trade: SL 6 premium pts, trailing profit after +4 pts (trail by 2).
+ * Each trade: SL 8 premium pts, trailing profit after +4 pts (trail by 2).
  * Entry signals use only completed 5m candles (no forming bar / no lookahead).
  */
 
@@ -26,7 +26,7 @@ const DEFAULT_ENTRY_FROM = 560; // 09:20 IST
 const DEFAULT_ENTRY_TO = 915; // 15:15 IST
 const EOD_EXIT = 920;
 const DEFAULT_MAX_TRADES_PER_DAY = 10;
-const DEFAULT_STOP_LOSS_POINTS = 6;
+const DEFAULT_STOP_LOSS_POINTS = 8;
 const DEFAULT_TARGET_POINTS = 4;
 const DEFAULT_TRAIL_STEP_POINTS = 2;
 

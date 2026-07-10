@@ -8,18 +8,21 @@ const {
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidationYear,
 } = require('./intradayTierHandlers');
 const {
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
   postStrategySevenValidation,
+  postStrategySevenValidationYear,
 } = require('./strategySevenHandlers');
 const {
   runStrategyNine,
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  postStrategyNineValidationYear,
 } = require('./strategyNineHandlers');
 
 module.exports = {
@@ -30,12 +33,15 @@ module.exports = {
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidationYear,
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
   postStrategySevenValidation,
+  postStrategySevenValidationYear,
   runStrategyNine,
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  postStrategyNineValidationYear,
 };

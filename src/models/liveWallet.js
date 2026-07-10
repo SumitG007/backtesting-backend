@@ -63,7 +63,7 @@ const liveWalletSchema = new mongoose.Schema(
       lotCount: { type: Number, default: 10 },
       entryFromTime: { type: String, default: '09:20' },
       entryToTime: { type: String, default: '15:15' },
-      stopLossPoints: { type: Number, default: 6 },
+      stopLossPoints: { type: Number, default: 8 },
       trailingActivationPoints: { type: Number, default: 4 },
       trailingStepPoints: { type: Number, default: 2 },
       trailingTargetEnabled: { type: Boolean, default: true },

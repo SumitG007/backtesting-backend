@@ -7,14 +7,17 @@ const {
   getStrategyShortStraddleRunTrades,
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
+  postStrategyShortStraddleValidationYear,
   runStrategySeven,
   getStrategySevenRunTrades,
   getStrategySevenValidation,
   postStrategySevenValidation,
+  postStrategySevenValidationYear,
   runStrategyNine,
   getStrategyNineRunTrades,
   getStrategyNineValidation,
   postStrategyNineValidation,
+  postStrategyNineValidationYear,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -79,16 +82,19 @@ router.get('/dashboard/drishti', getDrishtiDashboard);
 // Strategy 2 — short straddle (entry day + next day exit)
 router.post('/strategy2/run', runStrategyShortStraddleNextDay);
 router.post('/strategy2/validation', postStrategyShortStraddleValidation);
+router.post('/strategy2/validation-year', postStrategyShortStraddleValidationYear);
 router.get('/strategy2/runs/:runId/trades', getStrategyShortStraddleRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyShortStraddleValidation);
 // Strategy 3 — timed put buy (long PE)
 router.post('/strategy3/run', runStrategySeven);
 router.post('/strategy3/validation', postStrategySevenValidation);
+router.post('/strategy3/validation-year', postStrategySevenValidationYear);
 router.get('/strategy3/runs/:runId/trades', getStrategySevenRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategySevenValidation);
 // Strategy 5 — Trail Scalp Put/Call (multi-entry intraday with trailing profit)
 router.post('/strategy5/run', runStrategyNine);
 router.post('/strategy5/validation', postStrategyNineValidation);
+router.post('/strategy5/validation-year', postStrategyNineValidationYear);
 router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
 router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
 // Paper live (real market data, simulated fills in DB)
