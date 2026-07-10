@@ -67,7 +67,7 @@ const liveWalletSchema = new mongoose.Schema(
       trailingActivationPoints: { type: Number, default: 4 },
       trailingStepPoints: { type: Number, default: 2 },
       trailingTargetEnabled: { type: Boolean, default: true },
-      maxTradesPerDay: { type: Number, default: 10 },
+      maxLossesPerSidePerDay: { type: Number, default: 2 },
       strikeMode: { type: String, default: 'ATM' },
       perTradeCost: { type: Number, default: 100 },
       minDirectionScore: { type: Number, default: 2 },

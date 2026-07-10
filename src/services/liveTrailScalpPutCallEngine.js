@@ -1,6 +1,6 @@
 /**
  * Strategy 5 (UI) — Trail Scalp Put/Call paper live.
- * Multi-entry intraday (up to maxTradesPerDay), 5m bar-close signals 09:20–15:15,
+ * Multi-entry intraday (unlimited trades; per-side SL lockout), 5m bar-close signals 09:20–15:15,
  * real Dhan option LTP, SL + trailing profit + 15:20 square-off.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -30,6 +30,12 @@ const {
   DEFAULT_BAR_INTERVAL_MINUTES,
 } = require('../strategies/strategy7/putBuyDayFilters');
 const { STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY } = require('../strategies/keys');
+const {
+  parseMaxLossesPerSidePerDay,
+  sideLockSkipReason,
+  countStopLossesBySide,
+  bothSidesLocked,
+} = require('../strategies/strategy9/trailScalpSideLockout');
 
 const STRATEGY_KEY = STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY;
 const OPTION_SUBSCRIPTION_KEY = 'engine:strategy9:option';
@@ -46,7 +52,7 @@ const BAR_INTERVAL = DEFAULT_BAR_INTERVAL_MINUTES;
 const DEFAULT_STOP_LOSS_POINTS = 8;
 const DEFAULT_TRAIL_ACTIVATION = 4;
 const DEFAULT_TRAIL_STEP = 2;
-const DEFAULT_MAX_TRADES = 10;
+const DEFAULT_MAX_TRADES_CAP = null;
 
 const engineState = {
   running: false,
@@ -70,6 +76,8 @@ const engineState = {
   sessionDateKey: null,
   lastProcessedDecisionMinutes: null,
   dayTradeCount: 0,
+  peSlCount: 0,
+  ceSlCount: 0,
   openTradeId: null,
   closingTrade: false,
   enteringTrade: false,
@@ -124,7 +132,8 @@ function normalizeSettings(settings = {}) {
       : DEFAULT_TRAIL_STEP;
   const trailingTargetEnabled =
     settings.trailingTargetEnabled == null ? true : isTruthy(settings.trailingTargetEnabled);
-  const maxTradesPerDay = Math.max(1, Math.min(20, Number(settings.maxTradesPerDay) || DEFAULT_MAX_TRADES));
+  const maxTradesPerDay = DEFAULT_MAX_TRADES_CAP;
+  const maxLossesPerSidePerDay = parseMaxLossesPerSidePerDay(settings);
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
   const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
@@ -139,6 +148,7 @@ function normalizeSettings(settings = {}) {
     trailingStepPoints,
     trailingTargetEnabled,
     maxTradesPerDay,
+    maxLossesPerSidePerDay,
     strikeMode: String(settings.strikeMode || 'ATM').toUpperCase(),
     perTradeCost,
     minDirectionScore,
@@ -162,9 +172,31 @@ function resetSessionIfNewDay(clock) {
     engineState.sessionDateKey = clock.dateKey;
     engineState.lastProcessedDecisionMinutes = null;
     engineState.dayTradeCount = 0;
+    engineState.peSlCount = 0;
+    engineState.ceSlCount = 0;
     engineState.todayBars = [];
     engineState.lastCandleFetchAt = 0;
   }
+}
+
+function getSideLockState() {
+  return {
+    peSlCount: engineState.peSlCount,
+    ceSlCount: engineState.ceSlCount,
+    maxLossesPerSidePerDay: engineState.settings.maxLossesPerSidePerDay,
+  };
+}
+
+async function syncSideSlCountsFromDb(dateKey) {
+  const rows = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: dateKey,
+    exitTime: { $ne: null },
+    reason: 'STOP_LOSS',
+  }).lean();
+  const counts = countStopLossesBySide(rows);
+  engineState.peSlCount = counts.peSlCount;
+  engineState.ceSlCount = counts.ceSlCount;
 }
 
 function isEodExitTime(minutes) {
@@ -460,13 +492,14 @@ function startPositionPoll() {
 
 async function syncEngineTradeStateFromDb(clock) {
   resetSessionIfNewDay(clock);
+  engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
+  await syncSideSlCountsFromDb(clock.dateKey);
   const open = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({ entryTime: -1 });
   if (open) {
     engineState.openTradeId = open._id.toString();
     return;
   }
   if (engineState.openTradeId) clearOpenTrade();
-  engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
 }
 
 async function getEntryGate(clock) {
@@ -480,8 +513,17 @@ async function getEntryGate(clock) {
   if (engineState.openTradeId) return { ok: false, reason: 'OPEN_TRADE_EXISTS' };
   const entryToMin = parseClockMinutes(engineState.settings.entryToTime, DEFAULT_ENTRY_TO);
   if (clock.minutes > entryToMin + BAR_INTERVAL) return { ok: false, reason: 'AFTER_SCAN_WINDOW' };
-  if (engineState.dayTradeCount >= engineState.settings.maxTradesPerDay) {
+  const maxTrades = engineState.settings.maxTradesPerDay;
+  if (maxTrades != null && engineState.dayTradeCount >= maxTrades) {
     return { ok: false, reason: 'MAX_TRADES_REACHED', count: engineState.dayTradeCount };
+  }
+  if (bothSidesLocked(getSideLockState())) {
+    return {
+      ok: false,
+      reason: 'BOTH_SIDES_LOCKED',
+      peSlCount: engineState.peSlCount,
+      ceSlCount: engineState.ceSlCount,
+    };
   }
   try {
     const expiry = await getEntryExpiry(getEngineSymbol(), clock.dateKey);
@@ -522,6 +564,20 @@ async function evaluateEntry() {
     return;
   }
 
+  const lockReason = sideLockSkipReason(resolution.optionType, getSideLockState());
+  if (lockReason) {
+    logEntry('ENTRY_SKIP', {
+      ist: istClockLabel(clock),
+      decisionMinutes,
+      reason: lockReason,
+      optionType: resolution.optionType,
+      peSlCount: engineState.peSlCount,
+      ceSlCount: engineState.ceSlCount,
+      maxLossesPerSidePerDay: engineState.settings.maxLossesPerSidePerDay,
+    });
+    return;
+  }
+
   logEntry('ENTRY_TRIGGER', {
     ist: istClockLabel(clock),
     decisionMinutes,
@@ -540,7 +596,10 @@ async function placeLongOption(clock, resolution, decisionMinutes) {
   try {
     await syncEngineTradeStateFromDb(clock);
     if (engineState.openTradeId) return;
-    if (engineState.dayTradeCount >= engineState.settings.maxTradesPerDay) return;
+    const maxTrades = engineState.settings.maxTradesPerDay;
+    if (maxTrades != null && engineState.dayTradeCount >= maxTrades) return;
+    const lockReason = sideLockSkipReason(resolution?.optionType, getSideLockState());
+    if (lockReason) return;
 
     const symbol = getEngineSymbol();
     const optionType = String(resolution?.optionType || 'PE').toUpperCase() === 'CE' ? 'CE' : 'PE';
@@ -729,6 +788,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
     });
     clearOpenTrade();
     engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
+    await syncSideSlCountsFromDb(clock.dateKey);
   } catch (err) {
     engineState.lastError = `Exit failed: ${err.message}`;
   } finally {
@@ -896,6 +956,15 @@ function getEngineSnapshot() {
     lastDirectionEval: engineState.lastDirectionEval,
     dayTradeCount: engineState.dayTradeCount,
     maxTradesPerDay: engineState.settings.maxTradesPerDay,
+    maxLossesPerSidePerDay: engineState.settings.maxLossesPerSidePerDay,
+    peSlCount: engineState.peSlCount,
+    ceSlCount: engineState.ceSlCount,
+    peSideLocked:
+      engineState.settings.maxLossesPerSidePerDay != null
+      && engineState.peSlCount >= engineState.settings.maxLossesPerSidePerDay,
+    ceSideLocked:
+      engineState.settings.maxLossesPerSidePerDay != null
+      && engineState.ceSlCount >= engineState.settings.maxLossesPerSidePerDay,
     lastProcessedDecisionMinutes: engineState.lastProcessedDecisionMinutes,
     openTradeId: engineState.openTradeId,
     lastSignalAt: engineState.lastSignalAt,
@@ -964,6 +1033,7 @@ async function clearDailySkipState() {
   const clock = getIstClock(new Date());
   engineState.lastProcessedDecisionMinutes = null;
   engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
+  await syncSideSlCountsFromDb(clock.dateKey);
   return { ok: true, state: getEngineSnapshot() };
 }
 

@@ -21,11 +21,16 @@ const {
   DEFAULT_BAR_INTERVAL_MINUTES,
 } = require('../strategy7/putBuyDayFilters');
 const { resolveEntryFill } = require('./entryFillRules');
+const {
+  parseMaxLossesPerSidePerDay,
+  isOptionSideLocked,
+  bothSidesLocked,
+} = require('./trailScalpSideLockout');
 
 const DEFAULT_ENTRY_FROM = 560; // 09:20 IST
 const DEFAULT_ENTRY_TO = 915; // 15:15 IST
 const EOD_EXIT = 920;
-const DEFAULT_MAX_TRADES_PER_DAY = 10;
+const DEFAULT_MAX_TRADES_PER_DAY = null;
 const DEFAULT_STOP_LOSS_POINTS = 8;
 const DEFAULT_TARGET_POINTS = 4;
 const DEFAULT_TRAIL_STEP_POINTS = 2;
@@ -85,10 +90,8 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
   );
   const entryToMin = parseClockMinutes(settings.entryToTime ?? settings.entryTime, DEFAULT_ENTRY_TO);
   const eodExitMinutes = parseClockMinutes(settings.eodExitTime, EOD_EXIT);
-  const maxTradesPerDay = Math.max(
-    1,
-    Math.min(20, Number(settings.maxTradesPerDay) || DEFAULT_MAX_TRADES_PER_DAY),
-  );
+  const maxTradesPerDay = DEFAULT_MAX_TRADES_PER_DAY;
+  const maxLossesPerSidePerDay = parseMaxLossesPerSidePerDay(settings);
 
   const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
   const barIntervalMinutes = resolveBarIntervalMinutes(settings);
@@ -109,10 +112,16 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
     if (dayBars.length < 2) continue;
 
     let dayTrades = 0;
+    let peSlCount = 0;
+    let ceSlCount = 0;
     let scanFrom = 0;
     let tookAnyTrade = false;
 
-    while (scanFrom < dayBars.length - 1 && dayTrades < maxTradesPerDay) {
+    const sideLockState = () => ({ peSlCount, ceSlCount, maxLossesPerSidePerDay });
+
+    while (scanFrom < dayBars.length - 1) {
+      if (maxTradesPerDay != null && dayTrades >= maxTradesPerDay) break;
+      if (bothSidesLocked(sideLockState())) break;
       let tookTrade = false;
 
       for (let i = scanFrom; i < dayBars.length - 1; i += 1) {
@@ -145,10 +154,12 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
         });
         if (fill.skip) continue;
 
+        const optionType = entryDecision.optionType || 'PE';
+        if (isOptionSideLocked(optionType, sideLockState())) continue;
+
         const { entryIdx, entrySpot, entryTimeIso } = fill;
         if (!Number.isFinite(entrySpot) || entrySpot <= 0) continue;
 
-        const optionType = entryDecision.optionType || 'PE';
         if (optionType === 'CE') callTrades += 1;
         else putTrades += 1;
 
@@ -217,6 +228,10 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
         );
 
         dayTrades += 1;
+        if (reason === 'STOP_LOSS') {
+          if (optionType === 'CE') ceSlCount += 1;
+          else peSlCount += 1;
+        }
         tookAnyTrade = true;
         tookTrade = true;
         scanFrom = exitIdx + 1;
@@ -235,6 +250,7 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
   summary.putTrades = putTrades;
   summary.callTrades = callTrades;
   summary.maxTradesPerDay = maxTradesPerDay;
+  summary.maxLossesPerSidePerDay = maxLossesPerSidePerDay;
   summary.stopLossPoints = stopLossPoints;
   summary.targetProfitPoints = targetPoints;
   summary.entryFromTime = settings.entryFromTime || '09:20';
