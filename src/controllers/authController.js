@@ -3,7 +3,7 @@ const {
   getAuthStatus,
   verifyAccessToken,
 } = require('../services/adminAuthService');
-
+// login with credentials
 async function postLogin(req, res) {
   try {
     const email = req.body?.email ?? req.body?.username ?? req.body?.admin;
