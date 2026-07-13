@@ -11,7 +11,6 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 const { parseDirectionSettings } = require('../../strategies/strategy7/putBuyDayFilters');
-const { filterTradesByMaxLossesPerSidePerDay } = require('../../strategies/strategy9/trailScalpSideLockout');
 const {
   parseNumberInput,
   parseStringInput,
@@ -61,7 +60,7 @@ function buildSettings(req) {
     entryToTime: parseStringInput(req.body?.entryToTime, '15:15'),
     eodExitTime: parseStringInput(req.body?.eodExitTime, '15:20'),
     maxTradesPerDay: 0,
-    maxLossesPerSidePerDay: parseNumberInput(req.body?.maxLossesPerSidePerDay, 2),
+    maxLossesPerSidePerDay: null,
     minDirectionScore: parseNumberInput(req.body?.minDirectionScore, 2),
     enabledPeSignals: parseEnabledSignalsFromBody(req.body, 'enabledPeSignals', 'peSignalFilters'),
     enabledCeSignals: parseEnabledSignalsFromBody(req.body, 'enabledCeSignals', 'ceSignalFilters'),
@@ -102,19 +101,15 @@ async function runStrategyNine(req, res) {
       trades: result.trades,
       settings,
     });
-    const trades = filterTradesByMaxLossesPerSidePerDay(enriched.trades, settings);
-    const putTrades = trades.filter((t) => String(t.type || '').toUpperCase() !== 'CE').length;
-    const callTrades = trades.filter((t) => String(t.type || '').toUpperCase() === 'CE').length;
-    const realPremiumTrades = trades.filter((t) => t.premiumSource === 'REAL').length;
-    const modelPremiumTrades = trades.length - realPremiumTrades;
+    const trades = enriched.trades;
     const summary = {
       ...buildStrategyRunSummary(trades),
       skippedDays: result.summary.skippedDays,
       minDirectionScore: result.summary.minDirectionScore,
-      putTrades,
-      callTrades,
+      putTrades: result.summary.putTrades,
+      callTrades: result.summary.callTrades,
       maxTradesPerDay: result.summary.maxTradesPerDay,
-      maxLossesPerSidePerDay: result.summary.maxLossesPerSidePerDay,
+      maxLossesPerSidePerDay: null,
       stopLossPoints: result.summary.stopLossPoints,
       targetProfitPoints: result.summary.targetProfitPoints,
       entryFromTime: result.summary.entryFromTime,
@@ -123,8 +118,8 @@ async function runStrategyNine(req, res) {
       trailingTargetEnabled: result.summary.trailingTargetEnabled,
       trailingStepPoints: result.summary.trailingStepPoints,
       trailingActivationPoints: result.summary.trailingActivationPoints,
-      realPremiumTrades,
-      modelPremiumTrades,
+      realPremiumTrades: enriched.realCount,
+      modelPremiumTrades: enriched.modelCount,
     };
 
     const runDoc = await StrategyRun.create({

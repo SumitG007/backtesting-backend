@@ -1,6 +1,6 @@
 /**
  * Strategy 5 (UI) — Trail Scalp Put/Call paper live.
- * Multi-entry intraday (unlimited trades; per-side SL lockout), 5m bar-close signals 09:20–15:15,
+ * Multi-entry intraday (unlimited trades), 5m bar-close signals 09:20–15:15,
  * real Dhan option LTP, SL + trailing profit + 15:20 square-off.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -31,7 +31,6 @@ const {
 } = require('../strategies/strategy7/putBuyDayFilters');
 const { STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY } = require('../strategies/keys');
 const {
-  parseMaxLossesPerSidePerDay,
   sideLockSkipReason,
   countStopLossesBySide,
   bothSidesLocked,
@@ -140,7 +139,7 @@ function normalizeSettings(settings = {}) {
   const trailingTargetEnabled =
     settings.trailingTargetEnabled == null ? true : isTruthy(settings.trailingTargetEnabled);
   const maxTradesPerDay = DEFAULT_MAX_TRADES_CAP;
-  const maxLossesPerSidePerDay = parseMaxLossesPerSidePerDay(settings);
+  const maxLossesPerSidePerDay = null; // side lockout disabled
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
   const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);

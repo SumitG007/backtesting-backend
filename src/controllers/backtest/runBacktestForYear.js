@@ -3,10 +3,6 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { STRATEGY_SEVEN_KEY, STRATEGY_NINE_KEY } = require('../../strategies/keys');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
-const {
-  filterTradesByMaxLossesPerSidePerDay,
-  parseMaxLossesPerSidePerDay,
-} = require('../../strategies/strategy9/trailScalpSideLockout');
 
 /**
  * Run a single calendar year exactly like each strategy's /run path so validation matches.
@@ -31,26 +27,16 @@ function createRunBacktestForYear(strategyKey) {
         trades: result.trades,
         settings,
       });
-      const trades =
-        strategyKey === STRATEGY_NINE_KEY
-          ? filterTradesByMaxLossesPerSidePerDay(enriched.trades, settings)
-          : enriched.trades;
-      const putTrades = trades.filter((t) => String(t.type || '').toUpperCase() !== 'CE').length;
-      const callTrades = trades.filter((t) => String(t.type || '').toUpperCase() === 'CE').length;
-      const realPremiumTrades = trades.filter((t) => t.premiumSource === 'REAL').length;
-      const modelPremiumTrades = trades.length - realPremiumTrades;
+      const trades = enriched.trades;
       const summary = {
         ...buildStrategyRunSummary(trades),
         skippedDays: result.summary?.skippedDays,
         minDirectionScore: result.summary?.minDirectionScore,
-        putTrades: strategyKey === STRATEGY_NINE_KEY ? putTrades : result.summary?.putTrades,
-        callTrades: strategyKey === STRATEGY_NINE_KEY ? callTrades : result.summary?.callTrades,
+        putTrades: result.summary?.putTrades,
+        callTrades: result.summary?.callTrades,
         signalCounts: result.summary?.signalCounts,
         maxTradesPerDay: result.summary?.maxTradesPerDay,
-        maxLossesPerSidePerDay:
-          strategyKey === STRATEGY_NINE_KEY
-            ? parseMaxLossesPerSidePerDay(settings)
-            : result.summary?.maxLossesPerSidePerDay,
+        maxLossesPerSidePerDay: strategyKey === STRATEGY_NINE_KEY ? null : result.summary?.maxLossesPerSidePerDay,
         stopLossPoints: result.summary?.stopLossPoints,
         targetProfitPoints: result.summary?.targetProfitPoints,
         entryFromTime: result.summary?.entryFromTime,
@@ -59,8 +45,8 @@ function createRunBacktestForYear(strategyKey) {
         trailingTargetEnabled: result.summary?.trailingTargetEnabled,
         trailingStepPoints: result.summary?.trailingStepPoints,
         trailingActivationPoints: result.summary?.trailingActivationPoints,
-        realPremiumTrades: strategyKey === STRATEGY_NINE_KEY ? realPremiumTrades : enriched.realCount,
-        modelPremiumTrades: strategyKey === STRATEGY_NINE_KEY ? modelPremiumTrades : enriched.modelCount,
+        realPremiumTrades: enriched.realCount,
+        modelPremiumTrades: enriched.modelCount,
       };
       return { trades, summary };
     }

@@ -167,22 +167,10 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
   if (strategyId === 'strategy-5') {
     const maxTrades = engine?.settings?.maxTradesPerDay ?? engine?.maxTradesPerDay ?? null;
-    const maxLossesPerSide = engine?.settings?.maxLossesPerSidePerDay ?? engine?.maxLossesPerSidePerDay ?? 2;
-    const peSl = Number(engine?.peSlCount) || 0;
-    const ceSl = Number(engine?.ceSlCount) || 0;
-    const peLocked = engine?.peSideLocked || (maxLossesPerSide != null && peSl >= maxLossesPerSide);
-    const ceLocked = engine?.ceSideLocked || (maxLossesPerSide != null && ceSl >= maxLossesPerSide);
     const count = closedToday.length;
     if (maxTrades != null && count >= maxTrades) {
       return `Daily cap reached (${count}/${maxTrades} trades). No more auto-entries today.`;
     }
-    if (peLocked && ceLocked) {
-      return `Both PE and CE locked (${peSl}/${maxLossesPerSide} PE SL, ${ceSl}/${maxLossesPerSide} CE SL). No more entries today.`;
-    }
-    const lockParts = [];
-    if (peLocked) lockParts.push(`PE locked (${peSl}/${maxLossesPerSide} SL)`);
-    if (ceLocked) lockParts.push(`CE locked (${ceSl}/${maxLossesPerSide} SL)`);
-    const lockNote = lockParts.length ? ` ${lockParts.join(' · ')}.` : '';
     const earliestNext = Number(engine?.earliestNextDecisionMinutes);
     const clockMin = getIstClock(new Date()).minutes;
     let reentryNote = '';
@@ -193,11 +181,10 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
     }
     if (closedToday.length > 0) {
       const last = closedToday[0];
-      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.${lockNote}${reentryNote}`;
+      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.${reentryNote}`;
     }
     const capLabel = maxTrades != null ? `max ${maxTrades}/day` : 'unlimited trades';
-    const slGuard = maxLossesPerSide != null ? ` · ${maxLossesPerSide} SL/side lockout` : '';
-    return `No open position. Trail Scalp scans ${entryWindowLabel} IST on each 5m bar close (${capLabel}${slGuard}).`;
+    return `No open position. Trail Scalp scans ${entryWindowLabel} IST on each 5m bar close (${capLabel}).`;
   }
   if (closedToday.length > 0) {
     const t = closedToday[0];
@@ -485,9 +472,7 @@ function coerceLiveEngineSetting(key, value) {
     return null;
   }
   if (key === 'maxLossesPerSidePerDay') {
-    const n = Number(value);
-    if (!Number.isFinite(n) || n <= 0) return null;
-    return Math.min(10, Math.floor(n));
+    return null;
   }
   if (key === 'trailingTargetEnabled') {
     return value !== false && value !== 'false' && value !== 0 && value !== '0';
