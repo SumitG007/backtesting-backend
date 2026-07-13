@@ -44,7 +44,13 @@ jobs:
             # npx prisma migrate deploy
 
             echo "Restarting PM2..."
-            pm2 reload BackTesting --update-env || pm2 restart BackTesting
+            if pm2 describe BackTesting > /dev/null 2>&1; then
+              echo "PM2 process found. Reloading..."
+              pm2 reload BackTesting --update-env
+            else
+              echo "PM2 process not found. Starting..."
+              pm2 start src/server.js --name "BackTesting"
+            fi
 
             pm2 save
 
