@@ -183,9 +183,17 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
     if (peLocked) lockParts.push(`PE locked (${peSl}/${maxLossesPerSide} SL)`);
     if (ceLocked) lockParts.push(`CE locked (${ceSl}/${maxLossesPerSide} SL)`);
     const lockNote = lockParts.length ? ` ${lockParts.join(' · ')}.` : '';
+    const earliestNext = Number(engine?.earliestNextDecisionMinutes);
+    const clockMin = getIstClock(new Date()).minutes;
+    let reentryNote = '';
+    if (Number.isFinite(earliestNext) && clockMin < earliestNext) {
+      const hh = String(Math.floor(earliestNext / 60)).padStart(2, '0');
+      const mm = String(earliestNext % 60).padStart(2, '0');
+      reentryNote = ` Next entry after ${hh}:${mm} IST (wait next bar after exit — same as backtest).`;
+    }
     if (closedToday.length > 0) {
       const last = closedToday[0];
-      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.${lockNote}`;
+      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.${lockNote}${reentryNote}`;
     }
     const capLabel = maxTrades != null ? `max ${maxTrades}/day` : 'unlimited trades';
     const slGuard = maxLossesPerSide != null ? ` · ${maxLossesPerSide} SL/side lockout` : '';

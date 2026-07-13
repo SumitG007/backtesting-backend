@@ -234,6 +234,7 @@ function runTrailScalpPutCallBacktest({ candles, settings }) {
         }
         tookAnyTrade = true;
         tookTrade = true;
+        // Re-entry gate: next signal bar must be after the exit bar (paper live mirrors this).
         scanFrom = exitIdx + 1;
         break;
       }

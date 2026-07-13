@@ -48,6 +48,7 @@ const MIN_HOLD_MS = 12000;
 const DEFAULT_ENTRY_FROM = 560;
 const DEFAULT_ENTRY_TO = 915;
 const EOD_EXIT = 920;
+const SESSION_START_MIN = 555; // 09:15 IST — 5m bar grid
 const BAR_INTERVAL = DEFAULT_BAR_INTERVAL_MINUTES;
 const DEFAULT_STOP_LOSS_POINTS = 8;
 const DEFAULT_TRAIL_ACTIVATION = 4;
@@ -75,6 +76,12 @@ const engineState = {
   lastDirectionEval: null,
   sessionDateKey: null,
   lastProcessedDecisionMinutes: null,
+  /**
+   * Backtest parity with scanFrom = exitIdx + 1:
+   * next signal bar open (IST minutes) must be >= this value.
+   * Null = no re-entry gate yet today.
+   */
+  minNextSignalBarOpenMinutes: null,
   dayTradeCount: 0,
   peSlCount: 0,
   ceSlCount: 0,
@@ -171,12 +178,60 @@ function resetSessionIfNewDay(clock) {
   if (engineState.sessionDateKey !== clock.dateKey) {
     engineState.sessionDateKey = clock.dateKey;
     engineState.lastProcessedDecisionMinutes = null;
+    engineState.minNextSignalBarOpenMinutes = null;
     engineState.dayTradeCount = 0;
     engineState.peSlCount = 0;
     engineState.ceSlCount = 0;
     engineState.todayBars = [];
     engineState.lastCandleFetchAt = 0;
   }
+}
+
+/** 5m bar open minute containing `minutes` (NSE cash session grid from 09:15). */
+function fiveMinBarOpenMinutes(minutes) {
+  const m = Number(minutes);
+  if (!Number.isFinite(m)) return SESSION_START_MIN;
+  if (m < SESSION_START_MIN) return SESSION_START_MIN;
+  return SESSION_START_MIN + Math.floor((m - SESSION_START_MIN) / BAR_INTERVAL) * BAR_INTERVAL;
+}
+
+/**
+ * Same re-entry rule as backtest `scanFrom = exitIdx + 1`:
+ * after exiting on/in a 5m bar, the next entry may only use a later signal bar.
+ */
+function setReentryGateFromExitMinutes(exitMinutes) {
+  const exitBarOpen = fiveMinBarOpenMinutes(exitMinutes);
+  engineState.minNextSignalBarOpenMinutes = exitBarOpen + BAR_INTERVAL;
+}
+
+function signalBarOpenForDecision(decisionMinutes) {
+  return Number(decisionMinutes) - BAR_INTERVAL;
+}
+
+function isReentryBlocked(decisionMinutes) {
+  const minOpen = engineState.minNextSignalBarOpenMinutes;
+  if (minOpen == null) return false;
+  return signalBarOpenForDecision(decisionMinutes) < minOpen;
+}
+
+async function syncReentryGateFromDb(dateKey) {
+  const lastClosed = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: dateKey,
+    exitTime: { $ne: null },
+  })
+    .sort({ exitTime: -1 })
+    .lean();
+  if (!lastClosed?.exitTime) {
+    engineState.minNextSignalBarOpenMinutes = null;
+    return;
+  }
+  const exitClock = getIstClock(new Date(lastClosed.exitTime));
+  if (exitClock.dateKey !== dateKey) {
+    engineState.minNextSignalBarOpenMinutes = null;
+    return;
+  }
+  setReentryGateFromExitMinutes(exitClock.minutes);
 }
 
 function getSideLockState() {
@@ -494,6 +549,7 @@ async function syncEngineTradeStateFromDb(clock) {
   resetSessionIfNewDay(clock);
   engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
   await syncSideSlCountsFromDb(clock.dateKey);
+  await syncReentryGateFromDb(clock.dateKey);
   const open = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({ entryTime: -1 });
   if (open) {
     engineState.openTradeId = open._id.toString();
@@ -564,6 +620,20 @@ async function evaluateEntry() {
     return;
   }
 
+  if (isReentryBlocked(decisionMinutes)) {
+    logEntry('ENTRY_SKIP', {
+      ist: istClockLabel(clock),
+      decisionMinutes,
+      reason: 'REENTRY_WAIT_NEXT_BAR',
+      signalBarOpen: signalBarOpenForDecision(decisionMinutes),
+      minNextSignalBarOpenMinutes: engineState.minNextSignalBarOpenMinutes,
+      optionType: resolution.optionType,
+      peScore: resolution.peScore,
+      ceScore: resolution.ceScore,
+    });
+    return;
+  }
+
   const lockReason = sideLockSkipReason(resolution.optionType, getSideLockState());
   if (lockReason) {
     logEntry('ENTRY_SKIP', {
@@ -598,6 +668,7 @@ async function placeLongOption(clock, resolution, decisionMinutes) {
     if (engineState.openTradeId) return;
     const maxTrades = engineState.settings.maxTradesPerDay;
     if (maxTrades != null && engineState.dayTradeCount >= maxTrades) return;
+    if (isReentryBlocked(decisionMinutes)) return;
     const lockReason = sideLockSkipReason(resolution?.optionType, getSideLockState());
     if (lockReason) return;
 
@@ -786,9 +857,18 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
       pnl,
       exitPremium: safeExitPremium,
     });
+    setReentryGateFromExitMinutes(clock.minutes);
     clearOpenTrade();
     engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
     await syncSideSlCountsFromDb(clock.dateKey);
+    logEntry('REENTRY_GATE', {
+      ist: istClockLabel(clock),
+      minNextSignalBarOpenMinutes: engineState.minNextSignalBarOpenMinutes,
+      earliestDecisionMinutes:
+        engineState.minNextSignalBarOpenMinutes != null
+          ? engineState.minNextSignalBarOpenMinutes + BAR_INTERVAL
+          : null,
+    });
   } catch (err) {
     engineState.lastError = `Exit failed: ${err.message}`;
   } finally {
@@ -966,6 +1046,11 @@ function getEngineSnapshot() {
       engineState.settings.maxLossesPerSidePerDay != null
       && engineState.ceSlCount >= engineState.settings.maxLossesPerSidePerDay,
     lastProcessedDecisionMinutes: engineState.lastProcessedDecisionMinutes,
+    minNextSignalBarOpenMinutes: engineState.minNextSignalBarOpenMinutes,
+    earliestNextDecisionMinutes:
+      engineState.minNextSignalBarOpenMinutes != null
+        ? engineState.minNextSignalBarOpenMinutes + BAR_INTERVAL
+        : null,
     openTradeId: engineState.openTradeId,
     lastSignalAt: engineState.lastSignalAt,
     lastError: engineState.lastError,
@@ -1034,6 +1119,7 @@ async function clearDailySkipState() {
   engineState.lastProcessedDecisionMinutes = null;
   engineState.dayTradeCount = await getDayTradeCount(clock.dateKey);
   await syncSideSlCountsFromDb(clock.dateKey);
+  await syncReentryGateFromDb(clock.dateKey);
   return { ok: true, state: getEngineSnapshot() };
 }
 
