@@ -3,6 +3,8 @@
  * After N STOP_LOSS exits on PE (or CE) in a session, block new entries on that side only.
  */
 
+const { getIstClock } = require('../../utils/dateTime');
+
 const DEFAULT_MAX_LOSSES_PER_SIDE = 2;
 
 function parseMaxLossesPerSidePerDay(settings = {}) {
@@ -55,6 +57,61 @@ function bothSidesLocked(lockState) {
   return peSlCount >= maxLossesPerSidePerDay && ceSlCount >= maxLossesPerSidePerDay;
 }
 
+function tradeOptionSide(trade) {
+  return String(trade?.type || trade?.optionType || 'PE').toUpperCase() === 'CE' ? 'CE' : 'PE';
+}
+
+function tradeDayKey(trade) {
+  const raw = trade?.entryTime;
+  if (!raw) return '';
+  try {
+    return getIstClock(raw).dateKey || '';
+  } catch {
+    return String(raw).slice(0, 10);
+  }
+}
+
+/**
+ * Drop same-side entries that would be illegal after Max SL / side / day,
+ * using final exit reasons (e.g. after real-premium re-simulation).
+ * Preserves chronological order; only STOP_LOSS increments the per-side count.
+ */
+function filterTradesByMaxLossesPerSidePerDay(trades = [], settings = {}) {
+  const maxLossesPerSidePerDay = parseMaxLossesPerSidePerDay(settings);
+  if (maxLossesPerSidePerDay == null) return Array.isArray(trades) ? [...trades] : [];
+
+  const list = Array.isArray(trades) ? trades : [];
+  const sorted = [...list].sort((a, b) => {
+    const ta = new Date(a?.entryTime || 0).getTime();
+    const tb = new Date(b?.entryTime || 0).getTime();
+    return ta - tb;
+  });
+
+  const peSlByDay = new Map();
+  const ceSlByDay = new Map();
+  const kept = [];
+
+  for (const trade of sorted) {
+    const dayKey = tradeDayKey(trade) || '_';
+    const side = tradeOptionSide(trade);
+    const peSlCount = peSlByDay.get(dayKey) || 0;
+    const ceSlCount = ceSlByDay.get(dayKey) || 0;
+
+    if (isOptionSideLocked(side, { peSlCount, ceSlCount, maxLossesPerSidePerDay })) {
+      continue;
+    }
+
+    kept.push(trade);
+
+    if (String(trade.reason || '').toUpperCase() === 'STOP_LOSS') {
+      if (side === 'CE') ceSlByDay.set(dayKey, ceSlCount + 1);
+      else peSlByDay.set(dayKey, peSlCount + 1);
+    }
+  }
+
+  return kept;
+}
+
 module.exports = {
   DEFAULT_MAX_LOSSES_PER_SIDE,
   parseMaxLossesPerSidePerDay,
@@ -63,4 +120,6 @@ module.exports = {
   sideLockSkipReason,
   countStopLossesBySide,
   bothSidesLocked,
+  filterTradesByMaxLossesPerSidePerDay,
+  tradeOptionSide,
 };

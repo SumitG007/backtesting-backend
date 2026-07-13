@@ -11,6 +11,7 @@ const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 const { parseDirectionSettings } = require('../../strategies/strategy7/putBuyDayFilters');
+const { filterTradesByMaxLossesPerSidePerDay } = require('../../strategies/strategy9/trailScalpSideLockout');
 const {
   parseNumberInput,
   parseStringInput,
@@ -101,13 +102,17 @@ async function runStrategyNine(req, res) {
       trades: result.trades,
       settings,
     });
-    const trades = enriched.trades;
+    const trades = filterTradesByMaxLossesPerSidePerDay(enriched.trades, settings);
+    const putTrades = trades.filter((t) => String(t.type || '').toUpperCase() !== 'CE').length;
+    const callTrades = trades.filter((t) => String(t.type || '').toUpperCase() === 'CE').length;
+    const realPremiumTrades = trades.filter((t) => t.premiumSource === 'REAL').length;
+    const modelPremiumTrades = trades.length - realPremiumTrades;
     const summary = {
       ...buildStrategyRunSummary(trades),
       skippedDays: result.summary.skippedDays,
       minDirectionScore: result.summary.minDirectionScore,
-      putTrades: result.summary.putTrades,
-      callTrades: result.summary.callTrades,
+      putTrades,
+      callTrades,
       maxTradesPerDay: result.summary.maxTradesPerDay,
       maxLossesPerSidePerDay: result.summary.maxLossesPerSidePerDay,
       stopLossPoints: result.summary.stopLossPoints,
@@ -118,8 +123,8 @@ async function runStrategyNine(req, res) {
       trailingTargetEnabled: result.summary.trailingTargetEnabled,
       trailingStepPoints: result.summary.trailingStepPoints,
       trailingActivationPoints: result.summary.trailingActivationPoints,
-      realPremiumTrades: enriched.realCount,
-      modelPremiumTrades: enriched.modelCount,
+      realPremiumTrades,
+      modelPremiumTrades,
     };
 
     const runDoc = await StrategyRun.create({
