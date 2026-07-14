@@ -67,6 +67,8 @@ const liveWalletSchema = new mongoose.Schema(
       trailingActivationPoints: { type: Number, default: 4 },
       trailingStepPoints: { type: Number, default: 2 },
       trailingTargetEnabled: { type: Boolean, default: true },
+      /** bar_close = backtest parity (evaluate SL/trail on 5m option high/low); tick = live LTP every poll */
+      exitMode: { type: String, default: 'bar_close' },
       maxLossesPerSidePerDay: { type: Number, default: null },
       strikeMode: { type: String, default: 'ATM' },
       perTradeCost: { type: Number, default: 100 },

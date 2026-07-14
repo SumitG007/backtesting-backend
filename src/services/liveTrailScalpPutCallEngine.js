@@ -2,6 +2,11 @@
  * Strategy 5 (UI) — Trail Scalp Put/Call paper live.
  * Multi-entry intraday (unlimited trades), 5m bar-close signals 09:20–15:15,
  * real Dhan option LTP, SL + trailing profit + 15:20 square-off.
+ *
+ * Exit modes:
+ * - bar_close (default): track option LTP high/low during each 5m candle; evaluate
+ *   SL/trail only when that candle closes (backtest parity). Skip entry candle.
+ * - tick: check SL/trail on every websocket tick / ~4s poll (legacy live behaviour).
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -53,6 +58,8 @@ const DEFAULT_STOP_LOSS_POINTS = 8;
 const DEFAULT_TRAIL_ACTIVATION = 4;
 const DEFAULT_TRAIL_STEP = 2;
 const DEFAULT_MAX_TRADES_CAP = null;
+const EXIT_MODE_BAR_CLOSE = 'bar_close';
+const EXIT_MODE_TICK = 'tick';
 
 const engineState = {
   running: false,
@@ -93,6 +100,14 @@ const engineState = {
   lastError: null,
   peakProfitPoints: 0,
   trailStopPremium: null,
+  /** Forming 5m bar open (IST minutes) while tracking option high/low for bar_close exits. */
+  optionExitBarOpenMinutes: null,
+  optionBarHighLtp: null,
+  optionBarLowLtp: null,
+  /** Just-completed bar extremes awaiting / during exit eval. */
+  pendingExitBar: null,
+  /** Last completed-bar close minutes we already ran SL/trail against. */
+  lastExitEvalBarCloseMinutes: null,
 };
 
 function istClockLabel(clock) {
@@ -119,6 +134,11 @@ function isTruthy(value) {
   return value === true || value === 'true' || value === 1 || value === '1';
 }
 
+function normalizeExitMode(value) {
+  const mode = String(value || EXIT_MODE_BAR_CLOSE).trim().toLowerCase();
+  return mode === EXIT_MODE_TICK ? EXIT_MODE_TICK : EXIT_MODE_BAR_CLOSE;
+}
+
 function normalizeSettings(settings = {}) {
   const lotCount = Math.max(1, Number(settings.lotCount) || 5);
   const rawSl = Number(settings.stopLossPoints);
@@ -143,6 +163,7 @@ function normalizeSettings(settings = {}) {
   const rawCharges = Number(settings.perTradeCost);
   const perTradeCost = Number.isFinite(rawCharges) && rawCharges >= 0 ? rawCharges : 100;
   const { minDirectionScore, enabledPeSignals, enabledCeSignals } = parseDirectionSettings(settings);
+  const exitMode = normalizeExitMode(settings.exitMode);
 
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
@@ -153,6 +174,7 @@ function normalizeSettings(settings = {}) {
     trailingActivationPoints,
     trailingStepPoints,
     trailingTargetEnabled,
+    exitMode,
     maxTradesPerDay,
     maxLossesPerSidePerDay,
     strikeMode: String(settings.strikeMode || 'ATM').toUpperCase(),
@@ -161,6 +183,54 @@ function normalizeSettings(settings = {}) {
     enabledPeSignals,
     enabledCeSignals,
   };
+}
+
+function isBarCloseExitMode() {
+  return normalizeExitMode(engineState.settings.exitMode) === EXIT_MODE_BAR_CLOSE;
+}
+
+function resetOptionBarExitState() {
+  engineState.optionExitBarOpenMinutes = null;
+  engineState.optionBarHighLtp = null;
+  engineState.optionBarLowLtp = null;
+  engineState.pendingExitBar = null;
+  engineState.lastExitEvalBarCloseMinutes = null;
+}
+
+/**
+ * Track option LTP high/low on the forming 5m bar.
+ * When the bar rolls to the next open, stash the completed bar for one-shot exit eval.
+ * @returns {boolean} true when a bar just completed
+ */
+function syncOptionBarExtremes(clock, ltp) {
+  const barOpen = fiveMinBarOpenMinutes(clock.minutes);
+  let rolled = false;
+
+  if (engineState.optionExitBarOpenMinutes == null) {
+    engineState.optionExitBarOpenMinutes = barOpen;
+  } else if (barOpen > engineState.optionExitBarOpenMinutes) {
+    engineState.pendingExitBar = {
+      openMinutes: engineState.optionExitBarOpenMinutes,
+      closeMinutes: engineState.optionExitBarOpenMinutes + BAR_INTERVAL,
+      high: engineState.optionBarHighLtp,
+      low: engineState.optionBarLowLtp,
+    };
+    engineState.optionExitBarOpenMinutes = barOpen;
+    engineState.optionBarHighLtp = null;
+    engineState.optionBarLowLtp = null;
+    rolled = true;
+  }
+
+  if (Number.isFinite(ltp) && ltp > 0) {
+    if (engineState.optionBarHighLtp == null || ltp > engineState.optionBarHighLtp) {
+      engineState.optionBarHighLtp = ltp;
+    }
+    if (engineState.optionBarLowLtp == null || ltp < engineState.optionBarLowLtp) {
+      engineState.optionBarLowLtp = ltp;
+    }
+  }
+
+  return rolled;
 }
 
 function tradeOptionType(trade) {
@@ -447,10 +517,10 @@ function updateTrailingState(entryPremium, optionLtp) {
   }
 }
 
-function buildOpenPositionMark(trade, mark, clock) {
+function buildOpenPositionMark(trade, mark, clock, { updateTrail = true } = {}) {
   const entryPremium = Number(trade.entryPremium) || 0;
   const optionLtp = Number(mark?.optionLtp) || 0;
-  updateTrailingState(entryPremium, optionLtp);
+  if (updateTrail) updateTrailingState(entryPremium, optionLtp);
   const qty = Number(trade.qty) || 0;
   const invested = entryPremium * qty;
   const finalValue = optionLtp * qty;
@@ -475,6 +545,11 @@ function buildOpenPositionMark(trade, mark, clock) {
     peakProfitPoints: Number(engineState.peakProfitPoints.toFixed(2)),
     trailingActivationPoints: engineState.settings.trailingActivationPoints,
     trailingStepPoints: engineState.settings.trailingStepPoints,
+    exitMode: normalizeExitMode(engineState.settings.exitMode),
+    barHighLtp:
+      engineState.optionBarHighLtp != null ? Number(Number(engineState.optionBarHighLtp).toFixed(2)) : null,
+    barLowLtp:
+      engineState.optionBarLowLtp != null ? Number(Number(engineState.optionBarLowLtp).toFixed(2)) : null,
     spot: Number.isFinite(Number(mark?.spot)) ? Number(Number(mark.spot).toFixed(2)) : null,
     isProfitable: grossPnl > 0,
     phase: 'INTRADAY_SCALP',
@@ -523,6 +598,7 @@ function clearOpenTrade() {
   engineState.openPositionMark = null;
   engineState.peakProfitPoints = 0;
   engineState.trailStopPremium = null;
+  resetOptionBarExitState();
 }
 
 function stopPositionPoll() {
@@ -731,6 +807,9 @@ async function placeLongOption(clock, resolution, decisionMinutes) {
     engineState.lastSignalAt = new Date();
     engineState.peakProfitPoints = 0;
     engineState.trailStopPremium = null;
+    resetOptionBarExitState();
+    // Seed bar tracker on the forming candle at entry (exits start after next bar closes).
+    syncOptionBarExtremes(clock, entryPremium);
 
     logEntry('ENTRY_SUCCESS', {
       ist: istClockLabel(clock),
@@ -756,6 +835,98 @@ async function onOptionTick({ ltp }) {
   await checkOpenTrade({ preferTicks: true });
 }
 
+/**
+ * Bar-close exit path: track option high/low while the 5m candle is open;
+ * only when it closes, update trail from High and test Low vs trail/SL.
+ * Same as backtest: no SL/trail on the entry candle (first eval after next bar close).
+ */
+async function evaluateBarCloseExit(trade, mark, clock, optionLtp) {
+  const liveLtp = Number.isFinite(optionLtp) && optionLtp > 0 && mark?.source !== 'entry'
+    ? optionLtp
+    : null;
+  const rolled = syncOptionBarExtremes(clock, liveLtp);
+
+  if (isEodExitTime(clock.minutes)) {
+    const exitLtp = liveLtp != null ? liveLtp : Number(mark?.optionLtp);
+    if (!Number.isFinite(exitLtp) || exitLtp <= 0) return;
+    if (mark?.source === 'entry') return;
+    await finalizeTrade(trade, { exitPremium: exitLtp, mark, reason: 'DAY_CLOSE', forceChain: true });
+    return;
+  }
+
+  if (!rolled || !engineState.pendingExitBar) return;
+
+  const completed = engineState.pendingExitBar;
+  engineState.pendingExitBar = null;
+
+  const entryDecisionMinutes = getIstClock(new Date(trade.entryTime)).minutes;
+  // Backtest: for (k = entryIdx + 1 ...); skip the entry/signal bar.
+  if (completed.closeMinutes <= entryDecisionMinutes) {
+    logEntry('EXIT_SKIP_ENTRY_BAR', {
+      ist: istClockLabel(clock),
+      completedClose: completed.closeMinutes,
+      entryDecisionMinutes,
+    });
+    return;
+  }
+
+  if (
+    engineState.lastExitEvalBarCloseMinutes != null
+    && completed.closeMinutes <= engineState.lastExitEvalBarCloseMinutes
+  ) {
+    return;
+  }
+  engineState.lastExitEvalBarCloseMinutes = completed.closeMinutes;
+
+  const barHigh = Number(completed.high);
+  const barLow = Number(completed.low);
+  if (!Number.isFinite(barHigh) || !Number.isFinite(barLow) || barHigh <= 0 || barLow <= 0) {
+    logEntry('EXIT_SKIP_NO_BAR_RANGE', {
+      ist: istClockLabel(clock),
+      completedClose: completed.closeMinutes,
+      high: completed.high,
+      low: completed.low,
+    });
+    return;
+  }
+
+  const entryPremium = Number(trade.entryPremium);
+  // Favorable extreme (option long) = bar high → trail peak / trail stop
+  updateTrailingState(entryPremium, barHigh);
+
+  logEntry('BAR_CLOSE_EXIT_EVAL', {
+    ist: istClockLabel(clock),
+    completedOpen: completed.openMinutes,
+    completedClose: completed.closeMinutes,
+    barHigh,
+    barLow,
+    peakProfitPoints: engineState.peakProfitPoints,
+    trailStopPremium: engineState.trailStopPremium,
+    stopLossPremium: trade.stopLossPremium,
+  });
+
+  if (
+    engineState.settings.trailingTargetEnabled
+    && engineState.trailStopPremium != null
+    && barLow <= engineState.trailStopPremium
+  ) {
+    await finalizeTrade(trade, {
+      exitPremium: Number(engineState.trailStopPremium),
+      mark,
+      reason: 'TRAIL_STOP',
+    });
+    return;
+  }
+
+  if (trade.stopLossPremium != null && barLow <= Number(trade.stopLossPremium)) {
+    await finalizeTrade(trade, {
+      exitPremium: Number(trade.stopLossPremium),
+      mark,
+      reason: 'STOP_LOSS',
+    });
+  }
+}
+
 async function checkOpenTrade({ preferTicks = false } = {}) {
   if (!engineState.running || engineState.closingTrade) return;
   const clock = getIstClock(new Date());
@@ -772,18 +943,30 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     preferTicks,
     forceChain: !preferTicks && !optionTickIsFresh(),
   });
-  const positionMark = buildOpenPositionMark(trade, mark, clock);
+
+  const barCloseMode = isBarCloseExitMode();
+  const positionMark = buildOpenPositionMark(trade, mark, clock, { updateTrail: !barCloseMode });
   engineState.openPositionMark = positionMark;
   await persistOpenMarkToDb(trade, positionMark);
+
+  const optionLtp = Number(mark.optionLtp);
+
+  if (barCloseMode) {
+    await evaluateBarCloseExit(trade, mark, clock, optionLtp);
+    // Refresh mark so trail/peak/bar H-L reflect post-eval state (without re-trailing from LTP).
+    if (engineState.openTradeId) {
+      const refreshed = buildOpenPositionMark(trade, mark, clock, { updateTrail: false });
+      engineState.openPositionMark = refreshed;
+      await persistOpenMarkToDb(trade, refreshed);
+    }
+    return;
+  }
 
   const heldMs = Date.now() - new Date(trade.entryTime).getTime();
   if (heldMs < MIN_HOLD_MS) return;
 
-  const optionLtp = Number(mark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
   if (mark.source === 'entry' && !isEodExitTime(clock.minutes)) return;
-
-  const entryPremium = Number(trade.entryPremium);
 
   if (
     engineState.settings.trailingTargetEnabled
@@ -895,7 +1078,15 @@ async function refreshOpenPositionMark({ preferTicks = false, tradeDoc = null, f
   }
   const clock = getIstClock(new Date());
   const mark = await resolveMarkForOpenTrade(trade, { preferTicks, forceChain });
-  const positionMark = buildOpenPositionMark(trade, mark, clock);
+  const optionLtp = Number(mark?.optionLtp);
+  if (isBarCloseExitMode()) {
+    const liveLtp =
+      Number.isFinite(optionLtp) && optionLtp > 0 && mark?.source !== 'entry' ? optionLtp : null;
+    syncOptionBarExtremes(clock, liveLtp);
+  }
+  const positionMark = buildOpenPositionMark(trade, mark, clock, {
+    updateTrail: !isBarCloseExitMode(),
+  });
   engineState.openPositionMark = positionMark;
   await persistOpenMarkToDb(trade, positionMark);
   return positionMark;
@@ -1057,6 +1248,11 @@ function getEngineSnapshot() {
     openPositionMark: engineState.openPositionMark,
     peakProfitPoints: engineState.peakProfitPoints,
     trailStopPremium: engineState.trailStopPremium,
+    exitMode: normalizeExitMode(engineState.settings.exitMode),
+    optionBarHighLtp: engineState.optionBarHighLtp,
+    optionBarLowLtp: engineState.optionBarLowLtp,
+    optionExitBarOpenMinutes: engineState.optionExitBarOpenMinutes,
+    lastExitEvalBarCloseMinutes: engineState.lastExitEvalBarCloseMinutes,
   };
 }
 
