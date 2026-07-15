@@ -4,20 +4,23 @@ const LivePaperTrade = require('../models/livePaperTrade');
 const strategyFourEngine = require('../services/liveShortStraddleEngine');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategySevenEngine = require('../services/livePutBuyEngine');
-const strategyNineEngine = require('../services/liveTrailScalpPutCallEngine');
+const strategyNineEngine = require('../services/liveOneSideCandleScalpEngine');
+const strategyElevenEngine = require('../services/liveSlFlipEngine');
 const {
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
-  STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY,
+  STRATEGY_NINE_CANDLE_SCALP_LIVE_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
-  STRATEGY_NINE_TRAIL_SCALP_LIVE_KEY,
+  STRATEGY_NINE_CANDLE_SCALP_LIVE_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -103,7 +106,7 @@ function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
 /** Engine snapshot first, then persisted wallet settings, then strategy-specific defaults. */
 function resolveHintEntrySettings(engine, strategyId, wallet) {
   const fromEngine = engine?.settings;
-  if (strategyId === 'strategy-5' && fromEngine) {
+  if ((strategyId === 'strategy-5' || strategyId === 'strategy-8') && fromEngine) {
     return {
       entryTime: String(fromEngine.entryFromTime || '09:20'),
       entryToTime: String(fromEngine.entryToTime || '15:15'),
@@ -149,6 +152,14 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
       entryWindowMinutes: 0,
     };
   }
+  if (strategyId === 'strategy-8') {
+    const w = wallet?.strategy11EngineSettings;
+    return {
+      entryTime: String(w?.entryFromTime || '09:20'),
+      entryToTime: String(w?.entryToTime || '15:15'),
+      entryWindowMinutes: 0,
+    };
+  }
   return {
     entryTime: '09:20',
     entryWindowMinutes: 2,
@@ -159,32 +170,25 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   const label = strategyLabel || 'Paper-live';
   const { entryTime, entryWindowMinutes, entryToTime } = resolveHintEntrySettings(engine, strategyId, wallet);
   const entryWindowLabel =
-    strategyId === 'strategy-5' && entryToTime
-      ? `${entryTime}–${entryToTime} (every 5m bar)`
+    (strategyId === 'strategy-5' || strategyId === 'strategy-8') && entryToTime
+      ? `${entryTime}–${entryToTime}`
       : formatEntryWindowLabel(entryTime, entryWindowMinutes);
 
   if (openTrade) return null;
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
-  if (strategyId === 'strategy-5') {
-    const maxTrades = engine?.settings?.maxTradesPerDay ?? engine?.maxTradesPerDay ?? null;
+  if (strategyId === 'strategy-8') {
     const count = closedToday.length;
-    if (maxTrades != null && count >= maxTrades) {
-      return `Daily cap reached (${count}/${maxTrades} trades). No more auto-entries today.`;
+    if (count > 0) {
+      return `${count} SL-flip trade(s) closed today. SL → flip opposite immediately; trail → same side after next 5m. Window ${entryWindowLabel} IST · EOD 15:20.`;
     }
-    const earliestNext = Number(engine?.earliestNextDecisionMinutes);
-    const clockMin = getIstClock(new Date()).minutes;
-    let reentryNote = '';
-    if (Number.isFinite(earliestNext) && clockMin < earliestNext) {
-      const hh = String(Math.floor(earliestNext / 60)).padStart(2, '0');
-      const mm = String(earliestNext % 60).padStart(2, '0');
-      reentryNote = ` Next entry after ${hh}:${mm} IST (wait next bar after exit — same as backtest).`;
+    return `No open position. Day starter is CE at/after 09:20 (${entryWindowLabel} IST). Tick exits · flip on SL · trail waits next 5m.`;
+  }
+  if (strategyId === 'strategy-5') {
+    const count = closedToday.length;
+    if (count > 0) {
+      return `${count} candle scalp(s) closed today. Waiting for the next NEW 5m candle close (green→CE / red→PE / doji skip) until ${entryWindowLabel} IST.`;
     }
-    if (closedToday.length > 0) {
-      const last = closedToday[0];
-      return `${count} scalp(s) closed today (last: ${last.reason || 'CLOSED'}). Scanning for trade ${count + 1} until ${entryWindowLabel} IST.${reentryNote}`;
-    }
-    const capLabel = maxTrades != null ? `max ${maxTrades}/day` : 'unlimited trades';
-    return `No open position. Trail Scalp scans ${entryWindowLabel} IST on each 5m bar close (${capLabel}).`;
+    return `No open position. Candle scalp enters only on a NEW 5m close after start (${entryWindowLabel} IST). Exits on later bar closes (SL + trail).`;
   }
   if (closedToday.length > 0) {
     const t = closedToday[0];
@@ -248,11 +252,15 @@ function isPutBuyLiveStrategyId(strategyId) {
   return strategyId === 'strategy-3';
 }
 
-function isTrailScalpLiveStrategyId(strategyId) {
+function isCandleScalpLiveStrategyId(strategyId) {
   return strategyId === 'strategy-5';
 }
 
-function trailScalpPaperLiveCtx(strategyId) {
+function isSlFlipLiveStrategyId(strategyId) {
+  return strategyId === 'strategy-8';
+}
+
+function candleScalpPaperLiveCtx(strategyId) {
   return {
     strategyId,
     strategyKey: strategyNineEngine.STRATEGY_KEY,
@@ -267,6 +275,24 @@ function trailScalpPaperLiveCtx(strategyId) {
     closeOpenPosition: strategyNineEngine.closeOpenPosition,
     refreshOpenMark: strategyNineEngine.refreshOpenPositionMarkForStatus,
     clearDailySkip: strategyNineEngine.clearDailySkipState,
+  };
+}
+
+function slFlipPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategyElevenEngine.STRATEGY_KEY,
+    startEngine: strategyElevenEngine.startEngine,
+    stopEngine: strategyElevenEngine.stopEngine,
+    updateEngineSettings: strategyElevenEngine.updateEngineSettings,
+    getEngineSnapshot: strategyElevenEngine.getEngineSnapshot,
+    ensureWallet: strategyElevenEngine.ensureWallet,
+    recalcWallet: strategyElevenEngine.recalcWalletFromTrades,
+    ensureRunning: strategyElevenEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyElevenEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyElevenEngine.closeOpenPosition,
+    refreshOpenMark: strategyElevenEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategyElevenEngine.clearDailySkipState,
   };
 }
 
@@ -292,8 +318,9 @@ const LIVE_STRATEGIES = {
   'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
-  'strategy-5': trailScalpPaperLiveCtx('strategy-5'),
+  'strategy-5': candleScalpPaperLiveCtx('strategy-5'),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
+  'strategy-8': slFlipPaperLiveCtx('strategy-8'),
 };
 
 function getLiveContext(req) {
@@ -377,8 +404,10 @@ async function getStatus(req, res) {
             : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
               : ctx.strategyId === 'strategy-5'
-                ? 'Trail Scalp Put/Call'
-                : 'Paper-live',
+                ? 'One-Side Candle Scalp'
+                : ctx.strategyId === 'strategy-8'
+                  ? 'SL Flip'
+                  : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -513,7 +542,11 @@ async function resetWallet(req, res) {
       await wallet.save();
     }
     const wallet = await ctx.ensureWallet();
-    if (isPutBuyLiveStrategyId(ctx.strategyId) || isTrailScalpLiveStrategyId(ctx.strategyId)) {
+    if (
+      isPutBuyLiveStrategyId(ctx.strategyId)
+      || isCandleScalpLiveStrategyId(ctx.strategyId)
+      || isSlFlipLiveStrategyId(ctx.strategyId)
+    ) {
       if (typeof ctx.clearDailySkip === 'function') {
         await ctx.clearDailySkip();
       } else if (isPutBuyLiveStrategyId(ctx.strategyId)) {

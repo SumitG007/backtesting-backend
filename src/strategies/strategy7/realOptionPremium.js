@@ -108,7 +108,7 @@ function parseRealExitSettings(settings = {}) {
 /**
  * Exit on REAL option candles. We hold a LONG option, so its own premium IS the P&L:
  * premium falling to stop = loss, rising to target = profit (true for both CE and PE).
- * When trailing is enabled, fixed target is disabled (matches trailScalpPutCallBacktest).
+ * When trailing is enabled, fixed target is disabled (matches one-side candle / trail exits).
  */
 function simulateRealOptionExit({
   optionBars,

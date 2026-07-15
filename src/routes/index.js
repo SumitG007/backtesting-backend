@@ -18,6 +18,11 @@ const {
   getStrategyNineValidation,
   postStrategyNineValidation,
   postStrategyNineValidationYear,
+  runStrategyEleven,
+  getStrategyElevenRunTrades,
+  getStrategyElevenValidation,
+  postStrategyElevenValidation,
+  postStrategyElevenValidationYear,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -97,6 +102,12 @@ router.post('/strategy5/validation', postStrategyNineValidation);
 router.post('/strategy5/validation-year', postStrategyNineValidationYear);
 router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
 router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
+// Strategy 6 (UI) — SL Flip (API strategy8)
+router.post('/strategy8/run', runStrategyEleven);
+router.post('/strategy8/validation', postStrategyElevenValidation);
+router.post('/strategy8/validation-year', postStrategyElevenValidationYear);
+router.get('/strategy8/runs/:runId/trades', getStrategyElevenRunTrades);
+router.get('/strategy8/runs/:runId/validation', getStrategyElevenValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);
