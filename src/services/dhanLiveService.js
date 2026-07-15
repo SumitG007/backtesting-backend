@@ -1101,6 +1101,7 @@ module.exports = {
   resolveFutureInstrument,
   futureInstrumentTypeForUnderlying,
   fetchMarketLtp,
+  fetchInstrumentLtp,
   getFutureLtp,
   getFutureQuote,
   resolveOptionInstrument,

@@ -18,7 +18,7 @@ const livePaperTradeSchema = new mongoose.Schema(
     entryTime: { type: Date, required: true },
     stopLossPremium: { type: Number, default: null },
     targetPremium: { type: Number, default: null },
-    /** How SL/target were entered: PCT (% of entry premium) or POINTS. For UI default toggle. */
+    /** How SL/target were entered: PCT (% of entry) or POINTS (exact absolute premium/price). Shared unit. */
     stopLossMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
     targetMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
     entryCredit: { type: Number, default: null },

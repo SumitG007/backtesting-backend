@@ -26,13 +26,21 @@ const {
   getFutureLtp,
   getFutureQuote,
   isTradableStockUnderlying,
+  resolveOptionInstrument,
+  resolveFutureInstrument,
+  fetchInstrumentLtp,
+  subscribeLiveInstrument,
+  unsubscribeLiveSymbol,
+  getLastPrice,
 } = require('./dhanLiveService');
 
 const STRATEGY_KEY = MANUAL_CONSOLE_LIVE_KEY;
 const WALLET_KEY = 'paper_live_manual';
-const POLL_INTERVAL_MS = 5000;
+/** Engine loop is cheap once marks come from WS — keep snappy for SL/TG + UI marks. */
+const POLL_INTERVAL_MS = 1000;
 const EOD_EXIT = 920; // 15:20 IST
 const MIN_HOLD_MS = 5000;
+const WS_FRESH_MS = 12000;
 const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY']);
 
 const engineState = {
@@ -42,6 +50,12 @@ const engineState = {
   lastPollAt: null,
   pollTimer: null,
 };
+
+/** tradeId -> { key, lastTick: { ltp, ts }, instrument } */
+const liveSubs = new Map();
+const tickExitInflight = new Set();
+const markPersistAt = new Map();
+const MARK_PERSIST_MIN_MS = 400;
 
 function istLabel(clock) {
   const h = Math.floor(clock.minutes / 60);
@@ -117,17 +131,21 @@ function parsePct(raw, { max = 1000 } = {}) {
 }
 
 /**
- * Resolve SL/target premium-points from an entry premium given the configured mode.
- * For PCT: points = entryPremium * pct / 100. SL pct is capped just under 100%.
+ * Resolve SL/target exit premium from entry + configured mode.
+ * - PCT: offset = entry * pct / 100, then SL/TG placed vs entry by side (dir).
+ * - POINTS: `points` is the exact absolute premium / price level (not +/- from entry).
  */
-function pointsFromConfig({ mode, points, pct, entryPremium, leg }) {
+function exitPremiumFromConfig({ mode, points, pct, entryPremium, leg, dir = 1 }) {
   const m = normalizeRiskMode(mode);
   if (m === 'PCT') {
     if (pct == null || !Number.isFinite(entryPremium) || entryPremium <= 0) return null;
     const safePct = leg === 'SL' ? Math.min(99, pct) : pct;
-    return (entryPremium * safePct) / 100;
+    const offset = (entryPremium * safePct) / 100;
+    const prem = leg === 'SL' ? entryPremium - dir * offset : entryPremium + dir * offset;
+    return Math.max(0.05, prem);
   }
-  return points != null ? points : null;
+  if (points == null || !Number.isFinite(points) || points <= 0) return null;
+  return Math.max(0.05, points);
 }
 
 function premiumFromChain(chain, optionType) {
@@ -217,12 +235,13 @@ function buildOpenPositionMark(trade, mark, clock) {
   const grossPnl = (optionLtp - entryPremium) * qty * dir;
   const source = mark?.source || 'chain';
   const optionType = isFutureTrade(trade) ? 'FUT' : normalizeOptionType(trade.optionType);
+  const isLive = source === 'chain' || source === 'websocket' || source === 'marketfeed';
 
   return {
     at: new Date().toISOString(),
     source,
-    isLiveMark: source === 'chain' || source === 'websocket',
-    priceSourceLabel: source === 'chain' ? 'LIVE' : 'STALE',
+    isLiveMark: isLive,
+    priceSourceLabel: isLive ? 'LIVE' : 'STALE',
     optionType,
     optionLtp: Number.isFinite(optionLtp) ? Number(optionLtp.toFixed(2)) : null,
     entryPremium: Number(entryPremium.toFixed(2)),
@@ -233,18 +252,201 @@ function buildOpenPositionMark(trade, mark, clock) {
     unrealizedPnlPct: invested > 0 ? Number(((grossPnl / invested) * 100).toFixed(2)) : 0,
     stopLossPremium: trade.stopLossPremium,
     targetPremium: trade.targetPremium,
-    spot: Number.isFinite(mark?.spot) ? Number(mark.spot.toFixed(2)) : null,
+    spot: Number.isFinite(mark?.spot) ? Number(Number(mark.spot).toFixed(2)) : null,
     isProfitable: grossPnl > 0,
     phase: clock.dateKey === trade.entryDateKey ? 'INTRADAY_HOLD' : 'MISSED_EOD',
   };
 }
 
+function tradeSubKey(tradeId) {
+  return `manual:${String(tradeId)}`;
+}
+
+function getFreshWsTick(tradeId) {
+  const sub = liveSubs.get(String(tradeId));
+  const tick = sub?.lastTick;
+  if (!tick) {
+    const cached = getLastPrice(tradeSubKey(tradeId));
+    if (cached && Date.now() - cached.ts <= WS_FRESH_MS) {
+      return { ltp: Number(cached.ltp), ts: cached.ts };
+    }
+    return null;
+  }
+  if (Date.now() - tick.ts > WS_FRESH_MS) return null;
+  return tick;
+}
+
+function rememberTick(tradeId, ltp) {
+  const id = String(tradeId);
+  const prev = liveSubs.get(id) || { key: tradeSubKey(id) };
+  liveSubs.set(id, {
+    ...prev,
+    lastTick: { ltp: Number(ltp), ts: Date.now() },
+  });
+}
+
+async function persistMarkThrottled(trade, positionMark) {
+  const id = String(trade._id);
+  const now = Date.now();
+  const last = markPersistAt.get(id) || 0;
+  if (now - last < MARK_PERSIST_MIN_MS) return;
+  markPersistAt.set(id, now);
+  await LivePaperTrade.updateOne(
+    { _id: trade._id, exitTime: null },
+    { $set: { openPositionMark: positionMark, openPositionMarkAt: new Date(positionMark.at || now) } },
+  );
+}
+
+async function evaluateExitsFromMark(trade, mark, clock) {
+  const heldMs = Date.now() - new Date(trade.entryTime).getTime();
+  if (heldMs < MIN_HOLD_MS) return false;
+
+  const optionLtp = Number(mark.optionLtp);
+  if (!Number.isFinite(optionLtp) || optionLtp <= 0) return false;
+
+  const dir = directionSign(trade);
+  const slHit =
+    trade.stopLossPremium != null &&
+    (dir === 1
+      ? optionLtp <= Number(trade.stopLossPremium)
+      : optionLtp >= Number(trade.stopLossPremium));
+  if (slHit) {
+    await finalizeTrade(trade, {
+      exitPremium: Number(trade.stopLossPremium),
+      mark,
+      reason: 'STOP_LOSS',
+    });
+    return true;
+  }
+
+  const tgHit =
+    trade.targetPremium != null &&
+    (dir === 1
+      ? optionLtp >= Number(trade.targetPremium)
+      : optionLtp <= Number(trade.targetPremium));
+  if (tgHit) {
+    await finalizeTrade(trade, {
+      exitPremium: Number(trade.targetPremium),
+      mark,
+      reason: 'TARGET',
+    });
+    return true;
+  }
+
+  if (isEodExitTime(clock.minutes)) {
+    await finalizeTrade(trade, { exitPremium: optionLtp, mark, reason: 'DAY_CLOSE' });
+    return true;
+  }
+  return false;
+}
+
+async function onManualOptionTick(tradeId, ltp) {
+  const id = String(tradeId);
+  rememberTick(id, ltp);
+  if (tickExitInflight.has(id)) return;
+  tickExitInflight.add(id);
+  try {
+    const trade = await LivePaperTrade.findOne({
+      _id: id,
+      strategyKey: STRATEGY_KEY,
+      exitTime: null,
+    });
+    if (!trade) {
+      dropTradeSubscription(id);
+      return;
+    }
+    const clock = getIstClock(new Date());
+    const mark = { optionLtp: Number(ltp), spot: null, source: 'websocket' };
+    const positionMark = buildOpenPositionMark(trade, mark, clock);
+    await persistMarkThrottled(trade, positionMark);
+    await evaluateExitsFromMark(trade, mark, clock);
+  } catch (err) {
+    engineState.lastError = `WS tick ${id}: ${err.message}`;
+  } finally {
+    tickExitInflight.delete(id);
+  }
+}
+
+function dropTradeSubscription(tradeId) {
+  const id = String(tradeId);
+  const sub = liveSubs.get(id);
+  unsubscribeLiveSymbol(sub?.key || tradeSubKey(id));
+  liveSubs.delete(id);
+  markPersistAt.delete(id);
+  tickExitInflight.delete(id);
+}
+
+async function ensureTradeSubscription(trade) {
+  const id = String(trade._id);
+  if (liveSubs.has(id) && liveSubs.get(id)?.instrument) return;
+
+  const key = tradeSubKey(id);
+  try {
+    let instrument;
+    if (isFutureTrade(trade)) {
+      instrument = await resolveFutureInstrument({
+        symbol: trade.symbol,
+        expiry: trade.expiryDate,
+      });
+    } else {
+      instrument = await resolveOptionInstrument({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+        optionType: normalizeOptionType(trade.optionType),
+      });
+    }
+
+    liveSubs.set(id, { key, instrument, lastTick: liveSubs.get(id)?.lastTick || null });
+    subscribeLiveInstrument({
+      key,
+      securityId: instrument.securityId,
+      exchangeSegment: instrument.exchangeSegment,
+      onTick: (tick) => {
+        onManualOptionTick(id, tick.ltp).catch(() => {});
+      },
+    });
+
+    // Seed an immediate LTP so UI is not blank waiting for the first WS packet.
+    try {
+      const seeded = await fetchInstrumentLtp(instrument);
+      if (Number.isFinite(seeded) && seeded > 0) rememberTick(id, seeded);
+    } catch {
+      // WS ticks will populate shortly
+    }
+  } catch (err) {
+    engineState.lastError = `Manual WS subscribe ${id}: ${err.message}`;
+  }
+}
+
+async function syncLiveSubscriptions(openTrades) {
+  const openIds = new Set(openTrades.map((t) => String(t._id)));
+  for (const id of [...liveSubs.keys()]) {
+    if (!openIds.has(id)) dropTradeSubscription(id);
+  }
+  await Promise.all(openTrades.map((t) => ensureTradeSubscription(t)));
+}
+
 async function resolveMarkForTrade(trade) {
+  const wsTick = getFreshWsTick(trade._id);
+  if (wsTick) {
+    return { spot: null, optionLtp: wsTick.ltp, source: 'websocket' };
+  }
+
+  // Ensure we are subscribed even if this trade appeared mid-session.
+  await ensureTradeSubscription(trade);
+  const afterSub = getFreshWsTick(trade._id);
+  if (afterSub) {
+    return { spot: null, optionLtp: afterSub.ltp, source: 'websocket' };
+  }
+
   if (isFutureTrade(trade)) {
     const { ltp } = await getFutureLtp({ symbol: trade.symbol, expiry: trade.expiryDate });
     const price = Number.isFinite(ltp) && ltp > 0 ? ltp : null;
-    return { spot: price, optionLtp: price, source: price != null ? 'chain' : 'entry' };
+    if (price != null) rememberTick(trade._id, price);
+    return { spot: price, optionLtp: price, source: price != null ? 'marketfeed' : 'entry' };
   }
+
   const chain = await getAtmPremiums({
     symbol: trade.symbol,
     strike: trade.strike,
@@ -252,6 +454,7 @@ async function resolveMarkForTrade(trade) {
   });
   const optionType = normalizeOptionType(trade.optionType);
   const optionLtp = premiumFromChain(chain, optionType);
+  if (optionLtp != null) rememberTick(trade._id, optionLtp);
   return {
     spot: Number(chain.chainSpot || chain.spot),
     optionLtp,
@@ -265,25 +468,25 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   const product = normalizeProduct(order.product);
   const side = product === 'FUTURE' ? normalizeSide(order.side) : 'LONG';
   const dir = side === 'SHORT' ? -1 : 1;
-  const slConfigured = order.stopLossMode != null || order.stopLossPoints != null;
-  const tgConfigured = order.targetMode != null || order.targetProfitPoints != null;
-  const slPts = pointsFromConfig({
+  const slConfigured = order.stopLossMode != null || order.stopLossPoints != null || order.stopLossPct != null;
+  const tgConfigured = order.targetMode != null || order.targetProfitPoints != null || order.targetPct != null;
+  // PCT = % offset from entry; POINTS = exact absolute premium/price level.
+  const stopLossPremium = exitPremiumFromConfig({
     mode: order.stopLossMode,
     points: order.stopLossPoints,
     pct: order.stopLossPct,
     entryPremium,
     leg: 'SL',
+    dir,
   });
-  const tgPts = pointsFromConfig({
+  const targetPremium = exitPremiumFromConfig({
     mode: order.targetMode,
     points: order.targetProfitPoints,
     pct: order.targetPct,
     entryPremium,
     leg: 'TG',
+    dir,
   });
-  // SL is always the losing side, target the winning side — flip levels for SHORT.
-  const stopLossPremium = slPts != null ? Math.max(0.05, entryPremium - dir * slPts) : null;
-  const targetPremium = tgPts != null ? Math.max(0.05, entryPremium + dir * tgPts) : null;
 
   const tradeDoc = await LivePaperTrade.create({
     strategyKey: STRATEGY_KEY,
@@ -332,6 +535,10 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
     },
   });
 
+  // Subscribe immediately so LTP/MTM update via WS without waiting for next poll.
+  ensureTradeSubscription(tradeDoc).catch(() => {});
+  rememberTick(tradeDoc._id, entryPremium);
+
   return tradeDoc;
 }
 
@@ -369,8 +576,10 @@ async function createFutureOrder(payload, clock) {
     ? Number(payload.perTradeCost)
     : 100;
 
-  const stopLossMode = normalizeRiskMode(payload.stopLossMode);
-  const targetMode = normalizeRiskMode(payload.targetMode);
+  // SL & Target share one unit mode (% or exact premium pts).
+  const riskMode = normalizeRiskMode(payload.stopLossMode || payload.targetMode);
+  const stopLossMode = riskMode;
+  const targetMode = riskMode;
   const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
   const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
   const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
@@ -462,8 +671,9 @@ async function createOrder(payload) {
   const perTradeCost = Number.isFinite(Number(payload.perTradeCost)) && Number(payload.perTradeCost) >= 0
     ? Number(payload.perTradeCost)
     : 100;
-  const stopLossMode = normalizeRiskMode(payload.stopLossMode);
-  const targetMode = normalizeRiskMode(payload.targetMode);
+  const riskMode = normalizeRiskMode(payload.stopLossMode || payload.targetMode);
+  const stopLossMode = riskMode;
+  const targetMode = riskMode;
   const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
   const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
   const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
@@ -596,6 +806,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   trade.openPositionMark = null;
   trade.openPositionMarkAt = null;
   await trade.save();
+  dropTradeSubscription(trade._id);
 
   const wallet = await ensureWallet();
   wallet.balance += pnl;
@@ -675,22 +886,26 @@ async function updatePositionRisk(tradeId, payload = {}) {
     const rawSl = Object.prototype.hasOwnProperty.call(payload, 'stopLossValue')
       ? payload.stopLossValue
       : payload.stopLossPoints;
-    const slPts = pointsFromConfig({
+    const slPrem = exitPremiumFromConfig({
       mode: usePct ? 'PCT' : 'POINTS',
       points: usePct ? null : parseRiskPointsInput(rawSl),
       pct: usePct ? parsePct(rawSl, { max: 99 }) : null,
       entryPremium: entry,
       leg: 'SL',
+      dir,
     });
-    if (slPts == null) {
+    if (slPrem == null) {
       trade.stopLossPremium = null;
       trade.stopLossMode = null;
       changes.stopLossPremium = null;
     } else {
-      const slPrem = Math.max(0.05, entry - dir * slPts);
       // SL must be on the losing side: below entry for LONG, above entry for SHORT.
       if (dir === 1 ? slPrem >= entry : slPrem <= entry) {
-        throw new Error(`Stop loss must be ${dir === 1 ? 'below' : 'above'} entry`);
+        throw new Error(
+          usePct
+            ? `Stop loss must be ${dir === 1 ? 'below' : 'above'} entry`
+            : `Stop loss premium must be ${dir === 1 ? 'below' : 'above'} entry (${entry})`,
+        );
       }
       trade.stopLossPremium = Number(slPrem.toFixed(2));
       trade.stopLossMode = usePct ? 'PCT' : 'POINTS';
@@ -705,22 +920,44 @@ async function updatePositionRisk(tradeId, payload = {}) {
     const rawTg = Object.prototype.hasOwnProperty.call(payload, 'targetValue')
       ? payload.targetValue
       : payload.targetProfitPoints;
-    const tgPts = pointsFromConfig({
+    const tgPrem = exitPremiumFromConfig({
       mode: usePct ? 'PCT' : 'POINTS',
       points: usePct ? null : parseRiskPointsInput(rawTg),
       pct: usePct ? parsePct(rawTg, { max: 1000 }) : null,
       entryPremium: entry,
       leg: 'TG',
+      dir,
     });
-    if (tgPts == null) {
+    if (tgPrem == null) {
       trade.targetPremium = null;
       trade.targetMode = null;
       changes.targetPremium = null;
     } else {
-      trade.targetPremium = Number(Math.max(0.05, entry + dir * tgPts).toFixed(2));
+      // Target must be on the winning side: above entry for LONG, below for SHORT.
+      if (dir === 1 ? tgPrem <= entry : tgPrem >= entry) {
+        throw new Error(
+          usePct
+            ? `Target must be ${dir === 1 ? 'above' : 'below'} entry`
+            : `Target premium must be ${dir === 1 ? 'above' : 'below'} entry (${entry})`,
+        );
+      }
+      trade.targetPremium = Number(tgPrem.toFixed(2));
       trade.targetMode = usePct ? 'PCT' : 'POINTS';
       changes.targetPremium = trade.targetPremium;
       changes.targetMode = trade.targetMode;
+    }
+  }
+
+  // Keep SL & Target unit modes in sync when both are configured.
+  if (trade.stopLossMode && trade.targetMode && trade.stopLossMode !== trade.targetMode) {
+    const synced = hasTg ? trade.targetMode : trade.stopLossMode;
+    if (trade.stopLossMode !== synced) {
+      trade.stopLossMode = synced;
+      changes.stopLossMode = synced;
+    }
+    if (trade.targetMode !== synced) {
+      trade.targetMode = synced;
+      changes.targetMode = synced;
     }
   }
 
@@ -804,6 +1041,8 @@ async function checkOpenPositions(clock) {
     exitTime: null,
   }).sort({ entryTime: 1 });
 
+  await syncLiveSubscriptions(openTrades);
+
   for (const trade of openTrades) {
     try {
       if (clock.dateKey !== trade.entryDateKey) {
@@ -818,49 +1057,8 @@ async function checkOpenPositions(clock) {
 
       const mark = await resolveMarkForTrade(trade);
       const positionMark = buildOpenPositionMark(trade, mark, clock);
-      await LivePaperTrade.updateOne(
-        { _id: trade._id, exitTime: null },
-        { $set: { openPositionMark: positionMark, openPositionMarkAt: new Date() } },
-      );
-
-      const heldMs = Date.now() - new Date(trade.entryTime).getTime();
-      if (heldMs < MIN_HOLD_MS) continue;
-
-      const optionLtp = Number(mark.optionLtp);
-      if (!Number.isFinite(optionLtp) || optionLtp <= 0) continue;
-
-      const dir = directionSign(trade);
-      const slHit =
-        trade.stopLossPremium != null &&
-        (dir === 1
-          ? optionLtp <= Number(trade.stopLossPremium)
-          : optionLtp >= Number(trade.stopLossPremium));
-      if (slHit) {
-        await finalizeTrade(trade, {
-          exitPremium: Number(trade.stopLossPremium),
-          mark,
-          reason: 'STOP_LOSS',
-        });
-        continue;
-      }
-
-      const tgHit =
-        trade.targetPremium != null &&
-        (dir === 1
-          ? optionLtp >= Number(trade.targetPremium)
-          : optionLtp <= Number(trade.targetPremium));
-      if (tgHit) {
-        await finalizeTrade(trade, {
-          exitPremium: Number(trade.targetPremium),
-          mark,
-          reason: 'TARGET',
-        });
-        continue;
-      }
-
-      if (isEodExitTime(clock.minutes)) {
-        await finalizeTrade(trade, { exitPremium: optionLtp, mark, reason: 'DAY_CLOSE' });
-      }
+      await persistMarkThrottled(trade, positionMark);
+      await evaluateExitsFromMark(trade, mark, clock);
     } catch (err) {
       engineState.lastError = `Position check ${trade._id}: ${err.message}`;
     }
@@ -892,6 +1090,12 @@ async function ensureEngineRunning() {
     engineState.startedAt = new Date();
     startPoll();
     await logAction({ action: 'ENGINE_STARTED', message: 'Manual console engine online' });
+    // Warm WS subscriptions for any positions already open.
+    LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: null })
+      .then((open) => syncLiveSubscriptions(open))
+      .catch((err) => {
+        engineState.lastError = `WS warm-up: ${err.message}`;
+      });
   }
   return { ok: true, state: getEngineSnapshot() };
 }
@@ -902,6 +1106,7 @@ function getEngineSnapshot() {
     startedAt: engineState.startedAt,
     lastError: engineState.lastError,
     lastPollAt: engineState.lastPollAt,
+    liveSubscriptions: liveSubs.size,
   };
 }
 
@@ -1032,8 +1237,18 @@ async function getStatus() {
     .sort({ entryTime: -1 })
     .lean();
 
+  // Overlay fresh WS ticks so /status reflects live LTP even between DB persists.
   let unrealizedPnl = 0;
   for (const t of openTrades) {
+    const wsTick = getFreshWsTick(t._id);
+    if (wsTick) {
+      t.openPositionMark = buildOpenPositionMark(
+        t,
+        { optionLtp: wsTick.ltp, spot: t.openPositionMark?.spot ?? null, source: 'websocket' },
+        clock,
+      );
+      t.openPositionMarkAt = new Date(wsTick.ts);
+    }
     unrealizedPnl += Number(t.openPositionMark?.unrealizedPnl) || 0;
   }
 
@@ -1051,6 +1266,10 @@ async function getStatus() {
     pendingOrders,
     todayTrades,
     openUnrealizedPnl: Number(unrealizedPnl.toFixed(2)),
+    liveFeed: {
+      subscribed: liveSubs.size,
+      wsFreshMs: WS_FRESH_MS,
+    },
   };
 }
 
@@ -1088,6 +1307,7 @@ async function listActions({ page = 1, pageSize = 50 }) {
 }
 
 async function resetWallet() {
+  for (const id of [...liveSubs.keys()]) dropTradeSubscription(id);
   await LivePaperTrade.deleteMany({ strategyKey: STRATEGY_KEY });
   await ManualPendingOrder.deleteMany({ strategyKey: STRATEGY_KEY });
   const wallet = await ensureWallet();
