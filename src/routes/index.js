@@ -13,11 +13,6 @@ const {
   getStrategySevenValidation,
   postStrategySevenValidation,
   postStrategySevenValidationYear,
-  runStrategyNine,
-  getStrategyNineRunTrades,
-  getStrategyNineValidation,
-  postStrategyNineValidation,
-  postStrategyNineValidationYear,
   runStrategyEleven,
   getStrategyElevenRunTrades,
   getStrategyElevenValidation,
@@ -96,12 +91,6 @@ router.post('/strategy3/validation', postStrategySevenValidation);
 router.post('/strategy3/validation-year', postStrategySevenValidationYear);
 router.get('/strategy3/runs/:runId/trades', getStrategySevenRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategySevenValidation);
-// Strategy 5 — Trail Scalp Put/Call (multi-entry intraday with trailing profit)
-router.post('/strategy5/run', runStrategyNine);
-router.post('/strategy5/validation', postStrategyNineValidation);
-router.post('/strategy5/validation-year', postStrategyNineValidationYear);
-router.get('/strategy5/runs/:runId/trades', getStrategyNineRunTrades);
-router.get('/strategy5/runs/:runId/validation', getStrategyNineValidation);
 // Strategy 6 (UI) — SL Flip (API strategy8)
 router.post('/strategy8/run', runStrategyEleven);
 router.post('/strategy8/validation', postStrategyElevenValidation);

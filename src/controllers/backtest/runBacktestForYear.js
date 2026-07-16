@@ -1,6 +1,6 @@
 const { fetchWithRateLimitRetry, fetchYearCandlesByDayCached } = require('../../services/dhanDataService');
 const { runBacktestInWorker } = require('../../utils/runBacktestInWorker');
-const { STRATEGY_SEVEN_KEY, STRATEGY_NINE_KEY, STRATEGY_ELEVEN_KEY } = require('../../strategies/keys');
+const { STRATEGY_SEVEN_KEY, STRATEGY_ELEVEN_KEY } = require('../../strategies/keys');
 const { buildStrategyRunSummary } = require('../../strategies/shared/summary');
 const { enrichStrategySevenTradesWithRealPremiums } = require('../../strategies/strategy7/realOptionPremium');
 
@@ -13,7 +13,6 @@ function createRunBacktestForYear(strategyKey) {
   return async (year, settings) => {
     if (
       strategyKey === STRATEGY_SEVEN_KEY
-      || strategyKey === STRATEGY_NINE_KEY
       || strategyKey === STRATEGY_ELEVEN_KEY
     ) {
       const payload = await fetchYearCandlesByDayCached({
@@ -41,7 +40,7 @@ function createRunBacktestForYear(strategyKey) {
         signalCounts: result.summary?.signalCounts,
         maxTradesPerDay: result.summary?.maxTradesPerDay,
         maxLossesPerSidePerDay:
-          strategyKey === STRATEGY_NINE_KEY || strategyKey === STRATEGY_ELEVEN_KEY
+          strategyKey === STRATEGY_ELEVEN_KEY
             ? null
             : result.summary?.maxLossesPerSidePerDay,
         stopLossPoints: result.summary?.stopLossPoints,

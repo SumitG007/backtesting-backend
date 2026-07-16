@@ -18,13 +18,6 @@ const {
   postStrategySevenValidationYear,
 } = require('./strategySevenHandlers');
 const {
-  runStrategyNine,
-  getStrategyNineRunTrades,
-  getStrategyNineValidation,
-  postStrategyNineValidation,
-  postStrategyNineValidationYear,
-} = require('./strategyNineHandlers');
-const {
   runStrategyEleven,
   getStrategyElevenRunTrades,
   getStrategyElevenValidation,
@@ -46,11 +39,6 @@ module.exports = {
   getStrategySevenValidation,
   postStrategySevenValidation,
   postStrategySevenValidationYear,
-  runStrategyNine,
-  getStrategyNineRunTrades,
-  getStrategyNineValidation,
-  postStrategyNineValidation,
-  postStrategyNineValidationYear,
   runStrategyEleven,
   getStrategyElevenRunTrades,
   getStrategyElevenValidation,

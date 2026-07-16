@@ -1273,7 +1273,7 @@ async function getStatus() {
   };
 }
 
-async function listTrades({ page = 1, pageSize = 25, status = 'ALL' }) {
+async function listTrades({ page = 1, pageSize = 50, status = 'ALL' }) {
   const filter = { strategyKey: STRATEGY_KEY };
   const statusQ = String(status || 'ALL').toUpperCase();
   if (statusQ === 'OPEN') {
@@ -1285,12 +1285,14 @@ async function listTrades({ page = 1, pageSize = 25, status = 'ALL' }) {
   const totalRows = await LivePaperTrade.countDocuments(filter);
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(Math.max(1, page), totalPages);
+  const skip = (currentPage - 1) * pageSize;
   const trades = await LivePaperTrade.find(filter)
     .sort({ entryTime: -1 })
-    .skip((currentPage - 1) * pageSize)
+    .skip(skip)
     .limit(pageSize)
     .lean();
-  return { trades, pagination: { page: currentPage, pageSize, totalRows, totalPages } };
+  const tradesWithSr = trades.map((t, i) => ({ ...t, srNo: skip + i + 1 }));
+  return { trades: tradesWithSr, pagination: { page: currentPage, pageSize, totalRows, totalPages } };
 }
 
 async function listActions({ page = 1, pageSize = 50 }) {

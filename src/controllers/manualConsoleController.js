@@ -153,7 +153,7 @@ async function getManualTrades(req, res) {
   try {
     const data = await manualEngine.listTrades({
       page: parsePage(req.query?.page),
-      pageSize: parsePageSize(req.query?.pageSize, 25),
+      pageSize: parsePageSize(req.query?.pageSize, 50),
       status: req.query?.status,
     });
     return res.json({ ok: true, ...data });

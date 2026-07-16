@@ -13,10 +13,6 @@ function run() {
     const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
     return runSimple920Backtest(payload);
   }
-  if (strategyKey === 'strategy9_one_side_candle_scalp') {
-    const { runOneSideCandleScalpBacktest } = require('../strategies/strategy9/oneSideCandleScalpBacktest');
-    return runOneSideCandleScalpBacktest(payload);
-  }
   if (strategyKey === 'strategy11_sl_flip') {
     const { runSlFlipBacktest } = require('../strategies/strategy11/slFlipBacktest');
     return runSlFlipBacktest(payload);
