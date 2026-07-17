@@ -77,6 +77,8 @@ function simulateLongOptionExit({
   maxHoldBars = null,
   eodExitMinutes = 930,
   eodExitAtBarOpen = false,
+  /** When true: hard SL until activation; then ratchet stop to peak−trailGap. */
+  moveStopWithProfit = false,
 }) {
   const premiumSide = premiumSideForLongOption(optionType);
   const useTrail = Number.isFinite(trailSlGapPoints) && trailSlGapPoints > 0;
@@ -155,26 +157,57 @@ function simulateLongOptionExit({
       });
       const profitPts = favPrem - entryPremium;
       if (profitPts > peakProfitPoints) peakProfitPoints = profitPts;
-      if (peakProfitPoints >= trailActivation) {
-        trailStopPremium = entryPremium + peakProfitPoints - trailGap;
-      }
-      if (trailStopPremium != null) {
-        const adverseSpot = optionType === 'CE' ? lo : hi;
-        const adversePrem = getOptionPremiumFromSpotMove({
-          side: premiumSide,
-          entrySpot,
-          currentSpot: adverseSpot,
-          entryPremium,
-          premiumLeverage,
-          strike,
-          strikeStep,
-        });
-        if (adversePrem <= trailStopPremium) {
-          exitIdx = k;
-          exitSpot = adverseSpot;
-          exitPremium = trailStopPremium;
-          reason = 'TRAIL_STOP';
-          break;
+
+      if (moveStopWithProfit) {
+        // Hard SL until activation; then ratchet stop to peak − trailGap.
+        const hardSl = hasStopLoss && stopPremium != null ? stopPremium : null;
+        let activeStop = hardSl;
+        if (peakProfitPoints >= trailActivation) {
+          const trailed = entryPremium + peakProfitPoints - trailGap;
+          activeStop = hardSl != null ? Math.max(hardSl, trailed) : trailed;
+        }
+        if (activeStop != null) {
+          const adverseSpot = optionType === 'CE' ? lo : hi;
+          const adversePrem = getOptionPremiumFromSpotMove({
+            side: premiumSide,
+            entrySpot,
+            currentSpot: adverseSpot,
+            entryPremium,
+            premiumLeverage,
+            strike,
+            strikeStep,
+          });
+          if (adversePrem <= activeStop) {
+            exitIdx = k;
+            exitSpot = adverseSpot;
+            exitPremium = activeStop;
+            reason =
+              hardSl != null && activeStop > hardSl + 1e-9 ? 'TRAIL_STOP' : 'STOP_LOSS';
+            break;
+          }
+        }
+      } else {
+        if (peakProfitPoints >= trailActivation) {
+          trailStopPremium = entryPremium + peakProfitPoints - trailGap;
+        }
+        if (trailStopPremium != null) {
+          const adverseSpot = optionType === 'CE' ? lo : hi;
+          const adversePrem = getOptionPremiumFromSpotMove({
+            side: premiumSide,
+            entrySpot,
+            currentSpot: adverseSpot,
+            entryPremium,
+            premiumLeverage,
+            strike,
+            strikeStep,
+          });
+          if (adversePrem <= trailStopPremium) {
+            exitIdx = k;
+            exitSpot = adverseSpot;
+            exitPremium = trailStopPremium;
+            reason = 'TRAIL_STOP';
+            break;
+          }
         }
       }
     }
@@ -198,7 +231,8 @@ function simulateLongOptionExit({
       }
     }
 
-    if (dynamicStopPremium != null || beTrigger != null) {
+    // Hard SL is already handled inside moveStopWithProfit trail ratchet — skip duplicate.
+    if (!(moveStopWithProfit && useTrail) && (dynamicStopPremium != null || beTrigger != null)) {
       if (beTrigger != null) {
         const favSpotForBe = optionType === 'CE' ? hi : lo;
         const favPremForBe = getOptionPremiumFromSpotMove({

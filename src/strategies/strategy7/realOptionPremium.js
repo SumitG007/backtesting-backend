@@ -91,6 +91,7 @@ function parseRealExitSettings(settings = {}) {
   const hasTarget = targetPoints > 0 && !useTrailing;
   const eodExitMinutes = parseClockMinutes(settings.eodExitTime, EOD_EXIT_MIN);
   const eodExitAtBarOpen = settings.eodExitAtBarOpen == null ? false : isTruthy(settings.eodExitAtBarOpen);
+  const moveStopWithProfit = isTruthy(settings.moveStopWithProfit);
 
   return {
     hasStopLoss,
@@ -100,6 +101,7 @@ function parseRealExitSettings(settings = {}) {
     useTrailing,
     trailingActivationPoints,
     trailingStepPoints,
+    moveStopWithProfit,
     eodExitMinutes,
     eodExitAtBarOpen,
   };
@@ -121,6 +123,7 @@ function simulateRealOptionExit({
   useTrailing = false,
   trailingActivationPoints = 0,
   trailingStepPoints = 0,
+  moveStopWithProfit = false,
   eodExitMinutes = EOD_EXIT_MIN,
   eodExitAtBarOpen = false,
   barIntervalMinutes = 5,
@@ -150,18 +153,34 @@ function simulateRealOptionExit({
     if (useTrailing) {
       const profitPts = hi - entryPremium;
       if (profitPts > peakProfitPoints) peakProfitPoints = profitPts;
-      if (peakProfitPoints >= trailActivation) {
-        trailStopPremium = entryPremium + peakProfitPoints - trailGap;
-      }
-      if (trailStopPremium != null && lo <= trailStopPremium) {
-        exitIdx = k;
-        exitPremium = trailStopPremium;
-        reason = 'TRAIL_STOP';
-        break;
+
+      if (moveStopWithProfit) {
+        let activeStop = stopPremium;
+        if (peakProfitPoints >= trailActivation) {
+          const trailed = entryPremium + peakProfitPoints - trailGap;
+          activeStop = stopPremium != null ? Math.max(stopPremium, trailed) : trailed;
+        }
+        if (activeStop != null && lo <= activeStop) {
+          exitIdx = k;
+          exitPremium = activeStop;
+          reason =
+            stopPremium != null && activeStop > stopPremium + 1e-9 ? 'TRAIL_STOP' : 'STOP_LOSS';
+          break;
+        }
+      } else {
+        if (peakProfitPoints >= trailActivation) {
+          trailStopPremium = entryPremium + peakProfitPoints - trailGap;
+        }
+        if (trailStopPremium != null && lo <= trailStopPremium) {
+          exitIdx = k;
+          exitPremium = trailStopPremium;
+          reason = 'TRAIL_STOP';
+          break;
+        }
       }
     }
 
-    if (hasStopLoss && stopPremium != null && lo <= stopPremium) {
+    if (!(moveStopWithProfit && useTrailing) && hasStopLoss && stopPremium != null && lo <= stopPremium) {
       exitIdx = k;
       exitPremium = stopPremium;
       reason = 'STOP_LOSS';

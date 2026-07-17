@@ -2,6 +2,8 @@
  * Strategy 6 (UI) — SL Flip.
  * 09:20 buy CE. On STOP_LOSS → flip to opposite side immediately (same bar in backtest).
  * On TRAIL_STOP → same side after next 5m candle. No new entries after 15:15; EOD 15:20.
+ *
+ * Stops: hard SL (default 8 pts). After +activation (default 4), move SL to peak − step (default 2).
  */
 
 const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
@@ -129,6 +131,7 @@ function runSlFlipBacktest({ candles, settings }) {
         targetIndex: null,
         trailSlGapPoints: trailingStepPoints,
         trailSlActivationPoints: trailingActivationPoints,
+        moveStopWithProfit: true,
         eodExitMinutes,
         eodExitAtBarOpen: true,
       });
@@ -162,6 +165,7 @@ function runSlFlipBacktest({ candles, settings }) {
             trailingTargetEnabled: true,
             trailingStepPoints,
             trailingActivationPoints,
+            moveStopWithProfit: true,
           },
         }),
       );
@@ -197,6 +201,7 @@ function runSlFlipBacktest({ candles, settings }) {
   summary.targetProfitPoints = trailingActivationPoints;
   summary.trailingActivationPoints = trailingActivationPoints;
   summary.trailingStepPoints = trailingStepPoints;
+  summary.moveStopWithProfit = true;
   summary.trailingTargetEnabled = true;
   summary.entryFromTime = settings.entryFromTime || settings.entryTime || '09:20';
   summary.entryToTime = settings.entryToTime || '15:15';

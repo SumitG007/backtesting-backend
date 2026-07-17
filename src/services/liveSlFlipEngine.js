@@ -7,6 +7,8 @@
  *   STOP_LOSS / BREAKEVEN_STOP → flip opposite immediately
  *   TRAIL_STOP → same side after next 5m bar open
  *   DAY_CLOSE / MANUAL → no more entries until next day
+ * Trail peak is updated on every websocket tick (not only on 3s poll).
+ * Stop: hard SL at entry−stopLoss until +activation; then move SL to peak−trailStep.
  * No new entries at/after entryTo (15:15); EOD flatten at eodExitTime.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -68,10 +70,16 @@ const engineState = {
   lastClosedOptionType: null,
   openTradeId: null,
   entryAtMs: null,
+  /** Entry premium of the open trade — used so WS ticks can update trail peak immediately. */
+  openEntryPremium: null,
   peakProfitPoints: 0,
   trailStopPremium: null,
+  /** Hard SL floor (entry − stopLossPoints). Effective stop may ratchet above this. */
+  hardStopPremium: null,
   lastOptionTick: null,
   openPositionMark: null,
+  /** Coalesce tick-driven exit checks so we don't stampede finalize. */
+  tickExitCheckScheduled: false,
   pollTimer: null,
   positionPollTimer: null,
   enteringTrade: false,
@@ -167,10 +175,58 @@ function clearPendingEntryState() {
 function clearOpenRuntime() {
   engineState.openTradeId = null;
   engineState.entryAtMs = null;
+  engineState.openEntryPremium = null;
   engineState.peakProfitPoints = 0;
   engineState.trailStopPremium = null;
+  engineState.hardStopPremium = null;
   engineState.openPositionMark = null;
   engineState.lastOptionTick = null;
+  engineState.tickExitCheckScheduled = false;
+}
+
+/**
+ * Restore trail peak from DB fields so a restart mid-trade does not forget activation.
+ */
+function restoreTrailFromTrade(trade) {
+  const entry = Number(trade?.entryPremium);
+  if (!Number.isFinite(entry) || entry <= 0) return;
+  engineState.openEntryPremium = entry;
+
+  const mark = trade.openPositionMark || {};
+  let peak = Number(mark.peakProfitPoints);
+  if (!Number.isFinite(peak) || peak < 0) peak = 0;
+
+  const highSince = Number(trade.highSinceEntry);
+  if (Number.isFinite(highSince) && highSince > 0) {
+    peak = Math.max(peak, highSince - entry);
+  }
+
+  engineState.peakProfitPoints = peak;
+  const act = engineState.settings.trailingActivationPoints;
+  const step = engineState.settings.trailingStepPoints;
+  const hardSl = Math.max(0.05, entry - engineState.settings.stopLossPoints);
+  engineState.hardStopPremium = hardSl;
+  let stop = hardSl;
+  if (peak >= act) {
+    stop = Math.max(hardSl, entry + peak - step);
+  }
+  const savedTrail = Number(mark.trailStopPremium);
+  if (peak >= act && Number.isFinite(savedTrail) && savedTrail > stop) stop = savedTrail;
+  engineState.trailStopPremium = stop;
+}
+
+function maybeScheduleTickExitCheck(ltp) {
+  if (!engineState.openTradeId || engineState.closingTrade || engineState.tickExitCheckScheduled) {
+    return;
+  }
+  const stop = engineState.trailStopPremium;
+  if (stop == null || ltp > Number(stop)) return;
+
+  engineState.tickExitCheckScheduled = true;
+  setImmediate(() => {
+    engineState.tickExitCheckScheduled = false;
+    checkOpenTrade().catch(() => {});
+  });
 }
 
 async function ensureWallet() {
@@ -220,10 +276,19 @@ async function resetSessionIfNewDay(clock) {
 function updateTrailFromLtp(entryPremium, ltp) {
   const act = engineState.settings.trailingActivationPoints;
   const step = engineState.settings.trailingStepPoints;
+  const hardSl = Math.max(0.05, Number(entryPremium) - engineState.settings.stopLossPoints);
   const profit = Number(ltp) - Number(entryPremium);
   if (profit > engineState.peakProfitPoints) engineState.peakProfitPoints = profit;
+
+  // Hard SL until +activation; then move SL to peak − step (ratchet up only).
+  engineState.hardStopPremium = hardSl;
   if (engineState.peakProfitPoints >= act) {
-    engineState.trailStopPremium = Number(entryPremium) + engineState.peakProfitPoints - step;
+    engineState.trailStopPremium = Math.max(
+      hardSl,
+      Number(entryPremium) + engineState.peakProfitPoints - step,
+    );
+  } else {
+    engineState.trailStopPremium = hardSl;
   }
 }
 
@@ -261,6 +326,10 @@ function clearSubs() {
 
 async function subscribeOpenOption(trade) {
   clearSubs();
+  const entryPremium = Number(trade.entryPremium);
+  if (Number.isFinite(entryPremium) && entryPremium > 0) {
+    engineState.openEntryPremium = entryPremium;
+  }
   try {
     const instrument = await resolveOptionInstrument({
       symbol: trade.symbol,
@@ -276,6 +345,13 @@ async function subscribeOpenOption(trade) {
         const ltp = Number(tick.ltp);
         if (!Number.isFinite(ltp) || ltp <= 0) return;
         engineState.lastOptionTick = { ltp, ts: Date.now() };
+        // Critical: update trail on EVERY tick. Polling alone misses brief +activation spikes
+        // and then wrongly exits on hard SL instead of TRAIL_STOP.
+        const entry = Number(engineState.openEntryPremium);
+        if (Number.isFinite(entry) && entry > 0) {
+          updateTrailFromLtp(entry, ltp);
+          maybeScheduleTickExitCheck(ltp);
+        }
       },
     });
   } catch (err) {
@@ -409,16 +485,19 @@ async function placeLongOption(clock, { optionType, entryKind }) {
       charges: Number(engineState.settings.perTradeCost.toFixed(2)),
       stopLossPremium: Number(stopLossPremium.toFixed(2)),
       targetPremium: null,
+      highSinceEntry: Number(entryPremium.toFixed(2)),
       legs: [{ optionType: side, entryPremium: Number(entryPremium.toFixed(2)) }],
       notes: `slFlip; kind=${entryKind || 'entry'}; trail; tick`,
     });
 
     engineState.openTradeId = doc._id.toString();
     engineState.entryAtMs = Date.now();
+    engineState.openEntryPremium = entryPremium;
     engineState.dayTradeCount += 1;
     engineState.lastSignalAt = new Date();
     engineState.peakProfitPoints = 0;
-    engineState.trailStopPremium = null;
+    engineState.hardStopPremium = stopLossPremium;
+    engineState.trailStopPremium = stopLossPremium; // effective stop starts at hard SL
     engineState.lastOptionTick = { ltp: entryPremium, ts: Date.now() };
 
     if (side === 'CE') engineState.dayStartedCE = true;
@@ -512,21 +591,21 @@ async function evaluateTickExit(trade, clock, ltp) {
 
   updateTrailFromLtp(entryPremium, ltp);
 
-  // Trail first (matches backtest order: trail before hard SL).
-  if (engineState.trailStopPremium != null && ltp <= engineState.trailStopPremium) {
-    return finalizeTrade(trade, {
-      exitPremium: Number(engineState.trailStopPremium),
-      reason: 'TRAIL_STOP',
-    });
-  }
+  const stopPx = engineState.trailStopPremium;
+  if (stopPx == null || ltp > Number(stopPx)) return null;
 
-  if (trade.stopLossPremium != null && ltp <= Number(trade.stopLossPremium)) {
-    const slPx = Number(trade.stopLossPremium);
-    const reason = slPx > entryPremium ? 'BREAKEVEN_STOP' : 'STOP_LOSS';
-    return finalizeTrade(trade, { exitPremium: slPx, reason });
-  }
-
-  return null;
+  const hardSl =
+    engineState.hardStopPremium != null
+      ? Number(engineState.hardStopPremium)
+      : trade.stopLossPremium != null
+        ? Number(trade.stopLossPremium)
+        : entryPremium - engineState.settings.stopLossPoints;
+  // Moved above hard SL → profit lock (TRAIL_STOP). Still at hard floor → STOP_LOSS (flip).
+  const reason = Number(stopPx) > hardSl + 1e-6 ? 'TRAIL_STOP' : 'STOP_LOSS';
+  return finalizeTrade(trade, {
+    exitPremium: Number(stopPx),
+    reason,
+  });
 }
 
 async function checkOpenTrade() {
@@ -545,7 +624,11 @@ async function checkOpenTrade() {
   const ltp = await getMarkPremium(trade);
   if (Number.isFinite(ltp) && ltp > 0) {
     const entry = Number(trade.entryPremium);
+    engineState.openEntryPremium = entry;
     updateTrailFromLtp(entry, ltp);
+    const prevHigh = Number(trade.highSinceEntry);
+    const highSinceEntry = Number.isFinite(prevHigh) ? Math.max(prevHigh, ltp) : ltp;
+    trade.highSinceEntry = Number(highSinceEntry.toFixed(2));
     const mark = {
       at: new Date().toISOString(),
       source: engineState.lastOptionTick ? 'websocket' : 'chain',
@@ -650,8 +733,7 @@ async function syncOpenStateFromDb() {
   engineState.openTradeId = open._id.toString();
   engineState.entryAtMs = open.entryTime ? new Date(open.entryTime).getTime() : Date.now();
   engineState.dayStartedCE = true;
-  engineState.peakProfitPoints = 0;
-  engineState.trailStopPremium = null;
+  restoreTrailFromTrade(open);
   await subscribeOpenOption(open);
   startPositionPoll();
 }
@@ -755,7 +837,11 @@ async function refreshOpenPositionMarkForStatus() {
   const ltp = await getMarkPremium(trade);
   if (!Number.isFinite(ltp)) return trade.openPositionMark;
   const entry = Number(trade.entryPremium);
+  engineState.openEntryPremium = entry;
   updateTrailFromLtp(entry, ltp);
+  const prevHigh = Number(trade.highSinceEntry);
+  const highSinceEntry = Number.isFinite(prevHigh) ? Math.max(prevHigh, ltp) : ltp;
+  trade.highSinceEntry = Number(highSinceEntry.toFixed(2));
   const mark = {
     at: new Date().toISOString(),
     source: 'marketfeed',
