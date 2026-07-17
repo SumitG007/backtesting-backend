@@ -6,11 +6,19 @@ const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6'
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyElevenEngine = require('../services/liveSlFlipEngine');
 const {
+  engineB: strategyElevenEngineB,
+  engineC: strategyElevenEngineC,
+  engineD: strategyElevenEngineD,
+} = require('../services/liveSlFlipEngines');
+const {
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
@@ -18,6 +26,9 @@ const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY,
+  STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -101,9 +112,18 @@ function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
 }
 
 /** Engine snapshot first, then persisted wallet settings, then strategy-specific defaults. */
+function isSlFlipLiveStrategyId(strategyId) {
+  return ['strategy-8', 'strategy-8b', 'strategy-8c', 'strategy-8d'].includes(strategyId);
+}
+
+function slFlipTrailBarMinutes(engine) {
+  const n = Number(engine?.barIntervalMinutes ?? engine?.settings?.trailReentryBarMinutes);
+  return Number.isFinite(n) && n > 0 ? n : 5;
+}
+
 function resolveHintEntrySettings(engine, strategyId, wallet) {
   const fromEngine = engine?.settings;
-  if (strategyId === 'strategy-8' && fromEngine) {
+  if (isSlFlipLiveStrategyId(strategyId) && fromEngine) {
     return {
       entryTime: String(fromEngine.entryFromTime || '09:20'),
       entryToTime: String(fromEngine.entryToTime || '15:15'),
@@ -141,7 +161,7 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
       entryWindowMinutes: 0,
     };
   }
-  if (strategyId === 'strategy-8') {
+  if (isSlFlipLiveStrategyId(strategyId)) {
     const w = wallet?.strategy11EngineSettings;
     return {
       entryTime: String(w?.entryFromTime || '09:20'),
@@ -159,18 +179,20 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
   const label = strategyLabel || 'Paper-live';
   const { entryTime, entryWindowMinutes, entryToTime } = resolveHintEntrySettings(engine, strategyId, wallet);
   const entryWindowLabel =
-    strategyId === 'strategy-8' && entryToTime
+    isSlFlipLiveStrategyId(strategyId) && entryToTime
       ? `${entryTime}–${entryToTime}`
       : formatEntryWindowLabel(entryTime, entryWindowMinutes);
+  const trailBarM = slFlipTrailBarMinutes(engine);
 
   if (openTrade) return null;
   const closedToday = (todayTrades || []).filter((t) => t.exitTime);
-  if (strategyId === 'strategy-8') {
+  if (isSlFlipLiveStrategyId(strategyId)) {
     const count = closedToday.length;
+    const scenarioLabel = engine?.scenarioLabel || 'SL Flip';
     if (count > 0) {
-      return `${count} SL-flip trade(s) closed today. SL → flip opposite immediately; trail → same side after next 5m. Window ${entryWindowLabel} IST · EOD 15:20.`;
+      return `${count} ${scenarioLabel} trade(s) closed today. SL → flip opposite immediately; trail → same side after next ${trailBarM}m. Window ${entryWindowLabel} IST · EOD 15:20.`;
     }
-    return `No open position. Day starter is CE at/after 09:20 (${entryWindowLabel} IST). Tick exits · flip on SL · trail waits next 5m.`;
+    return `No open position. Day starter is CE at/after 09:20 (${entryWindowLabel} IST). Tick exits · flip on SL · trail waits next ${trailBarM}m.`;
   }
   if (closedToday.length > 0) {
     const t = closedToday[0];
@@ -234,25 +256,21 @@ function isPutBuyLiveStrategyId(strategyId) {
   return strategyId === 'strategy-3';
 }
 
-function isSlFlipLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-8';
-}
-
-function slFlipPaperLiveCtx(strategyId) {
+function slFlipPaperLiveCtx(strategyId, engine) {
   return {
     strategyId,
-    strategyKey: strategyElevenEngine.STRATEGY_KEY,
-    startEngine: strategyElevenEngine.startEngine,
-    stopEngine: strategyElevenEngine.stopEngine,
-    updateEngineSettings: strategyElevenEngine.updateEngineSettings,
-    getEngineSnapshot: strategyElevenEngine.getEngineSnapshot,
-    ensureWallet: strategyElevenEngine.ensureWallet,
-    recalcWallet: strategyElevenEngine.recalcWalletFromTrades,
-    ensureRunning: strategyElevenEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyElevenEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyElevenEngine.closeOpenPosition,
-    refreshOpenMark: strategyElevenEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategyElevenEngine.clearDailySkipState,
+    strategyKey: engine.STRATEGY_KEY,
+    startEngine: engine.startEngine,
+    stopEngine: engine.stopEngine,
+    updateEngineSettings: engine.updateEngineSettings,
+    getEngineSnapshot: engine.getEngineSnapshot,
+    ensureWallet: engine.ensureWallet,
+    recalcWallet: engine.recalcWalletFromTrades,
+    ensureRunning: engine.ensureEngineRunning,
+    reconcileOpenTrades: engine.reconcileOpenTrades,
+    closeOpenPosition: engine.closeOpenPosition,
+    refreshOpenMark: engine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: engine.clearDailySkipState,
   };
 }
 
@@ -279,7 +297,10 @@ const LIVE_STRATEGIES = {
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
-  'strategy-8': slFlipPaperLiveCtx('strategy-8'),
+  'strategy-8': slFlipPaperLiveCtx('strategy-8', strategyElevenEngine),
+  'strategy-8b': slFlipPaperLiveCtx('strategy-8b', strategyElevenEngineB),
+  'strategy-8c': slFlipPaperLiveCtx('strategy-8c', strategyElevenEngineC),
+  'strategy-8d': slFlipPaperLiveCtx('strategy-8d', strategyElevenEngineD),
 };
 
 function getLiveContext(req) {
@@ -362,8 +383,8 @@ async function getStatus(req, res) {
             ? 'Strategy A'
             : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
-              : ctx.strategyId === 'strategy-8'
-                ? 'SL Flip'
+              : isSlFlipLiveStrategyId(ctx.strategyId)
+                ? snapshot?.scenarioLabel || 'SL Flip'
                 : 'Paper-live',
     });
     return res.json({
