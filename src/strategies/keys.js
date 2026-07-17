@@ -6,9 +6,6 @@ const STRATEGY_SIX_KEY = 'strategy6_short_straddle_next_day';
 const STRATEGY_SEVEN_KEY = 'strategy7_simple_920_market';
 const STRATEGY_ELEVEN_KEY = 'strategy11_sl_flip';
 const STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY = 'strategy11_sl_flip_live';
-const STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY = 'strategy11_sl_flip_live_b';
-const STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY = 'strategy11_sl_flip_live_c';
-const STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY = 'strategy11_sl_flip_live_d';
 const STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY = 'strategy4_short_straddle_next_day_live';
 const STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY = 'strategy6_short_straddle_next_day_live';
 const STRATEGY_SEVEN_PUT_BUY_LIVE_KEY = 'strategy7_simple_920_market_live';
@@ -19,9 +16,6 @@ module.exports = {
   STRATEGY_SEVEN_KEY,
   STRATEGY_ELEVEN_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY,
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,

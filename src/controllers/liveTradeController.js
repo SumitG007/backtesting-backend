@@ -6,19 +6,11 @@ const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6'
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyElevenEngine = require('../services/liveSlFlipEngine');
 const {
-  engineB: strategyElevenEngineB,
-  engineC: strategyElevenEngineC,
-  engineD: strategyElevenEngineD,
-} = require('../services/liveSlFlipEngines');
-const {
   STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
@@ -26,9 +18,6 @@ const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_B_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_C_KEY,
-  STRATEGY_ELEVEN_SL_FLIP_LIVE_D_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -113,7 +102,7 @@ function formatEntryWindowLabel(entryTime, entryWindowMinutes) {
 
 /** Engine snapshot first, then persisted wallet settings, then strategy-specific defaults. */
 function isSlFlipLiveStrategyId(strategyId) {
-  return ['strategy-8', 'strategy-8b', 'strategy-8c', 'strategy-8d'].includes(strategyId);
+  return strategyId === 'strategy-8';
 }
 
 function slFlipTrailBarMinutes(engine) {
@@ -298,9 +287,6 @@ const LIVE_STRATEGIES = {
   'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-8': slFlipPaperLiveCtx('strategy-8', strategyElevenEngine),
-  'strategy-8b': slFlipPaperLiveCtx('strategy-8b', strategyElevenEngineB),
-  'strategy-8c': slFlipPaperLiveCtx('strategy-8c', strategyElevenEngineC),
-  'strategy-8d': slFlipPaperLiveCtx('strategy-8d', strategyElevenEngineD),
 };
 
 function getLiveContext(req) {

@@ -1,7 +1,5 @@
 /**
- * Delete CLOSED paper-live trades for Strategy 6 — SL Flip.
- * Keeps any OPEN position. Recalculates wallet realized P&L.
- *
+ * Delete CLOSED SL Flip paper-live trades for a fresh start (keeps any OPEN).
  * Run: node scripts/clearSlFlipClosedPaperTrades.js
  */
 require('dotenv').config();
@@ -36,25 +34,14 @@ async function main() {
   const result = await LivePaperTrade.deleteMany(closedFilter);
   console.log(`Deleted closed trades: ${result.deletedCount}`);
 
-  const remainingClosed = await LivePaperTrade.find(closedFilter).lean();
-  let realized = 0;
-  let wins = 0;
-  let losses = 0;
-  for (const t of remainingClosed) {
-    const p = Number(t.pnl) || 0;
-    realized += p;
-    if (p > 0) wins += 1;
-    else if (p < 0) losses += 1;
-  }
-
   let wallet = await LiveWallet.findOne({ walletKey: WALLET_KEY });
   if (!wallet) wallet = await LiveWallet.create({ walletKey: WALLET_KEY });
   wallet.startingBalance = 0;
-  wallet.realizedPnl = Number(realized.toFixed(2));
-  wallet.balance = wallet.realizedPnl;
-  wallet.totalTrades = remainingClosed.length;
-  wallet.wins = wins;
-  wallet.losses = losses;
+  wallet.realizedPnl = 0;
+  wallet.balance = 0;
+  wallet.totalTrades = 0;
+  wallet.wins = 0;
+  wallet.losses = 0;
   await wallet.save();
 
   const openAfter = await LivePaperTrade.countDocuments({
@@ -62,15 +49,13 @@ async function main() {
     exitTime: null,
     status: { $ne: 'CLOSED' },
   });
-  console.log(`After: open=${openAfter}, closed=${remainingClosed.length}`);
-  console.log('Wallet:', {
+  console.log(`After: open=${openAfter}, closed=0`);
+  console.log('Wallet reset:', {
     realizedPnl: wallet.realizedPnl,
     balance: wallet.balance,
     totalTrades: wallet.totalTrades,
-    wins: wallet.wins,
-    losses: wallet.losses,
   });
-  console.log('Done.');
+  console.log('Done. Fresh start for Monday — open position (if any) kept.');
 }
 
 main()

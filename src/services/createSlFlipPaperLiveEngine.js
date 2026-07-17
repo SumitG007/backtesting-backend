@@ -21,9 +21,11 @@ const {
 } = require('./dhanLiveService');
 
 const POLL_INTERVAL_MS = 5000;
-const POSITION_POLL_MS = 3000;
+/** Open-position mark/exit poll — keep tight so SL/trail are not delayed. */
+const POSITION_POLL_MS = 1000;
 const TICK_FRESH_MS = 45000;
-const MIN_HOLD_MS = 8000;
+/** Anti-flicker only — was 8s and blocked real SL hits right after entry. */
+const MIN_HOLD_MS = 2000;
 const SESSION_START_MIN = 555;
 const DEFAULT_ENTRY_FROM = 560; // 09:20
 const DEFAULT_ENTRY_TO = 915; // 15:15
@@ -70,6 +72,8 @@ const engineState = {
   /** Entry premium of the open trade — used so WS ticks can update trail peak immediately. */
   openEntryPremium: null,
   peakProfitPoints: 0,
+  /** Lowest LTP seen since entry — catches SL wicks between polls. */
+  lowSinceEntry: null,
   trailStopPremium: null,
   /** Hard SL floor (entry − stopLossPoints). Effective stop may ratchet above this. */
   hardStopPremium: null,
@@ -176,6 +180,7 @@ function clearOpenRuntime() {
   engineState.entryAtMs = null;
   engineState.openEntryPremium = null;
   engineState.peakProfitPoints = 0;
+  engineState.lowSinceEntry = null;
   engineState.trailStopPremium = null;
   engineState.hardStopPremium = null;
   engineState.openPositionMark = null;
@@ -201,6 +206,12 @@ function restoreTrailFromTrade(trade) {
   }
 
   engineState.peakProfitPoints = peak;
+
+  let low = Number(trade.lowSinceEntry);
+  if (!Number.isFinite(low) || low <= 0) low = Number(mark.optionLtp);
+  if (!Number.isFinite(low) || low <= 0) low = entry;
+  engineState.lowSinceEntry = low;
+
   const act = engineState.settings.trailingActivationPoints;
   const step = engineState.settings.trailingStepPoints;
   const hardSl = Math.max(0.05, entry - engineState.settings.stopLossPoints);
@@ -219,7 +230,11 @@ function maybeScheduleTickExitCheck(ltp) {
     return;
   }
   const stop = engineState.trailStopPremium;
-  if (stop == null || ltp > Number(stop)) return;
+  if (stop == null) return;
+  const low = engineState.lowSinceEntry != null ? engineState.lowSinceEntry : ltp;
+  const checkPx = Math.min(Number(ltp), Number(low));
+  // Fire when current tick OR any earlier low since entry has touched/crossed stop.
+  if (!(Number.isFinite(checkPx) && checkPx <= Number(stop))) return;
 
   engineState.tickExitCheckScheduled = true;
   setImmediate(() => {
@@ -319,12 +334,21 @@ async function resetSessionIfNewDay(clock) {
   engineState.lastClosedOptionType = null;
 }
 
+function noteLowFromLtp(ltp) {
+  const px = Number(ltp);
+  if (!Number.isFinite(px) || px <= 0) return;
+  if (engineState.lowSinceEntry == null || px < engineState.lowSinceEntry) {
+    engineState.lowSinceEntry = px;
+  }
+}
+
 function updateTrailFromLtp(entryPremium, ltp) {
   const act = engineState.settings.trailingActivationPoints;
   const step = engineState.settings.trailingStepPoints;
   const hardSl = Math.max(0.05, Number(entryPremium) - engineState.settings.stopLossPoints);
   const profit = Number(ltp) - Number(entryPremium);
   if (profit > engineState.peakProfitPoints) engineState.peakProfitPoints = profit;
+  noteLowFromLtp(ltp);
 
   // Hard SL until +activation; then move SL to peak − step (ratchet up only).
   engineState.hardStopPremium = hardSl;
@@ -532,6 +556,7 @@ async function placeLongOption(clock, { optionType, entryKind }) {
       stopLossPremium: Number(stopLossPremium.toFixed(2)),
       targetPremium: null,
       highSinceEntry: Number(entryPremium.toFixed(2)),
+      lowSinceEntry: Number(entryPremium.toFixed(2)),
       legs: [{ optionType: side, entryPremium: Number(entryPremium.toFixed(2)) }],
       notes: `slFlip; scenario=${scenarioId}; kind=${entryKind || 'entry'}; trail; tick`,
     });
@@ -542,6 +567,7 @@ async function placeLongOption(clock, { optionType, entryKind }) {
     engineState.dayTradeCount += 1;
     engineState.lastSignalAt = new Date();
     engineState.peakProfitPoints = 0;
+    engineState.lowSinceEntry = entryPremium;
     engineState.hardStopPremium = stopLossPremium;
     engineState.trailStopPremium = stopLossPremium; // effective stop starts at hard SL
     engineState.lastOptionTick = { ltp: entryPremium, ts: Date.now() };
@@ -638,7 +664,13 @@ async function evaluateTickExit(trade, clock, ltp) {
   updateTrailFromLtp(entryPremium, ltp);
 
   const stopPx = engineState.trailStopPremium;
-  if (stopPx == null || ltp > Number(stopPx)) return null;
+  if (stopPx == null) return null;
+
+  // Use the worst (lowest) price seen since entry — not only the latest LTP.
+  // Fast wicks that touch SL and bounce are otherwise missed.
+  const low = engineState.lowSinceEntry != null ? Number(engineState.lowSinceEntry) : Number(ltp);
+  const checkPx = Math.min(Number(ltp), low);
+  if (!(Number.isFinite(checkPx) && checkPx <= Number(stopPx))) return null;
 
   const hardSl =
     engineState.hardStopPremium != null
@@ -675,6 +707,12 @@ async function checkOpenTrade() {
     const prevHigh = Number(trade.highSinceEntry);
     const highSinceEntry = Number.isFinite(prevHigh) ? Math.max(prevHigh, ltp) : ltp;
     trade.highSinceEntry = Number(highSinceEntry.toFixed(2));
+    const prevLow = Number(trade.lowSinceEntry);
+    const lowSinceEntry = Number.isFinite(prevLow) && prevLow > 0
+      ? Math.min(prevLow, engineState.lowSinceEntry ?? ltp, ltp)
+      : (engineState.lowSinceEntry ?? ltp);
+    trade.lowSinceEntry = Number(Number(lowSinceEntry).toFixed(2));
+    engineState.lowSinceEntry = trade.lowSinceEntry;
     const mark = {
       at: new Date().toISOString(),
       source: engineState.lastOptionTick ? 'websocket' : 'chain',
@@ -686,7 +724,8 @@ async function checkOpenTrade() {
       stopLossPremium: trade.stopLossPremium,
       trailStopPremium: engineState.trailStopPremium,
       peakProfitPoints: engineState.peakProfitPoints,
-      exitMode: 'tick',
+      lowSinceEntry: trade.lowSinceEntry,
+      exitMode: 'tick+low',
       minHoldMs: MIN_HOLD_MS,
     };
     trade.openPositionMark = mark;

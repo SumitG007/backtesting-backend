@@ -7,24 +7,17 @@ async function notifyDhanConnectivityRestored() {
   const strategySix = require('./liveShortStraddleEngineStrategy6');
   const strategySeven = require('./livePutBuyEngine');
   const strategyEleven = require('./liveSlFlipEngine');
-  const { engineB, engineC, engineD } = require('./liveSlFlipEngines');
   const results = await Promise.allSettled([
     strategyFour.resumeOpenPositionFromDb(),
     strategySix.resumeOpenPositionFromDb(),
     strategySeven.resumeOpenPositionFromDb(),
     strategyEleven.resumeOpenPositionFromDb(),
-    engineB.resumeOpenPositionFromDb(),
-    engineC.resumeOpenPositionFromDb(),
-    engineD.resumeOpenPositionFromDb(),
   ]);
   return {
     strategy4: results[0].status === 'fulfilled' ? results[0].value : { ok: false, error: results[0].reason?.message },
     strategy6: results[1].status === 'fulfilled' ? results[1].value : { ok: false, error: results[1].reason?.message },
     strategy7: results[2].status === 'fulfilled' ? results[2].value : { ok: false, error: results[2].reason?.message },
     strategy11: results[3].status === 'fulfilled' ? results[3].value : { ok: false, error: results[3].reason?.message },
-    strategy11b: results[4].status === 'fulfilled' ? results[4].value : { ok: false, error: results[4].reason?.message },
-    strategy11c: results[5].status === 'fulfilled' ? results[5].value : { ok: false, error: results[5].reason?.message },
-    strategy11d: results[6].status === 'fulfilled' ? results[6].value : { ok: false, error: results[6].reason?.message },
   };
 }
 
