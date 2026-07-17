@@ -111,6 +111,7 @@ function normalizeSettings(settings = {}) {
     trailingStepPoints: Math.max(0.01, Number(settings.trailingStepPoints) || DEFAULT_TRAIL_STEP),
     trailReentryBarMinutes: BAR_INTERVAL,
     strikeMode: String(settings.strikeMode || 'ATM'),
+    scenarioId: String(settings.scenarioId || scenarioId),
     perTradeCost:
       Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
         ? Number(settings.perTradeCost)
@@ -227,9 +228,24 @@ function maybeScheduleTickExitCheck(ltp) {
   });
 }
 
+function scenarioDefaultSettings() {
+  return normalizeSettings({
+    stopLossPoints: DEFAULT_SL,
+    trailingActivationPoints: DEFAULT_TRAIL_ACT,
+    trailingStepPoints: DEFAULT_TRAIL_STEP,
+    trailReentryBarMinutes: BAR_INTERVAL,
+    scenarioId,
+  });
+}
+
 async function ensureWallet() {
   let wallet = await LiveWallet.findOne({ walletKey });
-  if (!wallet) wallet = await LiveWallet.create({ walletKey });
+  if (!wallet) {
+    wallet = await LiveWallet.create({
+      walletKey,
+      strategy11EngineSettings: scenarioDefaultSettings(),
+    });
+  }
   if (wallet.startingBalance !== 0 || wallet.balance !== wallet.realizedPnl) {
     wallet.startingBalance = 0;
     wallet.balance = Number(wallet.realizedPnl || 0);
@@ -249,7 +265,40 @@ async function loadSettingsFromWallet() {
   const raw = wallet.strategy11EngineSettings
     ? wallet.strategy11EngineSettings.toObject?.() || wallet.strategy11EngineSettings
     : {};
-  engineState.settings = normalizeSettings(raw);
+  const savedScenarioId = String(raw.scenarioId || '');
+  // Fresh / wrong-scenario wallets get schema defaults (A: 8/4/2). Re-seed once per scenario.
+  if (savedScenarioId !== String(scenarioId)) {
+    if (!savedScenarioId && String(scenarioId) === 'A') {
+      // Existing live A wallet — keep current numbers, only stamp scenarioId.
+      engineState.settings = normalizeSettings({ ...raw, scenarioId });
+    } else {
+      // B/C/D first boot (or mismatched) — apply this scenario's SL / trail presets.
+      engineState.settings = normalizeSettings({
+        symbol: raw.symbol,
+        lotCount: raw.lotCount,
+        perTradeCost: raw.perTradeCost,
+        entryFromTime: raw.entryFromTime,
+        entryToTime: raw.entryToTime,
+        eodExitTime: raw.eodExitTime,
+        strikeMode: raw.strikeMode,
+        stopLossPoints: DEFAULT_SL,
+        trailingActivationPoints: DEFAULT_TRAIL_ACT,
+        trailingStepPoints: DEFAULT_TRAIL_STEP,
+        trailReentryBarMinutes: BAR_INTERVAL,
+        scenarioId,
+      });
+      logLine('seeded_scenario_settings', {
+        stopLossPoints: engineState.settings.stopLossPoints,
+        trailingActivationPoints: engineState.settings.trailingActivationPoints,
+        trailingStepPoints: engineState.settings.trailingStepPoints,
+        trailReentryBarMinutes: engineState.settings.trailReentryBarMinutes,
+      });
+    }
+    engineState.symbol = engineState.settings.symbol;
+    await persistSettingsToWallet();
+    return;
+  }
+  engineState.settings = normalizeSettings({ ...raw, scenarioId });
   engineState.symbol = engineState.settings.symbol;
 }
 
