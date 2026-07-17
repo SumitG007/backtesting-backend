@@ -1,7 +1,6 @@
 const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
-const strategyFourEngine = require('../services/liveShortStraddleEngine');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyElevenEngine = require('../services/liveSlFlipEngine');
@@ -14,7 +13,6 @@ const {
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
-  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_ELEVEN_SL_FLIP_LIVE_KEY,
@@ -46,11 +44,16 @@ function computeClosedTradeStats(rows) {
   };
 }
 
-/** Older paper rows used the backtest strategy6 key — fold into Strategy 2 live. */
+/** Older paper rows used the backtest strategy6 key — fold into remaining straddle live. */
 async function normalizeLegacyStrategy4PaperKeys() {
   await LivePaperTrade.updateMany(
     { strategyKey: STRATEGY_SIX_KEY, optionType: 'STRADDLE' },
-    { $set: { strategyKey: STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY } },
+    { $set: { strategyKey: STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY } },
+  );
+  // Retired Strategy A (strategy-2) live key → keep history under active straddle live.
+  await LivePaperTrade.updateMany(
+    { strategyKey: STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY, optionType: 'STRADDLE' },
+    { $set: { strategyKey: STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY } },
   );
 }
 
@@ -133,13 +136,6 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
     const w = wallet?.strategy6EngineSettings;
     return {
       entryTime: String(w?.entryTime || '09:20'),
-      entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
-    };
-  }
-  if (strategyId === 'strategy-2' || strategyId === 'strategy-4') {
-    const w = wallet?.strategy4EngineSettings;
-    return {
-      entryTime: String(w?.entryTime || '15:20'),
       entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
     };
   }
@@ -238,7 +234,7 @@ function straddlePaperLiveCtx(strategyId, engine) {
 }
 
 function isStraddleLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-2' || strategyId === 'strategy-4' || strategyId === 'strategy-6';
+  return strategyId === 'strategy-6';
 }
 
 function isPutBuyLiveStrategyId(strategyId) {
@@ -282,9 +278,7 @@ function putBuyPaperLiveCtx(strategyId) {
 }
 
 const LIVE_STRATEGIES = {
-  'strategy-2': straddlePaperLiveCtx('strategy-2', strategyFourEngine),
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
-  'strategy-4': straddlePaperLiveCtx('strategy-4', strategyFourEngine),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-8': slFlipPaperLiveCtx('strategy-8', strategyElevenEngine),
 };
@@ -364,10 +358,8 @@ async function getStatus(req, res) {
       wallet,
       strategyLabel:
         ctx.strategyId === 'strategy-6'
-          ? 'Strategy B'
-          : ctx.strategyId === 'strategy-2' || ctx.strategyId === 'strategy-4'
-            ? 'Strategy A'
-            : ctx.strategyId === 'strategy-3'
+          ? 'Short straddle'
+          : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
               : isSlFlipLiveStrategyId(ctx.strategyId)
                 ? snapshot?.scenarioLabel || 'SL Flip'
@@ -525,27 +517,10 @@ async function resetWallet(req, res) {
 }
 
 async function reopenLiveTrade(req, res) {
-  try {
-    const ctx = getLiveContext(req);
-    if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    if (ctx.strategyId !== 'strategy-2' && ctx.strategyId !== 'strategy-4') {
-      return res.status(400).json({ ok: false, error: 'Reopen is only supported for Strategy A (strategy-2)' });
-    }
-    const tradeId = String(req.body?.tradeId || '').trim();
-    if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId is required' });
-    const exitTime = String(req.body?.exitTime || '09:20').trim();
-    if (typeof strategyFourEngine.reopenClosedTrade !== 'function') {
-      return res.status(500).json({ ok: false, error: 'Reopen not available on engine' });
-    }
-    const result = await strategyFourEngine.reopenClosedTrade(tradeId, { exitTime });
-    return res.json({
-      ok: true,
-      message: `Trade ${tradeId} reopened. Planned exit ${result.plannedExitDateKey} at ${result.nextDayExit} IST.`,
-      ...result,
-    });
-  } catch (error) {
-    return res.status(500).json({ ok: false, error: error.message });
-  }
+  return res.status(400).json({
+    ok: false,
+    error: 'Reopen was only for retired Strategy A (left straddle). Use Short straddle paper live (strategy-6).',
+  });
 }
 
 async function listTrades(req, res) {

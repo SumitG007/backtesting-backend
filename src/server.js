@@ -6,36 +6,22 @@ const { setPlatformReady } = require('./serverState');
 const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
 const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
-const strategyFourPaperEngine = require('./services/liveShortStraddleEngine');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
 const strategyElevenPaperEngine = require('./services/liveSlFlipEngine');
 
-/** One-shot DB restore when REOPEN_STRATEGY_A_TRADE_ID is set (see npm run reopen:strategy-a). */
+/** Legacy Strategy A reopen env — engine retired. */
 async function runPendingStrategyAReopenFromEnv() {
   const tradeId = String(process.env.REOPEN_STRATEGY_A_TRADE_ID || '').trim();
   if (!tradeId) return;
-  const exitTime = String(process.env.REOPEN_STRATEGY_A_EXIT_TIME || '09:20').trim();
-  console.log(`[REOPEN] Restoring Strategy A trade ${tradeId} (exit ${exitTime} IST on next valid day)…`);
-  const { reopenStrategyATrade } = require('./services/reopenStrategyATradeService');
-  const result = await reopenStrategyATrade(tradeId, { exitTime });
-  console.log('[REOPEN] Done:', {
-    tradeId: result.tradeId,
-    status: result.trade?.status,
-    hasExitTime: Boolean(result.trade?.exitTime),
-    plannedExitDateKey: result.plannedExitDateKey,
-    nextDayExit: result.nextDayExit,
-    walletRealizedPnl: result.walletRealizedPnl,
-  });
+  console.warn('[REOPEN] Strategy A paper-live was removed; ignoring REOPEN_STRATEGY_A_TRADE_ID=', tradeId);
   delete process.env.REOPEN_STRATEGY_A_TRADE_ID;
 }
 
 async function bootBackgroundServices() {
   try {
-    const s4 = require('./services/liveShortStraddleEngine');
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
     const s7 = require('./services/livePutBuyEngine');
-    await s4.reconcileOpenTrades();
     await s6.reconcileOpenTrades();
     await s7.reconcileOpenTrades();
     await require('./services/liveSlFlipEngine').reconcileOpenTrades();
@@ -63,25 +49,14 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategyFourPaperEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('Strategy 2 paper-live engine started (always on)');
-    } else {
-      console.warn('Strategy 2 paper-live engine boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('Strategy 2 paper-live engine boot failed:', err.message);
-  }
-
-  try {
     const boot = await strategySixPaperEngine.ensureEngineRunning();
     if (boot.ok) {
-      console.log('Strategy 6 paper-live engine started (always on)');
+      console.log('Short straddle paper-live engine started (strategy-6)');
     } else {
-      console.warn('Strategy 6 paper-live engine boot:', boot.error || 'unknown');
+      console.warn('Short straddle paper-live engine boot:', boot.error || 'unknown');
     }
   } catch (err) {
-    console.warn('Strategy 6 paper-live engine boot failed:', err.message);
+    console.warn('Short straddle paper-live engine boot failed:', err.message);
   }
 
   try {
@@ -110,8 +85,7 @@ async function bootBackgroundServices() {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
     if (
-      resume.strategy4?.resumed
-      || resume.strategy6?.resumed
+      resume.strategy6?.resumed
       || resume.strategy7?.resumed
       || resume.strategy11?.resumed
     ) {

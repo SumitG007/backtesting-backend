@@ -10,7 +10,7 @@ function health(_req, res) {
     build: {
       commit: process.env.GIT_COMMIT || null,
       backtestRoutes: ['strategy2', 'strategy3', 'strategy8'],
-      liveStrategies: ['strategy-2', 'strategy-3', 'strategy-4', 'strategy-6', 'strategy-8'],
+      liveStrategies: ['strategy-3', 'strategy-6', 'strategy-8'],
     },
   });
 }
