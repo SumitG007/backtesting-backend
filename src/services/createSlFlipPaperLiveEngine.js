@@ -26,6 +26,14 @@ const POLL_INTERVAL_MS = 5000;
 const POSITION_POLL_MS = 1000;
 /** Merge 1m option OHLC so brief wicks arm trail / hit SL even when ticker skips them. */
 const OHLC_RECONCILE_MS = 10000;
+/** Ignore 1m OHLC on the entry minute — prevents same-bar high/low re-exit loops. */
+const OHLC_WARMUP_AFTER_ENTRY_MS = 60_000;
+/** After TRAIL_STOP, wait before same-side re-entry (avoids instant re-exit on stale bar). */
+const TRAIL_REENTRY_COOLDOWN_MS = 60_000;
+/** Brief pause after hard SL before opposite flip. */
+const FLIP_REENTRY_COOLDOWN_MS = 3000;
+/** Hard floor between any two entries. */
+const MIN_ENTRY_GAP_MS = 5000;
 const TICK_FRESH_MS = 45000;
 /** Anti-flicker only — was 8s and blocked real SL hits right after entry. */
 const MIN_HOLD_MS = 2000;
@@ -94,6 +102,11 @@ const engineState = {
   lastError: null,
   lastSignalAt: null,
   dayTradeCount: 0,
+  /** Block re-entry until this timestamp (ms). */
+  nextEntryAllowedAtMs: 0,
+  lastEntryPlacedAtMs: null,
+  /** No 1m OHLC reconcile until this time (ms) — entry bar excluded. */
+  ohlcEligibleAfterMs: null,
 };
 
 /** Cache index 5m bar direction to avoid hammering charts API on every poll. */
@@ -243,7 +256,8 @@ async function restorePendingReentryIfNeeded(clock) {
   } else if (reason === 'TRAIL_STOP') {
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    engineState.earliestEntryBarOpenMinutes = clock.minutes;
+    engineState.earliestEntryBarOpenMinutes = clock.minutes + 1;
+    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
     logLine('RESTORE_PENDING_TRAIL', { optionType: closedSide, ist: istLabel(clock) });
   }
 }
@@ -305,6 +319,7 @@ function clearOpenRuntime() {
   engineState.lastOptionTick = null;
   engineState.openOptionInstrument = null;
   engineState.lastOhlcReconcileAt = null;
+  engineState.ohlcEligibleAfterMs = null;
   engineState.tickExitCheckScheduled = false;
 }
 
@@ -499,6 +514,9 @@ function applyPriceExtremes(entryPremium, high, low) {
 
 async function reconcileOhlcFromCandles(trade, clock) {
   const now = Date.now();
+  if (engineState.ohlcEligibleAfterMs != null && now < engineState.ohlcEligibleAfterMs) {
+    return;
+  }
   if (
     engineState.lastOhlcReconcileAt != null
     && now - engineState.lastOhlcReconcileAt < OHLC_RECONCILE_MS
@@ -527,11 +545,13 @@ async function reconcileOhlcFromCandles(trade, clock) {
     if (!rows?.length) return;
 
     const entryMs = new Date(trade.entryTime).getTime();
+    // Only 1m bars that OPEN after the entry minute (skip entry-bar spike from prior position).
+    const ohlcFloorMs = entryMs + 60_000;
     let maxHigh = null;
     let minLow = null;
     for (const row of rows) {
       const ts = new Date(row[0]).getTime();
-      if (Number.isNaN(ts) || ts < entryMs - 60_000) continue;
+      if (Number.isNaN(ts) || ts < ohlcFloorMs) continue;
       const h = Number(row[2]);
       const l = Number(row[3]);
       if (Number.isFinite(h) && h > 0) {
@@ -673,13 +693,14 @@ async function finalizeTrade(trade, { exitPremium, reason }) {
     engineState.earliestEntryBarOpenMinutes = null;
     engineState.pendingFlipOpposite = true;
     engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
+    engineState.nextEntryAllowedAtMs = Date.now() + FLIP_REENTRY_COOLDOWN_MS;
   } else if (reasonUpper === 'TRAIL_STOP') {
     engineState.pendingFlipOpposite = false;
     engineState.pendingFlipOptionType = null;
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    // Immediate re-entry when 5m direction still supports same side (no next-candle wait).
-    engineState.earliestEntryBarOpenMinutes = clock.minutes;
+    engineState.earliestEntryBarOpenMinutes = clock.minutes + 1;
+    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
   } else if (
     reasonUpper === 'DAY_CLOSE'
     || reasonUpper === 'MANUAL_CLOSE'
@@ -705,6 +726,16 @@ async function finalizeTrade(trade, { exitPremium, reason }) {
 async function placeLongOption(clock, { optionType, entryKind }) {
   if (engineState.enteringTrade || engineState.openTradeId) return { ok: false, reason: 'BUSY' };
   if (!canPlaceNewEntry(clock.minutes)) return { ok: false, reason: 'ENTRY_WINDOW_CLOSED' };
+  const now = Date.now();
+  if (engineState.nextEntryAllowedAtMs && now < engineState.nextEntryAllowedAtMs) {
+    return { ok: false, reason: 'REENTRY_COOLDOWN' };
+  }
+  if (
+    engineState.lastEntryPlacedAtMs
+    && now - engineState.lastEntryPlacedAtMs < MIN_ENTRY_GAP_MS
+  ) {
+    return { ok: false, reason: 'ENTRY_THROTTLE' };
+  }
   engineState.enteringTrade = true;
   try {
     const open = await getOpenTrade();
@@ -777,6 +808,9 @@ async function placeLongOption(clock, { optionType, entryKind }) {
     engineState.hardStopPremium = stopLossPremium;
     engineState.trailStopPremium = stopLossPremium; // effective stop starts at hard SL
     engineState.lastOptionTick = { ltp: entryPremium, ts: Date.now() };
+    engineState.lastEntryPlacedAtMs = Date.now();
+    engineState.ohlcEligibleAfterMs = Date.now() + OHLC_WARMUP_AFTER_ENTRY_MS;
+    engineState.lastOhlcReconcileAt = null;
 
     if (side === 'CE') engineState.dayStartedCE = true;
     // Clear only the pending that this fill satisfies.
@@ -815,6 +849,7 @@ async function placeLongOption(clock, { optionType, entryKind }) {
 async function tryPendingOrStarterEntry(clock) {
   if (engineState.openTradeId || engineState.enteringTrade || engineState.closingTrade) return;
   if (!canPlaceNewEntry(clock.minutes)) return;
+  if (engineState.nextEntryAllowedAtMs && Date.now() < engineState.nextEntryAllowedAtMs) return;
 
   if (engineState.pendingFlipOpposite && engineState.pendingFlipOptionType) {
     const placed = await placeLongOption(clock, {
