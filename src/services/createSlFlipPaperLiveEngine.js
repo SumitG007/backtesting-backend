@@ -28,10 +28,6 @@ const POSITION_POLL_MS = 1000;
 const OHLC_RECONCILE_MS = 10000;
 /** Ignore 1m OHLC on the entry minute — prevents same-bar high/low re-exit loops. */
 const OHLC_WARMUP_AFTER_ENTRY_MS = 60_000;
-/** After TRAIL_STOP, wait before same-side re-entry (avoids instant re-exit on stale bar). */
-const TRAIL_REENTRY_COOLDOWN_MS = 60_000;
-/** Brief pause after hard SL before opposite flip. */
-const FLIP_REENTRY_COOLDOWN_MS = 3000;
 /** Hard floor between any two entries. */
 const MIN_ENTRY_GAP_MS = 5000;
 const TICK_FRESH_MS = 45000;
@@ -157,6 +153,13 @@ function barOpenMinutes(minutes) {
   return Math.floor((m - SESSION_START_MIN) / BAR_INTERVAL) * BAR_INTERVAL + SESSION_START_MIN;
 }
 
+/** IST minutes when the next 5m bar opens (re-entry only after this). */
+function nextBarOpenMinutes(clockMinutes) {
+  const open = barOpenMinutes(clockMinutes);
+  if (open == null) return null;
+  return open + BAR_INTERVAL;
+}
+
 /** BULL = green 5m bar (close > open), BEAR = red, FLAT = doji. */
 async function getCurrentBarDirection(symbol, clock) {
   const formingOpen = barOpenMinutes(clock.minutes);
@@ -245,20 +248,28 @@ async function restorePendingReentryIfNeeded(clock) {
   if (!Number.isFinite(exitMs) || Date.now() - exitMs > 4 * 60 * 60 * 1000) return;
 
   const closedSide = String(last.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
+  const exitClock = getIstClock(new Date(last.exitTime));
+  const nextBarOpen = nextBarOpenMinutes(exitClock.minutes);
+
   if (reason === 'STOP_LOSS' || reason === 'BREAKEVEN_STOP') {
     engineState.pendingFlipOpposite = true;
     engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
+    engineState.earliestEntryBarOpenMinutes = nextBarOpen;
     logLine('RESTORE_PENDING_FLIP', {
       from: closedSide,
       to: engineState.pendingFlipOptionType,
+      earliestEntryBarOpenMinutes: nextBarOpen,
       ist: istLabel(clock),
     });
   } else if (reason === 'TRAIL_STOP') {
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    engineState.earliestEntryBarOpenMinutes = clock.minutes + 1;
-    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
-    logLine('RESTORE_PENDING_TRAIL', { optionType: closedSide, ist: istLabel(clock) });
+    engineState.earliestEntryBarOpenMinutes = nextBarOpen;
+    logLine('RESTORE_PENDING_TRAIL', {
+      optionType: closedSide,
+      earliestEntryBarOpenMinutes: nextBarOpen,
+      ist: istLabel(clock),
+    });
   }
 }
 
@@ -416,7 +427,7 @@ async function loadSettingsFromWallet() {
     ? wallet.strategy11EngineSettings.toObject?.() || wallet.strategy11EngineSettings
     : {};
   const savedScenarioId = String(raw.scenarioId || '');
-  // Fresh / wrong-scenario wallets get schema defaults (A: 8/4/2). Re-seed once per scenario.
+  // Fresh / wrong-scenario wallets get schema defaults (A: 6/3/1.5). Re-seed once per scenario.
   if (savedScenarioId !== String(scenarioId)) {
     if (!savedScenarioId && String(scenarioId) === 'A') {
       // Existing live A wallet — keep current numbers, only stamp scenarioId.
@@ -690,17 +701,17 @@ async function finalizeTrade(trade, { exitPremium, reason }) {
   if (reasonUpper === 'STOP_LOSS' || reasonUpper === 'BREAKEVEN_STOP') {
     engineState.pendingSameSideReentry = false;
     engineState.pendingSameSideOptionType = null;
-    engineState.earliestEntryBarOpenMinutes = null;
     engineState.pendingFlipOpposite = true;
     engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
-    engineState.nextEntryAllowedAtMs = Date.now() + FLIP_REENTRY_COOLDOWN_MS;
+    engineState.earliestEntryBarOpenMinutes = nextBarOpenMinutes(clock.minutes);
+    engineState.nextEntryAllowedAtMs = 0;
   } else if (reasonUpper === 'TRAIL_STOP') {
     engineState.pendingFlipOpposite = false;
     engineState.pendingFlipOptionType = null;
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    engineState.earliestEntryBarOpenMinutes = clock.minutes + 1;
-    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
+    engineState.earliestEntryBarOpenMinutes = nextBarOpenMinutes(clock.minutes);
+    engineState.nextEntryAllowedAtMs = 0;
   } else if (
     reasonUpper === 'DAY_CLOSE'
     || reasonUpper === 'MANUAL_CLOSE'
@@ -817,6 +828,7 @@ async function placeLongOption(clock, { optionType, entryKind }) {
     if (engineState.pendingFlipOpposite && engineState.pendingFlipOptionType === side) {
       engineState.pendingFlipOpposite = false;
       engineState.pendingFlipOptionType = null;
+      engineState.earliestEntryBarOpenMinutes = null;
     }
     if (engineState.pendingSameSideReentry && engineState.pendingSameSideOptionType === side) {
       engineState.pendingSameSideReentry = false;
@@ -852,6 +864,19 @@ async function tryPendingOrStarterEntry(clock) {
   if (engineState.nextEntryAllowedAtMs && Date.now() < engineState.nextEntryAllowedAtMs) return;
 
   if (engineState.pendingFlipOpposite && engineState.pendingFlipOptionType) {
+    const readyAt = engineState.earliestEntryBarOpenMinutes;
+    if (readyAt != null && clock.minutes < readyAt) return;
+
+    const direction = await getCurrentBarDirection(engineState.symbol, clock);
+    if (!directionSupportsOption(engineState.pendingFlipOptionType, direction)) {
+      logLine('FLIP_REENTRY_DIRECTION_WAIT', {
+        optionType: engineState.pendingFlipOptionType,
+        direction: direction || 'UNKNOWN',
+        ist: istLabel(clock),
+      });
+      return;
+    }
+
     const placed = await placeLongOption(clock, {
       optionType: engineState.pendingFlipOptionType,
       entryKind: 'sl_flip',
@@ -871,14 +896,13 @@ async function tryPendingOrStarterEntry(clock) {
     if (readyAt != null && clock.minutes < readyAt) return;
 
     const direction = await getCurrentBarDirection(engineState.symbol, clock);
-    const aligned = directionSupportsOption(engineState.pendingSameSideOptionType, direction);
-    if (!aligned) {
-      logLine('TRAIL_REENTRY_DIRECTION_SOFT', {
+    if (!directionSupportsOption(engineState.pendingSameSideOptionType, direction)) {
+      logLine('TRAIL_REENTRY_DIRECTION_WAIT', {
         optionType: engineState.pendingSameSideOptionType,
         direction: direction || 'UNKNOWN',
-        note: 'entering_anyway',
         ist: istLabel(clock),
       });
+      return;
     }
 
     const placed = await placeLongOption(clock, {

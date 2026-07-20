@@ -10,9 +10,9 @@ const engine = createSlFlipPaperLiveEngine({
   logTag: 'SlFlipPaperLive',
   scenarioLabel: 'SL Flip paper live',
   barIntervalMinutes: 5,
-  defaultStopLossPoints: 8,
-  defaultTrailActivationPoints: 4,
-  defaultTrailStepPoints: 2,
+  defaultStopLossPoints: 6,
+  defaultTrailActivationPoints: 3,
+  defaultTrailStepPoints: 1.5,
 });
 
 module.exports = engine;

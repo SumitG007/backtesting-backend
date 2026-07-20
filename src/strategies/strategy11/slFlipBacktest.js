@@ -3,7 +3,7 @@
  * 09:20 buy CE. On STOP_LOSS → flip to opposite side immediately (same bar in backtest).
  * On TRAIL_STOP → same side immediately on exit bar. No new entries after 15:15; EOD 15:20.
  *
- * Stops: hard SL (default 8 pts). After +activation (default 4), move SL to peak − step (default 2).
+ * Stops: hard SL (default 6 pts). After +activation (default 3), move SL to peak − step (default 1.5).
  */
 
 const { getIstClock, parseClockMinutes, isWeekendDateKey } = require('../../utils/dateTime');
@@ -20,9 +20,9 @@ const {
 const DEFAULT_ENTRY = 560; // 09:20
 const ENTRY_CUTOFF = 915; // 15:15 — no new entries after this bar open
 const EOD_EXIT = 920; // 15:20
-const DEFAULT_SL = 8;
-const DEFAULT_TRAIL_ACT = 4;
-const DEFAULT_TRAIL_STEP = 2;
+const DEFAULT_SL = 6;
+const DEFAULT_TRAIL_ACT = 3;
+const DEFAULT_TRAIL_STEP = 1.5;
 const BAR_INTERVAL = 5;
 
 function findFirstEntryIdx(dayBars, entryFromMin) {
@@ -175,12 +175,12 @@ function runSlFlipBacktest({ candles, settings }) {
 
       const safeExitIdx = Number.isFinite(exitIdx) ? exitIdx : entryIdx;
       if (exitReason === 'STOP_LOSS' || exitReason === 'BREAKEVEN_STOP') {
-        // Flip opposite immediately — re-enter on the same exit bar (exits start next bar).
+        // Flip opposite on the next 5m bar (no mid-bar instant re-entry).
         optionType = optionType === 'CE' ? 'PE' : 'CE';
-        entryIdx = safeExitIdx;
+        entryIdx = safeExitIdx + 1;
         slFlips += 1;
       } else if (exitReason === 'TRAIL_STOP' || exitReason === 'TARGET') {
-        entryIdx = safeExitIdx;
+        entryIdx = safeExitIdx + 1;
         trailReentries += 1;
       } else {
         // Unknown / max-hold style — wait next bar, keep side.
