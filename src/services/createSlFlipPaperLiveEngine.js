@@ -192,13 +192,60 @@ async function getCurrentBarDirection(symbol, clock) {
   }
 }
 
-/** CE re-enters on bullish 5m; PE on bearish. Unknown direction → allow (don't block on API blip). */
+/** CE re-enters on bullish 5m; PE on bearish. FLAT/null → allow (do not block entries). */
 function directionSupportsOption(optionType, direction) {
-  if (direction == null) return true;
+  if (direction == null || direction === 'FLAT') return true;
   const side = String(optionType).toUpperCase();
   if (direction === 'BULL') return side === 'CE';
   if (direction === 'BEAR') return side === 'PE';
-  return false;
+  return true;
+}
+
+/** After restart, re-arm pending flip / trail from the latest closed trade today. */
+async function restorePendingReentryIfNeeded(clock) {
+  if (
+    engineState.openTradeId
+    || engineState.pendingFlipOpposite
+    || engineState.pendingSameSideReentry
+    || engineState.enteringTrade
+    || engineState.entriesClosedForDay
+    || !canPlaceNewEntry(clock.minutes)
+  ) {
+    return;
+  }
+
+  const last = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+    exitTime: { $ne: null },
+    status: 'CLOSED',
+  })
+    .sort({ exitTime: -1 })
+    .lean();
+
+  if (!last) return;
+
+  const reason = String(last.reason || '').toUpperCase();
+  if (reason === 'DAY_CLOSE' || reason === 'MANUAL_CLOSE' || reason === 'MANUAL') return;
+
+  const exitMs = new Date(last.exitTime).getTime();
+  if (!Number.isFinite(exitMs) || Date.now() - exitMs > 4 * 60 * 60 * 1000) return;
+
+  const closedSide = String(last.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
+  if (reason === 'STOP_LOSS' || reason === 'BREAKEVEN_STOP') {
+    engineState.pendingFlipOpposite = true;
+    engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
+    logLine('RESTORE_PENDING_FLIP', {
+      from: closedSide,
+      to: engineState.pendingFlipOptionType,
+      ist: istLabel(clock),
+    });
+  } else if (reason === 'TRAIL_STOP') {
+    engineState.pendingSameSideReentry = true;
+    engineState.pendingSameSideOptionType = closedSide;
+    engineState.earliestEntryBarOpenMinutes = clock.minutes;
+    logLine('RESTORE_PENDING_TRAIL', { optionType: closedSide, ist: istLabel(clock) });
+  }
 }
 
 function entryFromMin() {
@@ -789,13 +836,14 @@ async function tryPendingOrStarterEntry(clock) {
     if (readyAt != null && clock.minutes < readyAt) return;
 
     const direction = await getCurrentBarDirection(engineState.symbol, clock);
-    if (!directionSupportsOption(engineState.pendingSameSideOptionType, direction)) {
-      logLine('TRAIL_REENTRY_WAIT_DIRECTION', {
+    const aligned = directionSupportsOption(engineState.pendingSameSideOptionType, direction);
+    if (!aligned) {
+      logLine('TRAIL_REENTRY_DIRECTION_SOFT', {
         optionType: engineState.pendingSameSideOptionType,
         direction: direction || 'UNKNOWN',
+        note: 'entering_anyway',
         ist: istLabel(clock),
       });
-      return;
     }
 
     const placed = await placeLongOption(clock, {
@@ -942,10 +990,16 @@ async function pollOnce() {
     }
     await resetSessionIfNewDay(clock);
 
-    if (engineState.openTradeId) {
+    const open = await getOpenTrade();
+    if (open) {
+      engineState.openTradeId = open._id.toString();
       await checkOpenTrade();
-    } else if (!isEod(clock.minutes)) {
-      await tryPendingOrStarterEntry(clock);
+    } else {
+      engineState.openTradeId = null;
+      if (!isEod(clock.minutes)) {
+        await restorePendingReentryIfNeeded(clock);
+        await tryPendingOrStarterEntry(clock);
+      }
     }
 
     if (isEod(clock.minutes)) {
@@ -989,6 +1043,8 @@ async function syncOpenStateFromDb() {
     engineState.openTradeId = null;
     clearSubs();
     stopPositionPoll();
+    const clock = getIstClock(new Date());
+    await restorePendingReentryIfNeeded(clock);
     return;
   }
   engineState.openTradeId = open._id.toString();

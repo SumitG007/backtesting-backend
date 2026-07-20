@@ -1,8 +1,7 @@
 /**
  * Strategy 6 (UI) — SL Flip.
  * 09:20 buy CE. On STOP_LOSS → flip to opposite side immediately (same bar in backtest).
- * On TRAIL_STOP → same side immediately when exit-bar 5m direction still supports (CE green / PE red).
- * No new entries after 15:15; EOD 15:20.
+ * On TRAIL_STOP → same side immediately on exit bar. No new entries after 15:15; EOD 15:20.
  *
  * Stops: hard SL (default 8 pts). After +activation (default 4), move SL to peak − step (default 2).
  */
@@ -30,33 +29,6 @@ function findFirstEntryIdx(dayBars, entryFromMin) {
   for (let i = 0; i < dayBars.length - 1; i += 1) {
     const openM = getIstClock(dayBars[i][0]).minutes;
     if (openM >= entryFromMin && openM < ENTRY_CUTOFF) return i;
-  }
-  return -1;
-}
-
-function barDirection(bar) {
-  const open = Number(bar[1]);
-  const close = Number(bar[4]);
-  if (!Number.isFinite(open) || !Number.isFinite(close)) return 'FLAT';
-  if (close > open) return 'BULL';
-  if (close < open) return 'BEAR';
-  return 'FLAT';
-}
-
-function directionSupportsOption(optionType, direction) {
-  const side = String(optionType || '').toUpperCase();
-  if (direction === 'BULL') return side === 'CE';
-  if (direction === 'BEAR') return side === 'PE';
-  return false;
-}
-
-/** First bar from startIdx whose direction still supports same-side re-entry after trail exit. */
-function findTrailReentryIdx(dayBars, startIdx, optionType, entryCutoffMin) {
-  const from = Number.isFinite(Number(startIdx)) ? Math.max(0, Number(startIdx)) : 0;
-  for (let i = from; i < dayBars.length - 1; i += 1) {
-    const openM = getIstClock(dayBars[i][0]).minutes;
-    if (openM >= entryCutoffMin) return -1;
-    if (directionSupportsOption(optionType, barDirection(dayBars[i]))) return i;
   }
   return -1;
 }
@@ -208,10 +180,7 @@ function runSlFlipBacktest({ candles, settings }) {
         entryIdx = safeExitIdx;
         slFlips += 1;
       } else if (exitReason === 'TRAIL_STOP' || exitReason === 'TARGET') {
-        // Same side immediately when 5m bar direction still supports (scan forward if flat/wrong).
-        const reentryIdx = findTrailReentryIdx(dayBars, safeExitIdx, optionType, entryCutoffMin);
-        if (reentryIdx < 0) break;
-        entryIdx = reentryIdx;
+        entryIdx = safeExitIdx;
         trailReentries += 1;
       } else {
         // Unknown / max-hold style — wait next bar, keep side.
