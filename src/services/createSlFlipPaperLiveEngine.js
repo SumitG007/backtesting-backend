@@ -153,7 +153,7 @@ function barOpenMinutes(minutes) {
   return Math.floor((m - SESSION_START_MIN) / BAR_INTERVAL) * BAR_INTERVAL + SESSION_START_MIN;
 }
 
-/** IST minutes when the next 5m bar opens (re-entry only after this). */
+/** IST minutes when the next 5m bar opens (legacy helper; re-entry may be immediate). */
 function nextBarOpenMinutes(clockMinutes) {
   const open = barOpenMinutes(clockMinutes);
   if (open == null) return null;
@@ -249,25 +249,26 @@ async function restorePendingReentryIfNeeded(clock) {
 
   const closedSide = String(last.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
   const exitClock = getIstClock(new Date(last.exitTime));
-  const nextBarOpen = nextBarOpenMinutes(exitClock.minutes);
 
   if (reason === 'STOP_LOSS' || reason === 'BREAKEVEN_STOP') {
     engineState.pendingFlipOpposite = true;
     engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
-    engineState.earliestEntryBarOpenMinutes = nextBarOpen;
+    engineState.earliestEntryBarOpenMinutes = null;
+    engineState.nextEntryAllowedAtMs = Date.now() + FLIP_REENTRY_COOLDOWN_MS;
     logLine('RESTORE_PENDING_FLIP', {
       from: closedSide,
       to: engineState.pendingFlipOptionType,
-      earliestEntryBarOpenMinutes: nextBarOpen,
+      earliestEntryBarOpenMinutes: null,
       ist: istLabel(clock),
     });
   } else if (reason === 'TRAIL_STOP') {
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    engineState.earliestEntryBarOpenMinutes = nextBarOpen;
+    engineState.earliestEntryBarOpenMinutes = null;
+    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
     logLine('RESTORE_PENDING_TRAIL', {
       optionType: closedSide,
-      earliestEntryBarOpenMinutes: nextBarOpen,
+      earliestEntryBarOpenMinutes: null,
       ist: istLabel(clock),
     });
   }
@@ -703,15 +704,15 @@ async function finalizeTrade(trade, { exitPremium, reason }) {
     engineState.pendingSameSideOptionType = null;
     engineState.pendingFlipOpposite = true;
     engineState.pendingFlipOptionType = oppositeOptionType(closedSide);
-    engineState.earliestEntryBarOpenMinutes = nextBarOpenMinutes(clock.minutes);
-    engineState.nextEntryAllowedAtMs = 0;
+    engineState.earliestEntryBarOpenMinutes = null;
+    engineState.nextEntryAllowedAtMs = Date.now() + FLIP_REENTRY_COOLDOWN_MS;
   } else if (reasonUpper === 'TRAIL_STOP') {
     engineState.pendingFlipOpposite = false;
     engineState.pendingFlipOptionType = null;
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    engineState.earliestEntryBarOpenMinutes = nextBarOpenMinutes(clock.minutes);
-    engineState.nextEntryAllowedAtMs = 0;
+    engineState.earliestEntryBarOpenMinutes = null;
+    engineState.nextEntryAllowedAtMs = Date.now() + TRAIL_REENTRY_COOLDOWN_MS;
   } else if (
     reasonUpper === 'DAY_CLOSE'
     || reasonUpper === 'MANUAL_CLOSE'
@@ -864,19 +865,6 @@ async function tryPendingOrStarterEntry(clock) {
   if (engineState.nextEntryAllowedAtMs && Date.now() < engineState.nextEntryAllowedAtMs) return;
 
   if (engineState.pendingFlipOpposite && engineState.pendingFlipOptionType) {
-    const readyAt = engineState.earliestEntryBarOpenMinutes;
-    if (readyAt != null && clock.minutes < readyAt) return;
-
-    const direction = await getCurrentBarDirection(engineState.symbol, clock);
-    if (!directionSupportsOption(engineState.pendingFlipOptionType, direction)) {
-      logLine('FLIP_REENTRY_DIRECTION_WAIT', {
-        optionType: engineState.pendingFlipOptionType,
-        direction: direction || 'UNKNOWN',
-        ist: istLabel(clock),
-      });
-      return;
-    }
-
     const placed = await placeLongOption(clock, {
       optionType: engineState.pendingFlipOptionType,
       entryKind: 'sl_flip',
@@ -892,9 +880,6 @@ async function tryPendingOrStarterEntry(clock) {
   }
 
   if (engineState.pendingSameSideReentry && engineState.pendingSameSideOptionType) {
-    const readyAt = engineState.earliestEntryBarOpenMinutes;
-    if (readyAt != null && clock.minutes < readyAt) return;
-
     const direction = await getCurrentBarDirection(engineState.symbol, clock);
     if (!directionSupportsOption(engineState.pendingSameSideOptionType, direction)) {
       logLine('TRAIL_REENTRY_DIRECTION_WAIT', {

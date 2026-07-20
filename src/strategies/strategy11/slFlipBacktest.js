@@ -175,12 +175,12 @@ function runSlFlipBacktest({ candles, settings }) {
 
       const safeExitIdx = Number.isFinite(exitIdx) ? exitIdx : entryIdx;
       if (exitReason === 'STOP_LOSS' || exitReason === 'BREAKEVEN_STOP') {
-        // Flip opposite on the next 5m bar (no mid-bar instant re-entry).
+        // Flip opposite immediately (same bar in backtest).
         optionType = optionType === 'CE' ? 'PE' : 'CE';
-        entryIdx = safeExitIdx + 1;
+        entryIdx = safeExitIdx;
         slFlips += 1;
       } else if (exitReason === 'TRAIL_STOP' || exitReason === 'TARGET') {
-        entryIdx = safeExitIdx + 1;
+        entryIdx = safeExitIdx;
         trailReentries += 1;
       } else {
         // Unknown / max-hold style — wait next bar, keep side.
