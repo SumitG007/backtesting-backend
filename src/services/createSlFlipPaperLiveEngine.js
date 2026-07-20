@@ -19,7 +19,7 @@ const {
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
 } = require('./dhanLiveService');
-const { fetchIntradayCandlesBySecurity } = require('./dhanDataService');
+const { fetchIntradayCandlesBySecurity, fetchTradingDayCandles } = require('./dhanDataService');
 
 const POLL_INTERVAL_MS = 5000;
 /** Open-position mark/exit poll — keep tight so SL/trail are not delayed. */
@@ -96,6 +96,14 @@ const engineState = {
   dayTradeCount: 0,
 };
 
+/** Cache index 5m bar direction to avoid hammering charts API on every poll. */
+const barDirectionCache = {
+  at: 0,
+  dateKey: null,
+  formingOpen: null,
+  direction: null,
+};
+
 function istLabel(clock) {
   const h = Math.floor(clock.minutes / 60);
   const m = clock.minutes % 60;
@@ -134,6 +142,63 @@ function barOpenMinutes(minutes) {
   if (!Number.isFinite(m)) return null;
   if (m < SESSION_START_MIN) return SESSION_START_MIN;
   return Math.floor((m - SESSION_START_MIN) / BAR_INTERVAL) * BAR_INTERVAL + SESSION_START_MIN;
+}
+
+/** BULL = green 5m bar (close > open), BEAR = red, FLAT = doji. */
+async function getCurrentBarDirection(symbol, clock) {
+  const formingOpen = barOpenMinutes(clock.minutes);
+  const now = Date.now();
+  if (
+    barDirectionCache.dateKey === clock.dateKey
+    && barDirectionCache.formingOpen === formingOpen
+    && now - barDirectionCache.at < 15000
+  ) {
+    return barDirectionCache.direction;
+  }
+
+  try {
+    const { rows } = await fetchTradingDayCandles({
+      symbol,
+      interval: String(BAR_INTERVAL),
+      dateKey: clock.dateKey,
+    });
+    if (!rows?.length) return null;
+
+    let bar = null;
+    for (const row of rows) {
+      const barClock = getIstClock(new Date(row[0]));
+      if (barOpenMinutes(barClock.minutes) === formingOpen) {
+        bar = row;
+        break;
+      }
+    }
+    if (!bar) bar = rows[rows.length - 1];
+
+    const open = Number(bar[1]);
+    const close = Number(bar[4]);
+    if (!Number.isFinite(open) || !Number.isFinite(close)) return null;
+
+    let direction = 'FLAT';
+    if (close > open) direction = 'BULL';
+    else if (close < open) direction = 'BEAR';
+
+    barDirectionCache.at = now;
+    barDirectionCache.dateKey = clock.dateKey;
+    barDirectionCache.formingOpen = formingOpen;
+    barDirectionCache.direction = direction;
+    return direction;
+  } catch {
+    return null;
+  }
+}
+
+/** CE re-enters on bullish 5m; PE on bearish. Unknown direction → allow (don't block on API blip). */
+function directionSupportsOption(optionType, direction) {
+  if (direction == null) return true;
+  const side = String(optionType).toUpperCase();
+  if (direction === 'BULL') return side === 'CE';
+  if (direction === 'BEAR') return side === 'PE';
+  return false;
 }
 
 function entryFromMin() {
@@ -566,8 +631,8 @@ async function finalizeTrade(trade, { exitPremium, reason }) {
     engineState.pendingFlipOptionType = null;
     engineState.pendingSameSideReentry = true;
     engineState.pendingSameSideOptionType = closedSide;
-    const forming = barOpenMinutes(clock.minutes);
-    engineState.earliestEntryBarOpenMinutes = forming + BAR_INTERVAL;
+    // Immediate re-entry when 5m direction still supports same side (no next-candle wait).
+    engineState.earliestEntryBarOpenMinutes = clock.minutes;
   } else if (
     reasonUpper === 'DAY_CLOSE'
     || reasonUpper === 'MANUAL_CLOSE'
@@ -722,6 +787,17 @@ async function tryPendingOrStarterEntry(clock) {
   if (engineState.pendingSameSideReentry && engineState.pendingSameSideOptionType) {
     const readyAt = engineState.earliestEntryBarOpenMinutes;
     if (readyAt != null && clock.minutes < readyAt) return;
+
+    const direction = await getCurrentBarDirection(engineState.symbol, clock);
+    if (!directionSupportsOption(engineState.pendingSameSideOptionType, direction)) {
+      logLine('TRAIL_REENTRY_WAIT_DIRECTION', {
+        optionType: engineState.pendingSameSideOptionType,
+        direction: direction || 'UNKNOWN',
+        ist: istLabel(clock),
+      });
+      return;
+    }
+
     const placed = await placeLongOption(clock, {
       optionType: engineState.pendingSameSideOptionType,
       entryKind: 'trail_reentry',
@@ -845,8 +921,12 @@ async function checkOpenTrade() {
     engineState.closingTrade = false;
   }
 
-  // Immediate flip attempt after SL — single try; failures stay pending for next poll.
-  if (exitReason === 'STOP_LOSS' || exitReason === 'BREAKEVEN_STOP') {
+  // Immediate re-entry after exit — flip on SL, same-side on trail when direction aligns.
+  if (
+    exitReason === 'STOP_LOSS'
+    || exitReason === 'BREAKEVEN_STOP'
+    || exitReason === 'TRAIL_STOP'
+  ) {
     await tryPendingOrStarterEntry(clock);
   }
 }

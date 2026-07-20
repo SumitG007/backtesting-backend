@@ -175,9 +175,9 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
     const count = closedToday.length;
     const scenarioLabel = engine?.scenarioLabel || 'SL Flip';
     if (count > 0) {
-      return `${count} ${scenarioLabel} trade(s) closed today. SL → flip opposite immediately; trail → same side after next ${trailBarM}m. Window ${entryWindowLabel} IST · EOD 15:20.`;
+      return `${count} ${scenarioLabel} trade(s) closed today. SL → flip opposite immediately; trail → same side immediately when 5m direction still aligns. Window ${entryWindowLabel} IST · EOD 15:20.`;
     }
-    return `No open position. Day starter is CE at/after 09:20 (${entryWindowLabel} IST). Tick exits · flip on SL · trail waits next ${trailBarM}m.`;
+    return `No open position. Day starter is CE at/after 09:20 (${entryWindowLabel} IST). Tick + 1m OHLC exits · flip on SL immediately · trail re-entry when 5m bar still supports side.`;
   }
   if (closedToday.length > 0) {
     const t = closedToday[0];
