@@ -25,7 +25,7 @@ const POLL_INTERVAL_MS = 5000;
 /** Open-position mark/exit poll — keep tight so SL/trail are not delayed. */
 const POSITION_POLL_MS = 1000;
 /** Merge 1m option OHLC so brief wicks arm trail / hit SL even when ticker skips them. */
-const OHLC_RECONCILE_MS = 20000;
+const OHLC_RECONCILE_MS = 10000;
 const TICK_FRESH_MS = 45000;
 /** Anti-flicker only — was 8s and blocked real SL hits right after entry. */
 const MIN_HOLD_MS = 2000;
