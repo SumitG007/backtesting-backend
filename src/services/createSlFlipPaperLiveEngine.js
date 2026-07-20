@@ -925,7 +925,10 @@ async function checkOpenTrade() {
     engineState.openEntryPremium = entry;
     updateTrailFromLtp(entry, ltp);
     const prevHigh = Number(trade.highSinceEntry);
-    const highSinceEntry = Number.isFinite(prevHigh) ? Math.max(prevHigh, ltp) : ltp;
+    const peakHigh = entry + engineState.peakProfitPoints;
+    const highSinceEntry = Number.isFinite(prevHigh)
+      ? Math.max(prevHigh, ltp, peakHigh)
+      : Math.max(ltp, peakHigh);
     trade.highSinceEntry = Number(highSinceEntry.toFixed(2));
     const prevLow = Number(trade.lowSinceEntry);
     const lowSinceEntry = Number.isFinite(prevLow) && prevLow > 0
@@ -945,6 +948,7 @@ async function checkOpenTrade() {
       trailStopPremium: engineState.trailStopPremium,
       peakProfitPoints: engineState.peakProfitPoints,
       lowSinceEntry: trade.lowSinceEntry,
+      highSinceEntry: trade.highSinceEntry,
       exitMode: 'tick+low+ohlc1m',
       minHoldMs: MIN_HOLD_MS,
     };
@@ -1147,6 +1151,7 @@ function getEngineSnapshot() {
     trailStopPremium: engineState.trailStopPremium,
     hardStopPremium: engineState.hardStopPremium,
     lowSinceEntry: engineState.lowSinceEntry,
+    highSinceEntry: engineState.openPositionMark?.highSinceEntry ?? null,
     openPositionMark: engineState.openPositionMark,
     lastOptionTick: engineState.lastOptionTick,
     exitMode: 'tick+low+ohlc1m',
@@ -1185,6 +1190,7 @@ async function refreshOpenPositionMarkForStatus() {
     trailStopPremium: engineState.trailStopPremium,
     peakProfitPoints: engineState.peakProfitPoints,
     lowSinceEntry: trade.lowSinceEntry,
+    highSinceEntry: trade.highSinceEntry,
     exitMode: 'tick+low+ohlc1m',
   };
   trade.openPositionMark = mark;
