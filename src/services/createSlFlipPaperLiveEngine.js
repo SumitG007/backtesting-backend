@@ -19,10 +19,13 @@ const {
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
 } = require('./dhanLiveService');
+const { fetchIntradayCandlesBySecurity } = require('./dhanDataService');
 
 const POLL_INTERVAL_MS = 5000;
 /** Open-position mark/exit poll — keep tight so SL/trail are not delayed. */
 const POSITION_POLL_MS = 1000;
+/** Merge 1m option OHLC so brief wicks arm trail / hit SL even when ticker skips them. */
+const OHLC_RECONCILE_MS = 20000;
 const TICK_FRESH_MS = 45000;
 /** Anti-flicker only — was 8s and blocked real SL hits right after entry. */
 const MIN_HOLD_MS = 2000;
@@ -79,6 +82,9 @@ const engineState = {
   hardStopPremium: null,
   lastOptionTick: null,
   openPositionMark: null,
+  /** Cached Dhan contract for 1m OHLC reconcile on the open leg. */
+  openOptionInstrument: null,
+  lastOhlcReconcileAt: null,
   /** Coalesce tick-driven exit checks so we don't stampede finalize. */
   tickExitCheckScheduled: false,
   pollTimer: null,
@@ -185,6 +191,8 @@ function clearOpenRuntime() {
   engineState.hardStopPremium = null;
   engineState.openPositionMark = null;
   engineState.lastOptionTick = null;
+  engineState.openOptionInstrument = null;
+  engineState.lastOhlcReconcileAt = null;
   engineState.tickExitCheckScheduled = false;
 }
 
@@ -342,15 +350,10 @@ function noteLowFromLtp(ltp) {
   }
 }
 
-function updateTrailFromLtp(entryPremium, ltp) {
+function syncTrailStopPremium(entryPremium) {
   const act = engineState.settings.trailingActivationPoints;
   const step = engineState.settings.trailingStepPoints;
   const hardSl = Math.max(0.05, Number(entryPremium) - engineState.settings.stopLossPoints);
-  const profit = Number(ltp) - Number(entryPremium);
-  if (profit > engineState.peakProfitPoints) engineState.peakProfitPoints = profit;
-  noteLowFromLtp(ltp);
-
-  // Hard SL until +activation; then move SL to peak − step (ratchet up only).
   engineState.hardStopPremium = hardSl;
   if (engineState.peakProfitPoints >= act) {
     engineState.trailStopPremium = Math.max(
@@ -359,6 +362,95 @@ function updateTrailFromLtp(entryPremium, ltp) {
     );
   } else {
     engineState.trailStopPremium = hardSl;
+  }
+}
+
+function noteHighFromPrice(entryPremium, price) {
+  const profit = Number(price) - Number(entryPremium);
+  if (Number.isFinite(profit) && profit > engineState.peakProfitPoints) {
+    engineState.peakProfitPoints = profit;
+  }
+}
+
+function updateTrailFromLtp(entryPremium, ltp) {
+  noteHighFromPrice(entryPremium, ltp);
+  noteLowFromLtp(ltp);
+  syncTrailStopPremium(entryPremium);
+}
+
+/** Apply bar/tick extremes — high arms trail, low can trigger SL. */
+function applyPriceExtremes(entryPremium, high, low) {
+  if (Number.isFinite(high) && high > 0) noteHighFromPrice(entryPremium, high);
+  if (Number.isFinite(low) && low > 0) noteLowFromLtp(low);
+  syncTrailStopPremium(entryPremium);
+}
+
+async function reconcileOhlcFromCandles(trade, clock) {
+  const now = Date.now();
+  if (
+    engineState.lastOhlcReconcileAt != null
+    && now - engineState.lastOhlcReconcileAt < OHLC_RECONCILE_MS
+  ) {
+    return;
+  }
+  engineState.lastOhlcReconcileAt = now;
+
+  try {
+    if (!engineState.openOptionInstrument) {
+      engineState.openOptionInstrument = await resolveOptionInstrument({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+        optionType: trade.optionType,
+      });
+    }
+    const inst = engineState.openOptionInstrument;
+    const { rows } = await fetchIntradayCandlesBySecurity({
+      securityId: inst.securityId,
+      exchangeSegment: inst.exchangeSegment || 'NSE_FNO',
+      instrument: 'OPTIDX',
+      interval: '1',
+      dateKey: clock.dateKey,
+    });
+    if (!rows?.length) return;
+
+    const entryMs = new Date(trade.entryTime).getTime();
+    let maxHigh = null;
+    let minLow = null;
+    for (const row of rows) {
+      const ts = new Date(row[0]).getTime();
+      if (Number.isNaN(ts) || ts < entryMs - 60_000) continue;
+      const h = Number(row[2]);
+      const l = Number(row[3]);
+      if (Number.isFinite(h) && h > 0) {
+        maxHigh = maxHigh == null ? h : Math.max(maxHigh, h);
+      }
+      if (Number.isFinite(l) && l > 0) {
+        minLow = minLow == null ? l : Math.min(minLow, l);
+      }
+    }
+    if (maxHigh == null && minLow == null) return;
+
+    const entry = Number(trade.entryPremium);
+    const peakBefore = engineState.peakProfitPoints;
+    const lowBefore = engineState.lowSinceEntry;
+    applyPriceExtremes(entry, maxHigh ?? entry, minLow ?? entry);
+
+    const peakChanged = engineState.peakProfitPoints > peakBefore + 1e-6;
+    const lowChanged = lowBefore != null && engineState.lowSinceEntry < lowBefore - 1e-6;
+    if (peakChanged || lowChanged) {
+      logLine('OHLC_RECONCILE', {
+        maxHigh,
+        minLow,
+        peakProfitPoints: engineState.peakProfitPoints,
+        trailStopPremium: engineState.trailStopPremium,
+        lowSinceEntry: engineState.lowSinceEntry,
+        ist: istLabel(clock),
+      });
+      maybeScheduleTickExitCheck(engineState.lowSinceEntry ?? maxHigh ?? entry);
+    }
+  } catch (err) {
+    logLine('OHLC_RECONCILE_FAIL', { error: err.message, ist: istLabel(clock) });
   }
 }
 
@@ -407,6 +499,8 @@ async function subscribeOpenOption(trade) {
       expiry: trade.expiryDate,
       optionType: trade.optionType,
     });
+    engineState.openOptionInstrument = instrument;
+    engineState.lastOhlcReconcileAt = null;
     subscribeLiveInstrument({
       key: OPTION_SUB_KEY,
       securityId: instrument.securityId,
@@ -699,6 +793,8 @@ async function checkOpenTrade() {
   }
   const clock = getIstClock(new Date());
 
+  await reconcileOhlcFromCandles(trade, clock);
+
   const ltp = await getMarkPremium(trade);
   if (Number.isFinite(ltp) && ltp > 0) {
     const entry = Number(trade.entryPremium);
@@ -725,7 +821,7 @@ async function checkOpenTrade() {
       trailStopPremium: engineState.trailStopPremium,
       peakProfitPoints: engineState.peakProfitPoints,
       lowSinceEntry: trade.lowSinceEntry,
-      exitMode: 'tick+low',
+      exitMode: 'tick+low+ohlc1m',
       minHoldMs: MIN_HOLD_MS,
     };
     trade.openPositionMark = mark;
@@ -913,15 +1009,19 @@ function getEngineSnapshot() {
     earliestNextDecisionMinutes: engineState.earliestEntryBarOpenMinutes,
     peakProfitPoints: engineState.peakProfitPoints,
     trailStopPremium: engineState.trailStopPremium,
+    hardStopPremium: engineState.hardStopPremium,
+    lowSinceEntry: engineState.lowSinceEntry,
     openPositionMark: engineState.openPositionMark,
     lastOptionTick: engineState.lastOptionTick,
-    exitMode: 'tick',
+    exitMode: 'tick+low+ohlc1m',
   };
 }
 
 async function refreshOpenPositionMarkForStatus() {
   const trade = await getOpenTrade();
   if (!trade) return null;
+  const clock = getIstClock(new Date());
+  await reconcileOhlcFromCandles(trade, clock);
   const ltp = await getMarkPremium(trade);
   if (!Number.isFinite(ltp)) return trade.openPositionMark;
   const entry = Number(trade.entryPremium);
@@ -930,18 +1030,26 @@ async function refreshOpenPositionMarkForStatus() {
   const prevHigh = Number(trade.highSinceEntry);
   const highSinceEntry = Number.isFinite(prevHigh) ? Math.max(prevHigh, ltp) : ltp;
   trade.highSinceEntry = Number(highSinceEntry.toFixed(2));
+  const prevLow = Number(trade.lowSinceEntry);
+  const lowSinceEntry = Number.isFinite(prevLow) && prevLow > 0
+    ? Math.min(prevLow, engineState.lowSinceEntry ?? ltp, ltp)
+    : (engineState.lowSinceEntry ?? ltp);
+  trade.lowSinceEntry = Number(Number(lowSinceEntry).toFixed(2));
+  engineState.lowSinceEntry = trade.lowSinceEntry;
   const mark = {
     at: new Date().toISOString(),
-    source: 'marketfeed',
+    source: engineState.lastOptionTick ? 'websocket' : 'chain',
     isLiveMark: true,
     optionType: trade.optionType,
     optionLtp: Number(ltp.toFixed(2)),
     entryPremium: entry,
     unrealizedPnl: Number(((ltp - entry) * trade.qty - (trade.charges || 0)).toFixed(2)),
     stopLossPremium: trade.stopLossPremium,
+    hardStopPremium: engineState.hardStopPremium,
     trailStopPremium: engineState.trailStopPremium,
     peakProfitPoints: engineState.peakProfitPoints,
-    exitMode: 'tick',
+    lowSinceEntry: trade.lowSinceEntry,
+    exitMode: 'tick+low+ohlc1m',
   };
   trade.openPositionMark = mark;
   trade.openPositionMarkAt = new Date();
