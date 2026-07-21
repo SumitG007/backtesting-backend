@@ -9,8 +9,8 @@ function health(_req, res) {
     ready: isPlatformReady(),
     build: {
       commit: process.env.GIT_COMMIT || null,
-      backtestRoutes: ['strategy2', 'strategy3', 'strategy8'],
-      liveStrategies: ['strategy-3', 'strategy-6', 'strategy-8'],
+      backtestRoutes: ['strategy2', 'strategy3'],
+      liveStrategies: ['strategy-3', 'strategy-6', 'strategy-9'],
     },
   });
 }

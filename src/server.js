@@ -8,7 +8,7 @@ const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence')
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
-const strategyElevenPaperEngine = require('./services/liveSlFlipEngine');
+const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
 
 /** Legacy Strategy A reopen env — engine retired. */
 async function runPendingStrategyAReopenFromEnv() {
@@ -24,7 +24,7 @@ async function bootBackgroundServices() {
     const s7 = require('./services/livePutBuyEngine');
     await s6.reconcileOpenTrades();
     await s7.reconcileOpenTrades();
-    await require('./services/liveSlFlipEngine').reconcileOpenTrades();
+    await require('./services/liveMorningOiEngine').reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
   }
@@ -71,14 +71,14 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategyElevenPaperEngine.ensureEngineRunning();
+    const boot = await strategyTwelvePaperEngine.ensureEngineRunning();
     if (boot.ok) {
-      console.log('Strategy 6 SL Flip paper-live started (strategy-8)');
+      console.log('Strategy 7 Morning OI paper-live started (strategy-9)');
     } else {
-      console.warn('Strategy 6 SL Flip paper-live boot:', boot.error || 'unknown');
+      console.warn('Strategy 7 Morning OI paper-live boot:', boot.error || 'unknown');
     }
   } catch (err) {
-    console.warn('Strategy 6 SL Flip paper-live boot failed:', err.message);
+    console.warn('Strategy 7 Morning OI paper-live boot failed:', err.message);
   }
 
   try {
@@ -87,7 +87,7 @@ async function bootBackgroundServices() {
     if (
       resume.strategy6?.resumed
       || resume.strategy7?.resumed
-      || resume.strategy11?.resumed
+      || resume.strategy12?.resumed
     ) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }

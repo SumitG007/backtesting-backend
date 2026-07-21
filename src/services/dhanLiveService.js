@@ -2,7 +2,7 @@ const axios = require('axios');
 const WebSocket = require('ws');
 const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
 const { getDhanClientId } = require('./dhanTokenStore');
-const { resolveSymbolConfig } = require('../utils/market');
+const { resolveSymbolConfig, getStrikeStep } = require('../utils/market');
 const { parseDateOnly, formatDateOnly, addDays } = require('../utils/dateTime');
 const { ensureNseHolidaysLoaded, isNseCashTradingDay } = require('./nseHolidayService');
 
@@ -398,6 +398,102 @@ async function getAtmPremiums({ symbol, strike, expiry }) {
     peMarkHigh: pickLegHighMark(pe),
     peMarkLow: pickLegLowMark(pe),
     chainSpot: spot,
+  };
+}
+
+function readOiField(leg, keys) {
+  if (!leg || typeof leg !== 'object') return null;
+  for (const key of keys) {
+    const n = Number(leg[key]);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+/**
+ * Live option-chain OI snapshot (not persisted). Parses Dhan `oc` CE/PE oi + previous_oi.
+ * Returns nearby strikes ranked by Put vs Call dominance for morning OI strategies.
+ */
+async function getOptionChainOiSnapshot({
+  symbol = 'NIFTY',
+  expiry,
+  spotOverride = null,
+  lookaroundStrikes = 5,
+} = {}) {
+  const chain = await fetchOptionChainCached({ symbol, expiry });
+  if (!chain || typeof chain !== 'object') {
+    throw new Error('Dhan option chain returned empty payload');
+  }
+  const spot = Number(spotOverride ?? chain.last_price);
+  const strikesMap = chain.oc || {};
+  if (!strikesMap || Object.keys(strikesMap).length === 0) {
+    throw new Error('Dhan option chain has no strike rows (oc empty)');
+  }
+  const strikeStep = getStrikeStep(symbol);
+  const atm = Number.isFinite(spot) && spot > 0
+    ? Math.round(spot / strikeStep) * strikeStep
+    : null;
+
+  const rows = [];
+  for (const [strikeKey, row] of Object.entries(strikesMap)) {
+    const strike = Number(strikeKey);
+    if (!Number.isFinite(strike)) continue;
+    const ce = row?.ce || row?.CE || {};
+    const pe = row?.pe || row?.PE || {};
+    const callOi = readOiField(ce, ['oi', 'OI', 'open_interest', 'openInterest']);
+    const putOi = readOiField(pe, ['oi', 'OI', 'open_interest', 'openInterest']);
+    const callPrevOi = readOiField(ce, ['previous_oi', 'previousOi', 'prev_oi', 'previous_OI']);
+    const putPrevOi = readOiField(pe, ['previous_oi', 'previousOi', 'prev_oi', 'previous_OI']);
+    let callChg = readOiField(ce, [
+      'oichange',
+      'oi_change',
+      'changeinOpenInterest',
+      'change_in_oi',
+      'changeInOI',
+      'oiChange',
+    ]);
+    let putChg = readOiField(pe, [
+      'oichange',
+      'oi_change',
+      'changeinOpenInterest',
+      'change_in_oi',
+      'changeInOI',
+      'oiChange',
+    ]);
+    if (!Number.isFinite(callChg) && Number.isFinite(callOi) && Number.isFinite(callPrevOi)) {
+      callChg = callOi - callPrevOi;
+    }
+    if (!Number.isFinite(putChg) && Number.isFinite(putOi) && Number.isFinite(putPrevOi)) {
+      putChg = putOi - putPrevOi;
+    }
+    rows.push({
+      strike,
+      callOi,
+      putOi,
+      callPrevOi,
+      putPrevOi,
+      callChgOi: Number.isFinite(callChg) ? callChg : null,
+      putChgOi: Number.isFinite(putChg) ? putChg : null,
+      ceLtp: pickLegLtp(ce),
+      peLtp: pickLegLtp(pe),
+      distanceFromAtm: atm != null ? Math.abs(strike - atm) : null,
+    });
+  }
+
+  rows.sort((a, b) => a.strike - b.strike);
+  const near =
+    atm == null
+      ? rows
+      : rows.filter((r) => Math.abs(r.strike - atm) <= lookaroundStrikes * strikeStep);
+
+  return {
+    spot: Number.isFinite(spot) ? spot : null,
+    atm,
+    strikeStep,
+    expiry,
+    fetchedAt: new Date().toISOString(),
+    strikes: near,
+    allStrikeCount: rows.length,
   };
 }
 
@@ -1091,6 +1187,7 @@ module.exports = {
   getNearExpiryCutoffDateKey,
   isExpiryTooSoonForNewEntry,
   getAtmPremiums,
+  getOptionChainOiSnapshot,
   pickSecurityIdFromRow,
   listFutureExpiries,
   listFutureUnderlyings,

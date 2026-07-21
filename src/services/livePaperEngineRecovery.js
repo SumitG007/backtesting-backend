@@ -5,16 +5,16 @@
 async function notifyDhanConnectivityRestored() {
   const strategySix = require('./liveShortStraddleEngineStrategy6');
   const strategySeven = require('./livePutBuyEngine');
-  const strategyEleven = require('./liveSlFlipEngine');
+  const strategyTwelve = require('./liveMorningOiEngine');
   const results = await Promise.allSettled([
     strategySix.resumeOpenPositionFromDb(),
     strategySeven.resumeOpenPositionFromDb(),
-    strategyEleven.resumeOpenPositionFromDb(),
+    strategyTwelve.resumeOpenPositionFromDb(),
   ]);
   return {
     strategy6: results[0].status === 'fulfilled' ? results[0].value : { ok: false, error: results[0].reason?.message },
     strategy7: results[1].status === 'fulfilled' ? results[1].value : { ok: false, error: results[1].reason?.message },
-    strategy11: results[2].status === 'fulfilled' ? results[2].value : { ok: false, error: results[2].reason?.message },
+    strategy12: results[2].status === 'fulfilled' ? results[2].value : { ok: false, error: results[2].reason?.message },
   };
 }
 

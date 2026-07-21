@@ -13,10 +13,6 @@ function run() {
     const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
     return runSimple920Backtest(payload);
   }
-  if (strategyKey === 'strategy11_sl_flip') {
-    const { runSlFlipBacktest } = require('../strategies/strategy11/slFlipBacktest');
-    return runSlFlipBacktest(payload);
-  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }
