@@ -13,6 +13,10 @@ function run() {
     const { runSimple920Backtest } = require('../strategies/strategy7/simple920Backtest');
     return runSimple920Backtest(payload);
   }
+  if (strategyKey === 'strategy8_opening_price_reversal') {
+    const { runOpeningPriceReversalBacktest } = require('../strategies/strategy8/openingPriceReversalBacktest');
+    return runOpeningPriceReversalBacktest(payload);
+  }
 
   throw new Error(`Unknown backtest worker key: ${strategyKey}`);
 }

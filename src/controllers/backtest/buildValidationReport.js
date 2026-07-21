@@ -22,9 +22,9 @@ function buildValidationReport(trades) {
   for (const trade of ordered) {
     const pnl = Number(trade.pnl || 0);
     const reason = String(trade.reason || '').toUpperCase();
-    if (reason === 'STOP_LOSS') slTrades += 1;
-    else if (reason === 'TARGET') targetTrades += 1;
-    else if (reason === 'DAY_CLOSE') eodTrades += 1;
+    if (reason === 'STOP_LOSS' || reason === 'TRAIL_STOP' || reason === 'BREAKEVEN_STOP') slTrades += 1;
+    else if (reason === 'TARGET' || reason === 'PATTERN_TARGET') targetTrades += 1;
+    else if (reason === 'DAY_CLOSE' || reason === 'OPENING_15M_CLOSE') eodTrades += 1;
 
     equity += pnl;
     peak = Math.max(peak, equity);

@@ -13,6 +13,11 @@ const {
   getStrategySevenValidation,
   postStrategySevenValidation,
   postStrategySevenValidationYear,
+  runStrategyEight,
+  getStrategyEightRunTrades,
+  getStrategyEightValidation,
+  postStrategyEightValidation,
+  postStrategyEightValidationYear,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -86,6 +91,12 @@ router.post('/strategy3/validation', postStrategySevenValidation);
 router.post('/strategy3/validation-year', postStrategySevenValidationYear);
 router.get('/strategy3/runs/:runId/trades', getStrategySevenRunTrades);
 router.get('/strategy3/runs/:runId/validation', getStrategySevenValidation);
+// Strategy 4 (UI) — Opening Price Reversal (API strategy4)
+router.post('/strategy4/run', runStrategyEight);
+router.post('/strategy4/validation', postStrategyEightValidation);
+router.post('/strategy4/validation-year', postStrategyEightValidationYear);
+router.get('/strategy4/runs/:runId/trades', getStrategyEightRunTrades);
+router.get('/strategy4/runs/:runId/validation', getStrategyEightValidation);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);
