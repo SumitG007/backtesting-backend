@@ -5,7 +5,6 @@ const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6'
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
 const {
-  STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
@@ -44,15 +43,11 @@ function computeClosedTradeStats(rows) {
   };
 }
 
-/** Older paper rows used the backtest strategy6 key — fold into remaining straddle live. */
+/** Older paper rows used the backtest strategy6 key — fold into remaining straddle live.
+ * Retired Strategy A / 15:20 paper key is deleted by purgeStraddle1520PaperTrades.js — do not merge. */
 async function normalizeLegacyStrategy4PaperKeys() {
   await LivePaperTrade.updateMany(
     { strategyKey: STRATEGY_SIX_KEY, optionType: 'STRADDLE' },
-    { $set: { strategyKey: STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY } },
-  );
-  // Retired Strategy A (strategy-2) live key → keep history under active straddle live.
-  await LivePaperTrade.updateMany(
-    { strategyKey: STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY, optionType: 'STRADDLE' },
     { $set: { strategyKey: STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY } },
   );
 }

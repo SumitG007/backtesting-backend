@@ -128,12 +128,7 @@ function normalizeSettings(settings = {}) {
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
-    entryTime: (() => {
-      const raw = String(settings.entryTime || settings.entryFromTime || '09:20').trim();
-      const m = /^(\d{1,2}):(\d{2})$/.exec(raw);
-      if (!m) return '09:20';
-      return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
-    })(),
+    entryTime: '09:20', // paper live locked — afternoon 15:20 engine retired
     entryWindowMinutes: Number.isFinite(rawEntryWindow)
       ? Math.max(0, Math.min(30, rawEntryWindow))
       : 2,
