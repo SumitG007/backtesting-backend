@@ -69,7 +69,7 @@ const liveWalletSchema = new mongoose.Schema(
       stopLossPct: { type: Number, default: 10 },
       minOiRatio: { type: Number, default: 1.5 },
       proximityPoints: { type: Number, default: 25 },
-      strikeLookaround: { type: Number, default: 5 },
+      strikeLookaround: { type: Number, default: 10 },
       strikeMode: { type: String, default: 'ATM' },
       candleInterval: { type: String, default: '1' },
       perTradeCost: { type: Number, default: 100 },

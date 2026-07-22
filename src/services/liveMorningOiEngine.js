@@ -36,6 +36,7 @@ const OPEN_MARK_CHAIN_MIN_GAP_MS = 6000;
 const TICK_FRESH_MAX_AGE_MS = 20000;
 const MIN_HOLD_MS = 2000;
 const OI_REFRESH_MIN_GAP_MS = 12000;
+const OI_BOARD_REFRESH_MIN_GAP_MS = 10000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
 const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
@@ -43,6 +44,8 @@ const DEFAULT_OI_FROM = 555; // 09:15
 const DEFAULT_OI_TO = 560; // 09:20
 const DEFAULT_LAST_ENTRY = 630; // 10:30
 const DEFAULT_EOD = 920; // 15:20
+/** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
+const OI_BOARD_LOOKAROUND = 12;
 
 const engineState = {
   running: false,
@@ -61,9 +64,8 @@ const engineState = {
     targetPct: DEFAULT_TARGET_PCT,
     stopLossPct: 10,
     hasStopLoss: true,
-    minOiRatio: 1.5,
     proximityPoints: 25,
-    strikeLookaround: 5,
+    strikeLookaround: 10,
     strikeMode: 'ATM',
     candleInterval: DEFAULT_CANDLE_INTERVAL,
     perTradeCost: 100,
@@ -75,6 +77,9 @@ const engineState = {
   lastOptionTick: null,
   /** In-memory only — never written to Mongo. */
   morningSignal: null,
+  /** Live OI board for UI (memory only). */
+  liveOiBoard: null,
+  lastOiBoardFetchAt: 0,
   lastOiFetchAt: 0,
   lastOiError: null,
   todayBars1m: [],
@@ -137,9 +142,8 @@ function normalizeSettings(settings = {}) {
     }
   }
 
-  const minOiRatio = Math.max(1.1, Number(settings.minOiRatio) || 1.5);
   const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 25);
-  const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 5));
+  const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
@@ -155,7 +159,6 @@ function normalizeSettings(settings = {}) {
     targetPct,
     stopLossPct,
     hasStopLoss,
-    minOiRatio,
     proximityPoints,
     strikeLookaround,
     strikeMode: String(settings.strikeMode || 'ATM').toUpperCase() === 'ITM' ? 'ITM' : 'ATM',
@@ -194,36 +197,47 @@ function premiumFromChain(chain, optionType) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function pickDominantStrike(snapshot, minOiRatio) {
+/**
+ * Level = highest total OI near spot (the real wall, e.g. 24000).
+ * Bias on that strike only: Put OI ≥ Call OI → Buy CE, else Buy PE.
+ * No 1.5× / ΔOI filters for picking the level — those caused far junk strikes (e.g. 23650).
+ */
+function pickDominantStrike(snapshot) {
   const strikes = Array.isArray(snapshot?.strikes) ? snapshot.strikes : [];
+  const atm = Number(snapshot?.atm);
+  const step = Math.max(1, Number(snapshot?.strikeStep) || 50);
   let best = null;
+
   for (const row of strikes) {
     const putOi = Number(row.putOi);
     const callOi = Number(row.callOi);
-    if (!Number.isFinite(putOi) || !Number.isFinite(callOi) || putOi <= 0 || callOi <= 0) continue;
+    if (!Number.isFinite(putOi) || !Number.isFinite(callOi)) continue;
+    if (putOi < 0 || callOi < 0) continue;
+    if (putOi <= 0 && callOi <= 0) continue;
 
-    const putDom = putOi >= callOi * minOiRatio;
-    const callDom = callOi >= putOi * minOiRatio;
-    if (!putDom && !callDom) continue;
-
-    const putChg = Number(row.putChgOi);
-    const callChg = Number(row.callChgOi);
-    const hasChg = Number.isFinite(putChg) && Number.isFinite(callChg);
-    // When Change-in-OI is present, require dominant side also leads on fresh buildup.
-    if (hasChg) {
-      const putChgOk = putDom ? putChg > callChg && putChg > 0 : callChg > putChg && callChg > 0;
-      if (!putChgOk) continue;
-    }
-
-    const dominantSide = putDom ? 'PUT' : 'CALL';
-    const ratio = putDom ? putOi / callOi : callOi / putOi;
     const oiMass = putOi + callOi;
-    const chgBoost = hasChg ? 1 + Math.min(1, Math.abs((putDom ? putChg : callChg) / Math.max(oiMass, 1))) : 1;
-    const score = ratio * Math.log10(oiMass + 10) * chgBoost;
+    if (!(oiMass > 0)) continue;
+
+    const distSteps =
+      Number.isFinite(atm) && Number.isFinite(row.strike)
+        ? Math.abs(row.strike - atm) / step
+        : 0;
+    // Soft near-spot preference only — never enough to beat a real Cr wall far from a tiny ATM print.
+    const nearBoost = 1 / (1 + distSteps * 0.12);
+    const score = oiMass * nearBoost;
+
     if (!best || score > best.score) {
+      const putDom = putOi >= callOi;
+      const putChg = Number(row.putChgOi);
+      const callChg = Number(row.callChgOi);
+      const hasChg = Number.isFinite(putChg) && Number.isFinite(callChg);
+      const ratio = putDom
+        ? putOi / Math.max(callOi, 1)
+        : callOi / Math.max(putOi, 1);
+
       best = {
         strike: row.strike,
-        dominantSide,
+        dominantSide: putDom ? 'PUT' : 'CALL',
         optionType: putDom ? 'CE' : 'PE',
         putOi,
         callOi,
@@ -231,6 +245,7 @@ function pickDominantStrike(snapshot, minOiRatio) {
         callChgOi: Number.isFinite(callChg) ? callChg : null,
         hasChangeOi: hasChg,
         ratio: Number(ratio.toFixed(2)),
+        oiMass,
         score,
         ceLtp: row.ceLtp,
         peLtp: row.peLtp,
@@ -238,6 +253,81 @@ function pickDominantStrike(snapshot, minOiRatio) {
     }
   }
   return best;
+}
+
+/**
+ * Live OI board for UI — memory only, refreshed often so we can see the real high-OI strike near spot.
+ */
+async function refreshLiveOiBoard(clock, { force = false } = {}) {
+  const now = Date.now();
+  if (
+    !force
+    && engineState.liveOiBoard
+    && now - engineState.lastOiBoardFetchAt < OI_BOARD_REFRESH_MIN_GAP_MS
+  ) {
+    return engineState.liveOiBoard;
+  }
+  try {
+    const symbol = getEngineSymbol();
+    const expiry = await getEntryExpiry(symbol, clock.dateKey);
+    if (!expiry) {
+      engineState.lastOiError = 'No weekly expiry from Dhan';
+      return engineState.liveOiBoard;
+    }
+    const lookaround = Math.max(
+      OI_BOARD_LOOKAROUND,
+      Number(engineState.settings.strikeLookaround) || 10,
+    );
+    const snapshot = await getOptionChainOiSnapshot({
+      symbol,
+      expiry,
+      lookaroundStrikes: lookaround,
+    });
+    engineState.lastOiBoardFetchAt = now;
+    if (Number.isFinite(snapshot.spot)) engineState.lastSpot = snapshot.spot;
+
+    const strikes = (snapshot.strikes || []).map((r) => ({
+      strike: r.strike,
+      putOi: r.putOi,
+      callOi: r.callOi,
+      putChgOi: r.putChgOi,
+      callChgOi: r.callChgOi,
+      totalOi: (Number(r.putOi) || 0) + (Number(r.callOi) || 0),
+      ceLtp: r.ceLtp,
+      peLtp: r.peLtp,
+      distanceFromAtm: r.distanceFromAtm,
+    }));
+
+    let maxPut = null;
+    let maxCall = null;
+    let maxTotal = null;
+    for (const row of strikes) {
+      if (Number.isFinite(row.putOi) && (!maxPut || row.putOi > maxPut.putOi)) maxPut = row;
+      if (Number.isFinite(row.callOi) && (!maxCall || row.callOi > maxCall.callOi)) maxCall = row;
+      if (!maxTotal || row.totalOi > maxTotal.totalOi) maxTotal = row;
+    }
+
+    engineState.liveOiBoard = {
+      at: new Date().toISOString(),
+      dateKey: clock.dateKey,
+      spot: snapshot.spot,
+      atm: snapshot.atm,
+      expiry,
+      strikeStep: snapshot.strikeStep,
+      strikes,
+      highlight: {
+        maxPutStrike: maxPut?.strike ?? null,
+        maxCallStrike: maxCall?.strike ?? null,
+        maxTotalStrike: maxTotal?.strike ?? null,
+      },
+    };
+    engineState.lastOiError = null;
+    return engineState.liveOiBoard;
+  } catch (err) {
+    engineState.lastOiError = err.message || 'OI board fetch failed';
+    engineState.lastError = `OI board: ${engineState.lastOiError}`;
+    return engineState.liveOiBoard;
+  }
 }
 
 async function ensureWallet() {
@@ -466,7 +556,10 @@ async function captureMorningOiSignal(clock) {
     const snapshot = await getOptionChainOiSnapshot({
       symbol,
       expiry,
-      lookaroundStrikes: engineState.settings.strikeLookaround,
+      lookaroundStrikes: Math.max(
+        OI_BOARD_LOOKAROUND,
+        Number(engineState.settings.strikeLookaround) || 10,
+      ),
     });
     engineState.lastOiFetchAt = Date.now();
     engineState.lastOiError = null;
@@ -491,7 +584,7 @@ async function captureMorningOiSignal(clock) {
       (r) => Number.isFinite(r.putChgOi) && Number.isFinite(r.callChgOi),
     );
 
-    const dominant = pickDominantStrike(snapshot, engineState.settings.minOiRatio);
+    const dominant = pickDominantStrike(snapshot);
     if (!dominant) {
       engineState.morningSignal = {
         dateKey: clock.dateKey,
@@ -521,6 +614,7 @@ async function captureMorningOiSignal(clock) {
       callChgOi: dominant.callChgOi,
       hasChangeOi: Boolean(dominant.hasChangeOi),
       ratio: dominant.ratio,
+      oiMass: dominant.oiMass,
       spotAtScan: snapshot.spot,
       atm: snapshot.atm,
       expiry,
@@ -922,6 +1016,10 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
 function startPoll() {
   if (engineState.pollTimer) clearInterval(engineState.pollTimer);
   const tick = () => {
+    const clock = getIstClock(new Date());
+    refreshLiveOiBoard(clock).catch((err) => {
+      engineState.lastError = `OI board: ${err.message}`;
+    });
     evaluateEntry().catch((err) => {
       engineState.lastError = `Morning OI entry poll: ${err.message}`;
     });
@@ -1068,6 +1166,7 @@ function getEngineSnapshot() {
     lastSpot: engineState.lastSpot,
     lastOptionTick: engineState.lastOptionTick,
     morningSignal: engineState.morningSignal,
+    liveOiBoard: engineState.liveOiBoard,
     lastOiError: engineState.lastOiError,
     lastCandleError: engineState.lastCandleError,
     candleInterval: '1',
