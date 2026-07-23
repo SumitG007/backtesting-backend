@@ -42,7 +42,7 @@ const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_OI_FROM = 555; // 09:15
 const DEFAULT_OI_TO = 560; // 09:20
-const DEFAULT_LAST_ENTRY = 630; // 10:30
+const DEFAULT_LAST_ENTRY = 690; // 11:30 — wait for spot after morning OI lock
 const DEFAULT_EOD = 920; // 15:20
 /** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
@@ -59,7 +59,7 @@ const engineState = {
     lotCount: 5,
     oiScanFromTime: '09:15',
     oiScanToTime: '09:20',
-    lastEntryTime: '10:30',
+    lastEntryTime: '11:30',
     eodExitTime: '15:20',
     targetPct: DEFAULT_TARGET_PCT,
     stopLossPct: 10,
@@ -154,7 +154,7 @@ function normalizeSettings(settings = {}) {
     lotCount,
     oiScanFromTime: String(settings.oiScanFromTime || '09:15'),
     oiScanToTime: String(settings.oiScanToTime || '09:20'),
-    lastEntryTime: String(settings.lastEntryTime || '10:30'),
+    lastEntryTime: String(settings.lastEntryTime || '11:30'),
     eodExitTime: String(settings.eodExitTime || '15:20'),
     targetPct,
     stopLossPct,
@@ -1087,6 +1087,11 @@ async function updateEngineSettings(partial = {}) {
   const next = normalizeSettings({ ...engineState.settings, ...partial });
   engineState.settings = next;
   syncEngineSymbolFromSettings();
+  // Extending last-entry window should unblock a same-day PAST_LAST_ENTRY skip.
+  const clock = getIstClock(new Date());
+  if (engineState.skippedDateKey === clock.dateKey && clock.minutes <= lastEntryMin()) {
+    engineState.skippedDateKey = null;
+  }
   if (getEngineSymbol() !== prevSymbol) {
     try {
       engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
@@ -1113,7 +1118,16 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     const persisted = wallet.strategy12EngineSettings
       ? wallet.strategy12EngineSettings.toObject?.() || wallet.strategy12EngineSettings
       : {};
-    const normalized = normalizeSettings({ ...persisted, symbol: persisted.symbol || symbol });
+    // Migrate previous default 10:30 → 11:30 so OI lock can wait for spot later in the morning.
+    const migrated = { ...persisted };
+    if (!migrated.lastEntryTime || migrated.lastEntryTime === '10:30') {
+      migrated.lastEntryTime = '11:30';
+    }
+    const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
+    if (migrated.lastEntryTime !== persisted.lastEntryTime) {
+      wallet.strategy12EngineSettings = normalized;
+      await wallet.save();
+    }
     return startEngine({ symbol: normalized.symbol || symbol, settings: normalized });
   } catch (err) {
     engineState.lastError = `Morning OI boot failed: ${err.message}`;

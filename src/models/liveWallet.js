@@ -63,7 +63,7 @@ const liveWalletSchema = new mongoose.Schema(
       lotCount: { type: Number, default: 5 },
       oiScanFromTime: { type: String, default: '09:15' },
       oiScanToTime: { type: String, default: '09:20' },
-      lastEntryTime: { type: String, default: '10:30' },
+      lastEntryTime: { type: String, default: '11:30' },
       eodExitTime: { type: String, default: '15:20' },
       targetPct: { type: Number, default: 15 },
       stopLossPct: { type: Number, default: 10 },
