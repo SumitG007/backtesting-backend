@@ -25,6 +25,7 @@ const {
 } = require('./dhanLiveService');
 const { fetchTradingDayCandles } = require('./dhanDataService');
 const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
+const { pushNotification } = require('./notificationHub');
 
 const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy12';
@@ -42,7 +43,7 @@ const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_OI_FROM = 555; // 09:15
 const DEFAULT_OI_TO = 560; // 09:20
-const DEFAULT_LAST_ENTRY = 690; // 11:30 — wait for spot after morning OI lock
+const DEFAULT_LAST_ENTRY = 690; // 11:30 — wait for spot after OI Wall lock
 const DEFAULT_EOD = 920; // 15:20
 /** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
@@ -292,8 +293,6 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       callOi: r.callOi,
       putChgOi: r.putChgOi,
       callChgOi: r.callChgOi,
-      putVolume: r.putVolume,
-      callVolume: r.callVolume,
       totalOi: (Number(r.putOi) || 0) + (Number(r.callOi) || 0),
       ceLtp: r.ceLtp,
       peLtp: r.peLtp,
@@ -330,8 +329,6 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       totals: {
         callOi: totals.callOi ?? null,
         putOi: totals.putOi ?? null,
-        callVolume: totals.callVolume ?? null,
-        putVolume: totals.putVolume ?? null,
         pcr: Number.isFinite(pcr) ? pcr : null,
         nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
         pcrBias,
@@ -463,7 +460,7 @@ async function subscribeOpenOption(trade) {
       onTick: (tick) => onOptionTick(tick),
     });
   } catch (err) {
-    engineState.lastError = `Morning OI WS subscribe failed: ${err.message}`;
+    engineState.lastError = `OI Wall WS subscribe failed: ${err.message}`;
   }
 }
 
@@ -487,7 +484,7 @@ function startPositionPoll() {
   if (!engineState.openTradeId) return;
   const tick = () => {
     checkOpenTrade().catch((err) => {
-      engineState.lastError = `Morning OI position poll: ${err.message}`;
+      engineState.lastError = `OI Wall position poll: ${err.message}`;
     });
   };
   tick();
@@ -569,7 +566,7 @@ async function captureMorningOiSignal(clock) {
     const expiry = await getEntryExpiry(symbol, clock.dateKey);
     if (!expiry) {
       engineState.lastOiError = 'No weekly expiry from Dhan';
-      engineState.lastError = `Morning OI: ${engineState.lastOiError}`;
+      engineState.lastError = `OI Wall: ${engineState.lastOiError}`;
       logEntry('OI_SCAN_ERROR', { ist: istClockLabel(clock), error: engineState.lastOiError });
       return existing || null;
     }
@@ -587,7 +584,7 @@ async function captureMorningOiSignal(clock) {
 
     if (!Array.isArray(snapshot.strikes) || snapshot.strikes.length === 0) {
       engineState.lastOiError = 'Empty option chain / no nearby strikes';
-      engineState.lastError = `Morning OI: ${engineState.lastOiError}`;
+      engineState.lastError = `OI Wall: ${engineState.lastOiError}`;
       logEntry('OI_SCAN_EMPTY', {
         ist: istClockLabel(clock),
         allStrikeCount: snapshot.allStrikeCount || 0,
@@ -646,10 +643,22 @@ async function captureMorningOiSignal(clock) {
       at: new Date().toISOString(),
     };
     logEntry('OI_SCAN_SIGNAL', engineState.morningSignal);
+    pushNotification({
+      type: 'OI_SIGNAL',
+      strategy: 'OI Wall',
+      title: `Buy ${dominant.optionType} · wall ${dominant.strike}`,
+      body: `${dominant.dominantSide} bias · ATM entry when spot is near ${dominant.strike} (± proximity) · PCR / OI live`,
+      meta: {
+        levelStrike: dominant.strike,
+        optionType: dominant.optionType,
+        spot: snapshot.spot,
+      },
+      dedupeKey: `morning-oi-signal:${clock.dateKey}:${dominant.strike}:${dominant.optionType}`,
+    });
     return engineState.morningSignal;
   } catch (err) {
     engineState.lastOiError = err.message || 'OI fetch failed';
-    engineState.lastError = `Morning OI chain: ${engineState.lastOiError}`;
+    engineState.lastError = `OI Wall chain: ${engineState.lastOiError}`;
     logEntry('OI_SCAN_ERROR', { ist: istClockLabel(clock), error: engineState.lastOiError });
     return existing || null;
   }
@@ -839,7 +848,7 @@ async function placeLongOption(clock, signal, spot) {
     const premiums = await getAtmPremiums({ symbol, strike, expiry });
     const entryPremium = premiumFromChain(premiums, optionType);
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
-      engineState.lastError = `Morning OI: missing ${optionType} premium for ${strike}`;
+      engineState.lastError = `OI Wall: missing ${optionType} premium for ${strike}`;
       return;
     }
 
@@ -893,6 +902,14 @@ async function placeLongOption(clock, signal, spot) {
       entryPremium: Number(entryPremium.toFixed(2)),
       targetPremium: Number(targetPremium.toFixed(2)),
       stopLossPremium,
+    });
+    pushNotification({
+      type: 'ENTRY',
+      strategy: 'OI Wall',
+      title: `Entered ${optionType} ${strike}`,
+      body: `Premium ₹${Number(entryPremium.toFixed(2))} · wall ${signal.levelStrike} · target ₹${Number(targetPremium.toFixed(2))}`,
+      meta: { tradeId: tradeDoc._id.toString(), optionType, strike },
+      dedupeKey: `morning-oi-entry:${tradeDoc._id.toString()}`,
     });
     await subscribeOpenOption(tradeDoc);
     startPositionPoll();
@@ -1026,6 +1043,14 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
       pnl,
       exitPremium: safeExitPremium,
     });
+    pushNotification({
+      type: 'EXIT',
+      strategy: 'OI Wall',
+      title: `Closed ${trade.optionType} ${trade.strike}`,
+      body: `${reason} · P/L ₹${Number(pnl.toFixed(2))} · exit ₹${Number(safeExitPremium.toFixed(2))}`,
+      meta: { tradeId: trade._id.toString(), reason, pnl },
+      dedupeKey: `morning-oi-exit:${trade._id.toString()}`,
+    });
     clearOpenTrade();
   } catch (err) {
     engineState.lastError = `Exit failed: ${err.message}`;
@@ -1042,10 +1067,10 @@ function startPoll() {
       engineState.lastError = `OI board: ${err.message}`;
     });
     evaluateEntry().catch((err) => {
-      engineState.lastError = `Morning OI entry poll: ${err.message}`;
+      engineState.lastError = `OI Wall entry poll: ${err.message}`;
     });
     checkOpenTrade().catch((err) => {
-      engineState.lastError = `Morning OI exit poll: ${err.message}`;
+      engineState.lastError = `OI Wall exit poll: ${err.message}`;
     });
   };
   tick();
@@ -1084,7 +1109,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
       await checkOpenTrade();
     }
   } catch (err) {
-    engineState.lastError = `Morning OI setup: ${err.message}`;
+    engineState.lastError = `OI Wall setup: ${err.message}`;
   }
   engineState.running = true;
   engineState.startedAt = new Date();
@@ -1151,7 +1176,7 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     }
     return startEngine({ symbol: normalized.symbol || symbol, settings: normalized });
   } catch (err) {
-    engineState.lastError = `Morning OI boot failed: ${err.message}`;
+    engineState.lastError = `OI Wall boot failed: ${err.message}`;
     return { ok: false, error: err.message };
   }
 }
@@ -1213,7 +1238,7 @@ function getEngineSnapshot() {
     lastError: engineState.lastError,
     lastEntryDebug: engineState.lastEntryDebug,
     openPositionMark: engineState.openPositionMark,
-    scenarioLabel: 'Morning OI',
+    scenarioLabel: 'OI Wall Entry',
   };
 }
 

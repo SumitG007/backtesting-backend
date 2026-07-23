@@ -444,8 +444,6 @@ async function getOptionChainOiSnapshot({
     const putOi = readOiField(pe, ['oi', 'OI', 'open_interest', 'openInterest']);
     const callPrevOi = readOiField(ce, ['previous_oi', 'previousOi', 'prev_oi', 'previous_OI']);
     const putPrevOi = readOiField(pe, ['previous_oi', 'previousOi', 'prev_oi', 'previous_OI']);
-    const callVolume = readOiField(ce, ['volume', 'Volume', 'total_volume', 'totalVolume']);
-    const putVolume = readOiField(pe, ['volume', 'Volume', 'total_volume', 'totalVolume']);
     let callChg = readOiField(ce, [
       'oichange',
       'oi_change',
@@ -476,8 +474,6 @@ async function getOptionChainOiSnapshot({
       putPrevOi,
       callChgOi: Number.isFinite(callChg) ? callChg : null,
       putChgOi: Number.isFinite(putChg) ? putChg : null,
-      callVolume: Number.isFinite(callVolume) ? callVolume : null,
-      putVolume: Number.isFinite(putVolume) ? putVolume : null,
       ceLtp: pickLegLtp(ce),
       peLtp: pickLegLtp(pe),
       distanceFromAtm: atm != null ? Math.abs(strike - atm) : null,
@@ -492,20 +488,14 @@ async function getOptionChainOiSnapshot({
 
   let sumCallOi = 0;
   let sumPutOi = 0;
-  let sumCallVol = 0;
-  let sumPutVol = 0;
   let nearCallOi = 0;
   let nearPutOi = 0;
   const nearBand = strikeStep * 5;
   for (const r of near) {
     const c = Number(r.callOi);
     const p = Number(r.putOi);
-    const cv = Number(r.callVolume);
-    const pv = Number(r.putVolume);
     if (Number.isFinite(c) && c > 0) sumCallOi += c;
     if (Number.isFinite(p) && p > 0) sumPutOi += p;
-    if (Number.isFinite(cv) && cv > 0) sumCallVol += cv;
-    if (Number.isFinite(pv) && pv > 0) sumPutVol += pv;
     if (atm != null && Number.isFinite(r.strike) && Math.abs(r.strike - atm) <= nearBand) {
       if (Number.isFinite(c) && c > 0) nearCallOi += c;
       if (Number.isFinite(p) && p > 0) nearPutOi += p;
@@ -525,8 +515,6 @@ async function getOptionChainOiSnapshot({
     totals: {
       callOi: sumCallOi,
       putOi: sumPutOi,
-      callVolume: sumCallVol,
-      putVolume: sumPutVol,
       pcr: Number.isFinite(pcr) ? Number(pcr.toFixed(3)) : null,
       nearPcr: Number.isFinite(nearPcr) ? Number(nearPcr.toFixed(3)) : null,
     },

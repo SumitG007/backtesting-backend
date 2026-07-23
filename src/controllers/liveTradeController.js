@@ -325,7 +325,7 @@ async function getStatus(req, res) {
           : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
               : isMorningOiLiveStrategyId(ctx.strategyId)
-                ? 'Morning OI'
+                ? 'OI Wall Entry'
                 : 'Paper-live',
     });
     return res.json({
@@ -375,12 +375,12 @@ function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    // Morning OI is always-on — ignore stop requests.
+    // OI Wall Entry is always-on — ignore stop requests.
     if (isMorningOiLiveStrategyId(ctx.strategyId)) {
       return res.json({
         ok: true,
         ignored: true,
-        message: 'Morning OI engine always runs — stop is disabled',
+        message: 'OI Wall engine always runs — stop is disabled',
         state: ctx.getEngineSnapshot(),
       });
     }

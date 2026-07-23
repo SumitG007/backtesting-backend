@@ -1,4 +1,5 @@
 require('dotenv').config();
+const http = require('http');
 const mongoose = require('mongoose');
 const app = require('./app');
 const { PORT } = require('./config/constants');
@@ -6,6 +7,7 @@ const { setPlatformReady } = require('./serverState');
 const { scheduleDhanTokenMaintenance } = require('./services/dhanTokenScheduler');
 const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence');
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
+const { initRealtime } = require('./services/realtimeSocket');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
 const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
@@ -73,12 +75,12 @@ async function bootBackgroundServices() {
   try {
     const boot = await strategyTwelvePaperEngine.ensureEngineRunning();
     if (boot.ok) {
-      console.log('Strategy 7 Morning OI paper-live started (strategy-9)');
+      console.log('OI Wall Entry paper-live started (strategy-9)');
     } else {
-      console.warn('Strategy 7 Morning OI paper-live boot:', boot.error || 'unknown');
+      console.warn('OI Wall Entry paper-live boot:', boot.error || 'unknown');
     }
   } catch (err) {
-    console.warn('Strategy 7 Morning OI paper-live boot failed:', err.message);
+    console.warn('OI Wall Entry paper-live boot failed:', err.message);
   }
 
   try {
@@ -118,9 +120,13 @@ async function start() {
     throw err;
   }
 
+  // HTTP server so Socket.IO can share the same port (AWS / ALB friendly).
+  const httpServer = http.createServer(app);
+  initRealtime(httpServer);
+
   // Listen immediately so the frontend proxy never gets ECONNREFUSED during long engine boot.
   await new Promise((resolve) => {
-    app.listen(PORT, () => {
+    httpServer.listen(PORT, () => {
       console.log(`Backend listening on http://localhost:${PORT}`);
       resolve();
     });
