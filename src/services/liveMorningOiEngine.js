@@ -292,6 +292,8 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       callOi: r.callOi,
       putChgOi: r.putChgOi,
       callChgOi: r.callChgOi,
+      putVolume: r.putVolume,
+      callVolume: r.callVolume,
       totalOi: (Number(r.putOi) || 0) + (Number(r.callOi) || 0),
       ceLtp: r.ceLtp,
       peLtp: r.peLtp,
@@ -307,6 +309,16 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       if (!maxTotal || row.totalOi > maxTotal.totalOi) maxTotal = row;
     }
 
+    const totals = snapshot.totals || {};
+    const pcr = Number(totals.pcr);
+    const nearPcr = Number(totals.nearPcr);
+    let pcrBias = 'NEUTRAL';
+    const biasPcr = Number.isFinite(nearPcr) ? nearPcr : pcr;
+    if (Number.isFinite(biasPcr)) {
+      if (biasPcr >= 1.1) pcrBias = 'PUT_HEAVY';
+      else if (biasPcr <= 0.9) pcrBias = 'CALL_HEAVY';
+    }
+
     engineState.liveOiBoard = {
       at: new Date().toISOString(),
       dateKey: clock.dateKey,
@@ -315,6 +327,15 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       expiry,
       strikeStep: snapshot.strikeStep,
       strikes,
+      totals: {
+        callOi: totals.callOi ?? null,
+        putOi: totals.putOi ?? null,
+        callVolume: totals.callVolume ?? null,
+        putVolume: totals.putVolume ?? null,
+        pcr: Number.isFinite(pcr) ? pcr : null,
+        nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
+        pcrBias,
+      },
       highlight: {
         maxPutStrike: maxPut?.strike ?? null,
         maxCallStrike: maxCall?.strike ?? null,
