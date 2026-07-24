@@ -30,14 +30,14 @@ const { pushNotification } = require('./notificationHub');
 const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy12';
 const OPTION_SUBSCRIPTION_KEY = 'engine:strategy12:option';
-/** Scalp-fast polls for option premium exits. */
-const POLL_INTERVAL_MS = 3000;
+/** Fast live polls — keep under Dhan option-chain cache floor (~4s). */
+const POLL_INTERVAL_MS = 2000;
 const POSITION_POLL_MS = 1000;
-const OPEN_MARK_CHAIN_MIN_GAP_MS = 6000;
+const OPEN_MARK_CHAIN_MIN_GAP_MS = 4000;
 const TICK_FRESH_MAX_AGE_MS = 20000;
 const MIN_HOLD_MS = 2000;
-const OI_REFRESH_MIN_GAP_MS = 12000;
-const OI_BOARD_REFRESH_MIN_GAP_MS = 10000;
+const OI_REFRESH_MIN_GAP_MS = 5000;
+const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
 const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
@@ -340,10 +340,19 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       },
     };
     engineState.lastOiError = null;
+    if (String(engineState.lastError || '').startsWith('OI board:')) {
+      engineState.lastError = null;
+    }
     return engineState.liveOiBoard;
   } catch (err) {
-    engineState.lastOiError = err.message || 'OI board fetch failed';
-    engineState.lastError = `OI board: ${engineState.lastOiError}`;
+    const msg = err.message || 'OI board fetch failed';
+    engineState.lastOiError = msg;
+    // Keep last good board; do not poison main lastError when UI still has data.
+    if (!engineState.liveOiBoard) {
+      engineState.lastError = `OI board: ${msg}`;
+    } else if (String(engineState.lastError || '').startsWith('OI board:')) {
+      engineState.lastError = null;
+    }
     return engineState.liveOiBoard;
   }
 }
@@ -1064,7 +1073,10 @@ function startPoll() {
   const tick = () => {
     const clock = getIstClock(new Date());
     refreshLiveOiBoard(clock).catch((err) => {
-      engineState.lastError = `OI board: ${err.message}`;
+      engineState.lastOiError = err.message || 'OI board failed';
+      if (!engineState.liveOiBoard) {
+        engineState.lastError = `OI board: ${engineState.lastOiError}`;
+      }
     });
     evaluateEntry().catch((err) => {
       engineState.lastError = `OI Wall entry poll: ${err.message}`;

@@ -128,9 +128,11 @@ async function fetchExpiryList(symbol) {
   }
 }
 
-const OPTION_CHAIN_MIN_INTERVAL_MS = 6000;
-const OPTION_CHAIN_STALE_MAX_AGE_MS = 3 * 60 * 1000;
-const OPTION_CHAIN_429_COOLDOWN_MS = 90 * 1000;
+const OPTION_CHAIN_MIN_INTERVAL_MS = 4000;
+const OPTION_CHAIN_STALE_MAX_AGE_MS = 5 * 60 * 1000;
+const OPTION_CHAIN_429_COOLDOWN_MS = 60 * 1000;
+const OPTION_CHAIN_5XX_COOLDOWN_MS = 12 * 1000;
+const OPTION_CHAIN_HTTP_TIMEOUT_MS = 12000;
 const optionChainCache = new Map();
 const optionChainInflight = new Map();
 let optionChainRateLimitedUntil = 0;
@@ -140,6 +142,19 @@ function isHttpRateLimitError(error) {
   if (status === 429) return true;
   const msg = String(error?.message || error?.response?.data?.errorMessage || '');
   return msg.includes('429') || /rate\s*limit/i.test(msg);
+}
+
+function isTransientOptionChainError(error) {
+  const status = Number(error?.response?.status);
+  if ([500, 502, 503, 504].includes(status)) return true;
+  const code = String(error?.code || '');
+  if (['ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN'].includes(code)) return true;
+  const msg = String(error?.message || '');
+  return /timeout|network|socket|status code 5\d\d/i.test(msg);
+}
+
+function axiosStatus(error) {
+  return Number(error?.response?.status) || null;
 }
 
 async function fetchOptionChain({ symbol, expiry }) {
@@ -162,7 +177,10 @@ async function fetchOptionChain({ symbol, expiry }) {
     'Content-Type': 'application/json',
   };
   try {
-    const resp = await axios.post(`${DHAN_BASE}/optionchain`, body, { headers, timeout: 20000 });
+    const resp = await axios.post(`${DHAN_BASE}/optionchain`, body, {
+      headers,
+      timeout: OPTION_CHAIN_HTTP_TIMEOUT_MS,
+    });
     return resp.data?.data || {};
   } catch (error) {
     if (isLikelyDhanAuthError(error)) {
@@ -170,7 +188,7 @@ async function fetchOptionChain({ symbol, expiry }) {
       const retry = await axios.post(
         `${DHAN_BASE}/optionchain`,
         body,
-        { headers: { ...headers, 'access-token': renewed }, timeout: 20000 }
+        { headers: { ...headers, 'access-token': renewed }, timeout: OPTION_CHAIN_HTTP_TIMEOUT_MS }
       );
       return retry.data?.data || {};
     }
@@ -178,7 +196,7 @@ async function fetchOptionChain({ symbol, expiry }) {
   }
 }
 
-/** Dhan option chain is heavily rate-limited — coalesce callers and reuse stale data on 429. */
+/** Dhan option chain is heavily rate-limited — coalesce callers and reuse stale data on 429/5xx. */
 async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}) {
   const key = `${String(symbol).toUpperCase()}|${String(expiry)}`;
   const now = Date.now();
@@ -187,7 +205,7 @@ async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}
   if (optionChainRateLimitedUntil && now < optionChainRateLimitedUntil) {
     if (cached && allowStale) return cached.data;
     const waitSec = Math.ceil((optionChainRateLimitedUntil - now) / 1000);
-    throw new Error(`Dhan option chain rate limited — retry in ~${waitSec}s`);
+    throw new Error(`Dhan option chain cooling down — retry in ~${waitSec}s`);
   }
 
   if (cached && now - cached.at < OPTION_CHAIN_MIN_INTERVAL_MS) {
@@ -204,11 +222,23 @@ async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}
       optionChainCache.set(key, { at: Date.now(), data });
       return data;
     } catch (error) {
+      const status = axiosStatus(error);
       if (isHttpRateLimitError(error)) {
         optionChainRateLimitedUntil = Date.now() + OPTION_CHAIN_429_COOLDOWN_MS;
-        if (cached && allowStale && now - cached.at < OPTION_CHAIN_STALE_MAX_AGE_MS) {
-          return cached.data;
-        }
+      } else if (isTransientOptionChainError(error)) {
+        optionChainRateLimitedUntil = Date.now() + OPTION_CHAIN_5XX_COOLDOWN_MS;
+      }
+
+      if (
+        allowStale
+        && cached
+        && now - cached.at < OPTION_CHAIN_STALE_MAX_AGE_MS
+        && (isHttpRateLimitError(error) || isTransientOptionChainError(error))
+      ) {
+        // Keep board alive on Dhan blips (500 / timeout / 429).
+        cached.stale = true;
+        cached.staleReason = status ? `HTTP_${status}` : String(error.code || error.message || 'ERR');
+        return cached.data;
       }
       throw error;
     } finally {

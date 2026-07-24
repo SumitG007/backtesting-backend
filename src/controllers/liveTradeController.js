@@ -43,6 +43,40 @@ function computeClosedTradeStats(rows) {
   };
 }
 
+async function aggregateClosedTradeStats(closedFilter) {
+  const [row] = await LivePaperTrade.aggregate([
+    { $match: closedFilter },
+    {
+      $group: {
+        _id: null,
+        totalTrades: { $sum: 1 },
+        netPnl: { $sum: { $ifNull: ['$pnl', 0] } },
+        totalCharges: { $sum: { $ifNull: ['$charges', 0] } },
+        wins: {
+          $sum: {
+            $cond: [{ $gt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0],
+          },
+        },
+        losses: {
+          $sum: {
+            $cond: [{ $lt: [{ $ifNull: ['$pnl', 0] }, 0] }, 1, 0],
+          },
+        },
+      },
+    },
+  ]);
+  if (!row) {
+    return { netPnl: 0, wins: 0, losses: 0, totalTrades: 0, totalCharges: 0 };
+  }
+  return {
+    netPnl: Number(Number(row.netPnl || 0).toFixed(2)),
+    wins: Number(row.wins || 0),
+    losses: Number(row.losses || 0),
+    totalTrades: Number(row.totalTrades || 0),
+    totalCharges: Number(Number(row.totalCharges || 0).toFixed(2)),
+  };
+}
+
 /** Older paper rows used the backtest strategy6 key — fold into remaining straddle live.
  * Retired Strategy A / 15:20 paper key is deleted by purgeStraddle1520PaperTrades.js — do not merge. */
 async function normalizeLegacyStrategy4PaperKeys() {
@@ -272,8 +306,7 @@ async function getStatus(req, res) {
       ...keyFilter,
       $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
     };
-    const closedRows = await LivePaperTrade.find(closedFilter).lean();
-    const stats = computeClosedTradeStats(closedRows);
+    const stats = await aggregateClosedTradeStats(closedFilter);
     const strategyNetPnl = stats.netPnl;
     const strategyTotalTrades = stats.totalTrades;
     if (typeof ctx.recalcWallet === 'function') {
