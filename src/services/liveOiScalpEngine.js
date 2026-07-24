@@ -39,6 +39,8 @@ const MIN_HOLD_MS = 2000;
 const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
 const OI_BOARD_LOOKAROUND = 12;
+/** After CE↔PE bias flip, wait before taking the new side. */
+const OI_FLIP_COOLDOWN_MS = 60_000;
 
 const engineState = {
   running: false,
@@ -72,6 +74,9 @@ const engineState = {
   lastOiBoardFetchAt: 0,
   lastOiError: null,
   scalpSignal: null,
+  /** Armed CE/PE lean while waiting — cleared on flip. */
+  armedBias: null,
+  oiFlipUntilMs: 0,
   todayBars1m: [],
   lastCandleFetchAt: 0,
   lastCandleError: null,
@@ -188,6 +193,8 @@ async function syncTradesToday(clock) {
   });
   engineState.tradesTodayCount = count;
   engineState.tradesTodayDateKey = clock.dateKey;
+  engineState.armedBias = null;
+  engineState.oiFlipUntilMs = 0;
   const last = await LivePaperTrade.findOne({
     strategyKey: STRATEGY_KEY,
     entryDateKey: clock.dateKey,
@@ -357,6 +364,7 @@ function readClosedCandle(rows) {
 
 /**
  * Strong scalp setup from OI board + closed 1m candle.
+ * Re-checks wall side + ΔOI; CE↔PE flip disarms and skips until cooldown.
  */
 function buildScalpSetup(board, candle, oiError = null) {
   if (!board || !Array.isArray(board.strikes) || board.strikes.length === 0) {
@@ -418,8 +426,52 @@ function buildScalpSetup(board, candle, oiError = null) {
 
   if (!Number.isFinite(spot)) return { action: 'WAIT', reason: 'NO_SPOT', why };
 
+  const clearLean = bull - bear >= 2 ? 'CE' : bear - bull >= 2 ? 'PE' : null;
+  if (clearLean) {
+    const arm = trackArmedBias(clearLean);
+    if (arm === 'FLIPPED') {
+      return {
+        action: 'WAIT',
+        reason: 'OI_SIDE_FLIPPED',
+        detail: 'Bias flipped while waiting — skip stale setup, wait for fresh OI',
+        why,
+        spot,
+        support,
+        resist,
+        bull,
+        bear,
+      };
+    }
+    if (arm === 'STABILIZING' || Date.now() < engineState.oiFlipUntilMs) {
+      return {
+        action: 'WAIT',
+        reason: 'OI_FLIP_COOLDOWN',
+        detail: 'Stabilizing after OI flip',
+        why,
+        spot,
+        support,
+        resist,
+        bull,
+        bear,
+      };
+    }
+  }
+
   // CE: bounce near support / reclaim with green candle
   if (bull - bear >= 2 && candle.green) {
+    if (nearCallChg > nearPutChg) {
+      return {
+        action: 'WAIT',
+        reason: 'DELTA_OI_FIGHTING',
+        detail: 'Call ΔOI rising faster — skip CE',
+        why,
+        spot,
+        support,
+        resist,
+        bull,
+        bear,
+      };
+    }
     const level = Number.isFinite(support) ? support : atm;
     const nearLevel = Math.abs(spot - level) <= prox || candle.low <= level + prox;
     const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
@@ -428,7 +480,7 @@ function buildScalpSetup(board, candle, oiError = null) {
         action: 'BUY_CE',
         optionType: 'CE',
         levelStrike: level,
-        entryReason: `Buy CE · bounce near ${level} · ${why.slice(0, 2).join(' · ')} · 1m green`,
+        entryReason: `Buy CE · bounce near ${level} · ${why.slice(0, 2).join(' · ')} · 1m green · ΔOI ok`,
         why,
         spot,
         support,
@@ -439,6 +491,19 @@ function buildScalpSetup(board, candle, oiError = null) {
 
   // PE: rejection near resistance with red candle
   if (bear - bull >= 2 && candle.red) {
+    if (nearPutChg > nearCallChg) {
+      return {
+        action: 'WAIT',
+        reason: 'DELTA_OI_FIGHTING',
+        detail: 'Put ΔOI rising faster — skip PE',
+        why,
+        spot,
+        support,
+        resist,
+        bull,
+        bear,
+      };
+    }
     const level = Number.isFinite(resist) ? resist : atm;
     const nearLevel = Math.abs(spot - level) <= prox || candle.high >= level - prox;
     const reject = Number.isFinite(candle.prevClose) ? candle.close <= candle.prevClose : true;
@@ -447,7 +512,7 @@ function buildScalpSetup(board, candle, oiError = null) {
         action: 'BUY_PE',
         optionType: 'PE',
         levelStrike: level,
-        entryReason: `Buy PE · reject near ${level} · ${why.slice(0, 2).join(' · ')} · 1m red`,
+        entryReason: `Buy PE · reject near ${level} · ${why.slice(0, 2).join(' · ')} · 1m red · ΔOI ok`,
         why,
         spot,
         support,
@@ -466,6 +531,20 @@ function buildScalpSetup(board, candle, oiError = null) {
     bull,
     bear,
   };
+}
+
+function trackArmedBias(lean) {
+  if (lean !== 'CE' && lean !== 'PE') return 'NONE';
+  const prev = engineState.armedBias;
+  if (prev && prev !== lean) {
+    logEntry('OI_BIAS_FLIP', { from: prev, to: lean });
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = Date.now() + OI_FLIP_COOLDOWN_MS;
+    return 'FLIPPED';
+  }
+  if (Date.now() < engineState.oiFlipUntilMs) return 'STABILIZING';
+  engineState.armedBias = lean;
+  return 'OK';
 }
 
 function optionTickIsFresh() {
@@ -637,7 +716,34 @@ async function evaluateEntry() {
 
     if (setup.action !== 'BUY_CE' && setup.action !== 'BUY_PE') return;
 
-    await placeLongOption(clock, setup);
+    // Fresh OI board re-check right before fill (wall / ΔOI may have flipped).
+    const boardFresh = await refreshLiveOiBoard(clock, { force: true });
+    const setupFresh = buildScalpSetup(boardFresh, candle, engineState.lastOiError);
+    engineState.scalpSignal = {
+      ...setupFresh,
+      at: new Date().toISOString(),
+      revalidated: true,
+      priorAction: setup.action,
+      bars: Array.isArray(bars) ? bars.length : 0,
+      candleError: engineState.lastCandleError,
+      oiError: engineState.lastOiError,
+    };
+    if (setupFresh.action !== setup.action) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: setupFresh.reason || 'SETUP_CHANGED',
+        prior: setup.action,
+        now: setupFresh.action,
+      });
+      engineState.lastEntryDebug = {
+        reason: 'REVALIDATE_FAIL',
+        prior: setup.action,
+        now: setupFresh.action || setupFresh.reason,
+      };
+      return;
+    }
+
+    await placeLongOption(clock, setupFresh);
   } catch (err) {
     engineState.lastError = `Entry loop: ${err.message}`;
     logEntry('ENTRY_LOOP_ERROR', { error: err.message });
@@ -718,6 +824,8 @@ async function placeLongOption(clock, setup) {
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.tradesTodayCount += 1;
     engineState.tradesTodayDateKey = clock.dateKey;
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = 0;
     engineState.lastSignalAt = new Date();
     logEntry('ENTRY_SUCCESS', {
       ist: istClockLabel(clock),

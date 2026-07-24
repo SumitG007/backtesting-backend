@@ -44,6 +44,8 @@ const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_TRADE_FROM = 560; // 09:20
 const DEFAULT_TRADE_TO = 910; // 15:10 — last chance for the one daily entry
 const DEFAULT_EOD = 920; // 15:20
+/** After OI side flip, wait before arming a new entry setup. */
+const OI_FLIP_COOLDOWN_MS = 60_000;
 /** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
 
@@ -78,6 +80,9 @@ const engineState = {
   morningSignal: null,
   /** Live OI board for UI (memory only). */
   liveOiBoard: null,
+  /** Armed CE/PE bias while waiting for spot — cleared on OI flip. */
+  armedBias: null,
+  oiFlipUntilMs: 0,
   lastOiBoardFetchAt: 0,
   lastOiFetchAt: 0,
   lastOiError: null,
@@ -254,6 +259,86 @@ function pickDominantStrike(snapshot) {
     }
   }
   return best;
+}
+
+/** ΔOI fights CE if calls are building faster; fights PE if puts build faster. */
+function isDeltaOiFighting(optionType, putChg, callChg) {
+  if (!Number.isFinite(putChg) || !Number.isFinite(callChg)) return false;
+  if (optionType === 'CE') return callChg > putChg;
+  return putChg > callChg;
+}
+
+/**
+ * Track armed CE/PE while waiting for spot. Side flip → disarm + cooldown (skip stale entry).
+ */
+function trackArmedBias(signal) {
+  if (!signal || signal.skip || !signal.optionType) return 'NONE';
+  const side = signal.optionType === 'PE' ? 'PE' : 'CE';
+  const prev = engineState.armedBias;
+  if (prev?.optionType && prev.optionType !== side) {
+    logEntry('OI_BIAS_FLIP', {
+      from: prev.optionType,
+      to: side,
+      prevLevel: prev.levelStrike,
+      newLevel: signal.levelStrike,
+    });
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = Date.now() + OI_FLIP_COOLDOWN_MS;
+    return 'FLIPPED';
+  }
+  if (Date.now() < engineState.oiFlipUntilMs) return 'STABILIZING';
+  engineState.armedBias = {
+    optionType: side,
+    dominantSide: signal.dominantSide,
+    levelStrike: signal.levelStrike,
+    at: Date.now(),
+  };
+  return 'OK';
+}
+
+/**
+ * Fresh OI re-check right before fill — wall side + ΔOI must still agree.
+ */
+async function revalidateWallEntry(clock, intended) {
+  engineState.lastOiFetchAt = 0;
+  const live = await captureMorningOiSignal(clock);
+  if (!live || live.skip) {
+    return { ok: false, reason: 'NO_DOMINANT_NOW', live: live || null };
+  }
+  const intendedType = intended.optionType === 'PE' ? 'PE' : 'CE';
+  if (live.optionType !== intendedType) {
+    trackArmedBias(live);
+    return {
+      ok: false,
+      reason: 'OI_SIDE_FLIPPED',
+      intended: intendedType,
+      now: live.optionType,
+      live,
+    };
+  }
+  if (intendedType === 'CE' && Number(live.putOi) < Number(live.callOi)) {
+    return { ok: false, reason: 'WALL_SIDE_BROKEN', live };
+  }
+  if (intendedType === 'PE' && Number(live.callOi) < Number(live.putOi)) {
+    return { ok: false, reason: 'WALL_SIDE_BROKEN', live };
+  }
+  if (isDeltaOiFighting(live.optionType, live.putChgOi, live.callChgOi)) {
+    return {
+      ok: false,
+      reason: 'DELTA_OI_FIGHTING',
+      putChg: live.putChgOi,
+      callChg: live.callChgOi,
+      live,
+    };
+  }
+  if (Date.now() < engineState.oiFlipUntilMs) {
+    return { ok: false, reason: 'OI_FLIP_COOLDOWN', live };
+  }
+  const arm = trackArmedBias(live);
+  if (arm === 'FLIPPED' || arm === 'STABILIZING') {
+    return { ok: false, reason: arm === 'FLIPPED' ? 'OI_SIDE_FLIPPED' : 'OI_FLIP_COOLDOWN', live };
+  }
+  return { ok: true, signal: live };
 }
 
 /**
@@ -539,6 +624,8 @@ async function syncEngineTradeStateFromDb(clock) {
   }
   if (engineState.morningSignal?.dateKey && engineState.morningSignal.dateKey !== clock.dateKey) {
     engineState.morningSignal = null;
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = 0;
   }
 }
 
@@ -644,13 +731,15 @@ async function captureMorningOiSignal(clock) {
       candleInterval: '1',
       at: new Date().toISOString(),
     };
+    const armStatus = trackArmedBias(engineState.morningSignal);
+    engineState.morningSignal.armStatus = armStatus;
     logEntry('OI_SCAN_SIGNAL', engineState.morningSignal);
     if (changed) {
       pushNotification({
         type: 'OI_SIGNAL',
         strategy: 'OI Wall',
         title: `Buy ${dominant.optionType} · wall ${dominant.strike}`,
-        body: `${dominant.dominantSide} bias · ATM when spot near ${dominant.strike} (± proximity) · all-day 1-entry`,
+        body: `${dominant.dominantSide} bias · ATM when spot near ${dominant.strike} (± proximity) · re-check OI at entry`,
         meta: {
           levelStrike: dominant.strike,
           optionType: dominant.optionType,
@@ -770,6 +859,27 @@ async function evaluateEntry() {
     }
     if (!signal || signal.skip) return;
 
+    if (Date.now() < engineState.oiFlipUntilMs) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: 'OI_FLIP_COOLDOWN',
+        optionType: signal.optionType,
+        level: signal.levelStrike,
+      });
+      return;
+    }
+    if (isDeltaOiFighting(signal.optionType, signal.putChgOi, signal.callChgOi)) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: 'DELTA_OI_FIGHTING',
+        optionType: signal.optionType,
+        level: signal.levelStrike,
+        putChg: signal.putChgOi,
+        callChg: signal.callChgOi,
+      });
+      return;
+    }
+
     let spot;
     try {
       const spotMark = await getAtmPremiums({
@@ -819,7 +929,61 @@ async function evaluateEntry() {
       return;
     }
 
-    await placeLongOption(clock, signal, spot);
+    // Final live re-check: OI may have flipped / ΔOI may fight while waiting for spot.
+    let check;
+    try {
+      check = await revalidateWallEntry(clock, signal);
+    } catch (err) {
+      engineState.lastError = `OI revalidate: ${err.message}`;
+      return;
+    }
+    if (!check.ok) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: check.reason,
+        intended: signal.optionType,
+        level: signal.levelStrike,
+        nowType: check.live?.optionType,
+        nowLevel: check.live?.levelStrike,
+        putChg: check.putChg ?? check.live?.putChgOi,
+        callChg: check.callChg ?? check.live?.callChgOi,
+      });
+      return;
+    }
+
+    const fresh = check.signal;
+    const freshDist = Math.abs(spot - Number(fresh.levelStrike));
+    if (freshDist > engineState.settings.proximityPoints) {
+      logEntry('WAIT_PROXIMITY', {
+        ist: istClockLabel(clock),
+        spot,
+        level: fresh.levelStrike,
+        dist: Number(freshDist.toFixed(1)),
+        need: engineState.settings.proximityPoints,
+        afterRevalidate: true,
+      });
+      return;
+    }
+
+    let freshConfirmed = false;
+    try {
+      freshConfirmed = await hasReactionConfirmation(clock, fresh);
+    } catch (err) {
+      engineState.lastError = `1m reaction: ${err.message}`;
+      return;
+    }
+    if (!freshConfirmed) {
+      logEntry('WAIT_REACTION', {
+        ist: istClockLabel(clock),
+        optionType: fresh.optionType,
+        level: fresh.levelStrike,
+        spot,
+        afterRevalidate: true,
+      });
+      return;
+    }
+
+    await placeLongOption(clock, fresh, spot);
   } catch (err) {
     engineState.lastError = `Entry loop: ${err.message}`;
     logEntry('ENTRY_LOOP_ERROR', { error: err.message });
@@ -892,6 +1056,8 @@ async function placeLongOption(clock, signal, spot) {
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.tradeDateKey = clock.dateKey;
     engineState.skippedDateKey = null;
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = 0;
     engineState.lastSignalAt = new Date();
     logEntry('ENTRY_SUCCESS', {
       ist: istClockLabel(clock),
