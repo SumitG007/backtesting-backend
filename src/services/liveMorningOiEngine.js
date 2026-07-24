@@ -25,7 +25,7 @@ const {
 } = require('./dhanLiveService');
 const { fetchTradingDayCandles } = require('./dhanDataService');
 const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
-const { pushNotification } = require('./notificationHub');
+const { pushNotification, pruneTradeNotifications, clearNotifications } = require('./notificationHub');
 
 const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy12';
@@ -1283,6 +1283,7 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   engineState.running = true;
   engineState.startedAt = new Date();
   startPoll();
+  await syncOiWallNotificationsWithDb();
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -1382,10 +1383,25 @@ async function resumeOpenPositionFromDb() {
   return { ok: true, resumed: Boolean(engineState.openTradeId), state: getEngineSnapshot() };
 }
 
+async function syncOiWallNotificationsWithDb() {
+  try {
+    const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select({ _id: 1 }).lean();
+    const ids = rows.map((r) => String(r._id));
+    if (ids.length === 0) {
+      clearNotifications({ strategy: 'OI Wall' });
+    } else {
+      pruneTradeNotifications({ strategy: 'OI Wall', validTradeIds: ids });
+    }
+  } catch (err) {
+    console.warn('[OI Wall] notification sync:', err.message);
+  }
+}
+
 async function ensureEngineRunning() {
   if (!engineState.running) return bootEngineFromDb();
   const clock = getIstClock(new Date());
   await syncEngineTradeStateFromDb(clock);
+  await syncOiWallNotificationsWithDb();
   if (engineState.openTradeId && !engineState.positionPollTimer) {
     const trade = await LivePaperTrade.findById(engineState.openTradeId);
     if (trade && !trade.exitTime) {
@@ -1448,6 +1464,7 @@ async function reconcileOpenTrades() {
   const clock = getIstClock(new Date());
   await dedupeOpenTradesInDb(clock);
   await syncEngineTradeStateFromDb(clock);
+  await syncOiWallNotificationsWithDb();
   if (engineState.openTradeId && engineState.running && !engineState.positionPollTimer) {
     const openInDb = await LivePaperTrade.findById(engineState.openTradeId);
     if (openInDb && !openInDb.exitTime) {

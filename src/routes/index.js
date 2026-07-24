@@ -34,7 +34,7 @@ const {
   reopenLiveTrade,
 } = require('../controllers/liveTradeController');
 const { getDrishtiDashboard } = require('../controllers/drishtiDashboardController');
-const { getTodayNotifications } = require('../controllers/notificationController');
+const { getTodayNotifications, clearTodayNotifications } = require('../controllers/notificationController');
 const {
   getInstrumentSummary,
   exportOptionStocksCsv,
@@ -81,6 +81,7 @@ router.get('/research/patterns/multi', getMultiScenarioResearch);
 router.get('/results/drishti', getDrishtiDashboard);
 router.get('/dashboard/drishti', getDrishtiDashboard);
 router.get('/notifications/today', getTodayNotifications);
+router.post('/notifications/clear', clearTodayNotifications);
 // Strategy 2 — short straddle (entry day + next day exit)
 router.post('/strategy2/run', runStrategyShortStraddleNextDay);
 router.post('/strategy2/validation', postStrategyShortStraddleValidation);

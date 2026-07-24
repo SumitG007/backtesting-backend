@@ -82,10 +82,70 @@ function markAllRead() {
   return listToday();
 }
 
+/**
+ * Remove today's notifications for a strategy (or all if strategy omitted).
+ * Matches strategy label case-insensitively (e.g. "OI Wall").
+ */
+function clearNotifications({ strategy = null } = {}) {
+  ensureToday();
+  const before = store.items.length;
+  if (!strategy) {
+    store.items = [];
+  } else {
+    const needle = String(strategy).trim().toLowerCase();
+    store.items = store.items.filter((n) => String(n.strategy || '').toLowerCase() !== needle);
+  }
+  const removed = before - store.items.length;
+  const payload = listToday();
+  if (io) {
+    try {
+      io.emit('notification:day', payload);
+    } catch (err) {
+      console.warn('[Notifications] clear emit failed:', err.message);
+    }
+  }
+  return { ...payload, removed };
+}
+
+/**
+ * Drop ENTRY/EXIT (and strategy-scoped) notifications whose tradeId is gone from DB.
+ * If validTradeIds is empty and strategy is set, clears all notifications for that strategy.
+ */
+function pruneTradeNotifications({ strategy, validTradeIds = [] } = {}) {
+  ensureToday();
+  const valid = new Set((validTradeIds || []).map((id) => String(id)));
+  const needle = strategy ? String(strategy).trim().toLowerCase() : null;
+  const before = store.items.length;
+
+  if (needle && valid.size === 0) {
+    return clearNotifications({ strategy });
+  }
+
+  store.items = store.items.filter((n) => {
+    if (needle && String(n.strategy || '').toLowerCase() !== needle) return true;
+    const tid = n.meta?.tradeId;
+    if (!tid) return true; // keep OI_SIGNAL / info without trade id
+    return valid.has(String(tid));
+  });
+
+  const removed = before - store.items.length;
+  const payload = listToday();
+  if (removed > 0 && io) {
+    try {
+      io.emit('notification:day', payload);
+    } catch (err) {
+      console.warn('[Notifications] prune emit failed:', err.message);
+    }
+  }
+  return { ...payload, removed };
+}
+
 module.exports = {
   attachSocketServer,
   listToday,
   pushNotification,
   markAllRead,
+  clearNotifications,
+  pruneTradeNotifications,
   ensureToday,
 };
