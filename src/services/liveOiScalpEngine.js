@@ -55,7 +55,7 @@ const engineState = {
     eodExitTime: '15:15',
     targetPoints: 5,
     stopLossPoints: 5,
-    proximityPoints: 40,
+    proximityPoints: 30,
     strikeLookaround: 10,
     strikeMode: 'ATM',
     maxTradesPerDay: 8,
@@ -128,7 +128,7 @@ function normalizeSettings(settings = {}) {
     eodExitTime: settings.eodExitTime || '15:15',
     targetPoints,
     stopLossPoints,
-    proximityPoints: Math.max(10, Math.floor(Number(settings.proximityPoints) || 40)),
+    proximityPoints: Math.max(10, Math.floor(Number(settings.proximityPoints) || 30)),
     strikeLookaround: Math.max(3, Math.floor(Number(settings.strikeLookaround) || 10)),
     strikeMode: settings.strikeMode === 'ITM' ? 'ITM' : 'ATM',
     maxTradesPerDay: Math.max(1, Math.min(20, Math.floor(Number(settings.maxTradesPerDay) || 8))),
@@ -316,7 +316,7 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
     return engineState.todayBars1m;
   }
   try {
-    const rows = await fetchTradingDayCandles({
+    const { rows } = await fetchTradingDayCandles({
       symbol: getEngineSymbol(),
       interval: '1',
       dateKey: clock.dateKey,
@@ -327,32 +327,49 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
     return engineState.todayBars1m;
   } catch (err) {
     engineState.lastCandleError = err.message || 'Candle fetch failed';
+    logEntry('CANDLE_FETCH_ERROR', { error: engineState.lastCandleError });
     return engineState.todayBars1m;
   }
 }
 
 function readClosedCandle(rows) {
-  if (!Array.isArray(rows) || rows.length < 2) return null;
+  if (!Array.isArray(rows) || rows.length < 1) return null;
   // Prefer previous bar as closed; last may still be forming.
-  const bar = rows.length >= 3 ? rows[rows.length - 2] : rows[rows.length - 1];
-  const prev = rows.length >= 3 ? rows[rows.length - 3] : rows[rows.length - 2];
+  const barIdx = rows.length >= 2 ? rows.length - 2 : rows.length - 1;
+  const bar = rows[barIdx];
+  const prev = barIdx > 0 ? rows[barIdx - 1] : null;
   const open = Number(bar[1]);
   const high = Number(bar[2]);
   const low = Number(bar[3]);
   const close = Number(bar[4]);
-  const prevClose = Number(prev?.[4]);
+  const prevClose = prev != null ? Number(prev[4]) : null;
   if (![open, high, low, close].every(Number.isFinite)) return null;
-  return { open, high, low, close, prevClose, green: close > open, red: close < open };
+  return {
+    open,
+    high,
+    low,
+    close,
+    prevClose: Number.isFinite(prevClose) ? prevClose : null,
+    green: close > open,
+    red: close < open,
+  };
 }
 
 /**
  * Strong scalp setup from OI board + closed 1m candle.
  */
-function buildScalpSetup(board, candle) {
+function buildScalpSetup(board, candle, oiError = null) {
   if (!board || !Array.isArray(board.strikes) || board.strikes.length === 0) {
-    return { action: 'WAIT', reason: 'NO_OI_BOARD' };
+    const cooling = /cooling down/i.test(String(oiError || ''));
+    return {
+      action: 'WAIT',
+      reason: cooling ? 'OI_COOLDOWN' : 'NO_OI_BOARD',
+      detail: oiError || 'Waiting for live OI chain…',
+    };
   }
-  if (!candle) return { action: 'WAIT', reason: 'NO_1M_CANDLE' };
+  if (!candle) {
+    return { action: 'WAIT', reason: 'NO_1M_CANDLE', detail: 'Waiting for 1m candles…' };
+  }
 
   const spot = Number(board.spot);
   const atm = Number(board.atm);
@@ -605,10 +622,13 @@ async function evaluateEntry() {
     const board = await refreshLiveOiBoard(clock);
     const bars = await refreshOneMinuteCandles(clock);
     const candle = readClosedCandle(bars);
-    const setup = buildScalpSetup(board, candle);
+    const setup = buildScalpSetup(board, candle, engineState.lastOiError);
     engineState.scalpSignal = {
       ...setup,
       at: new Date().toISOString(),
+      bars: Array.isArray(bars) ? bars.length : 0,
+      candleError: engineState.lastCandleError,
+      oiError: engineState.lastOiError,
       candle: candle
         ? { open: candle.open, high: candle.high, low: candle.low, close: candle.close, green: candle.green, red: candle.red }
         : null,
@@ -842,11 +862,17 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
 
 function startPoll() {
   if (engineState.pollTimer) clearInterval(engineState.pollTimer);
+  // Stagger first OI pull slightly so we share Dhan cache with OI Wall instead of double-hitting.
+  const bootDelayMs = 2500;
+  const startedAt = Date.now();
   const tick = () => {
     const clock = getIstClock(new Date());
-    refreshLiveOiBoard(clock).catch((err) => {
-      engineState.lastOiError = err.message || 'OI board failed';
-    });
+    const allowOi = Date.now() - startedAt >= bootDelayMs;
+    if (allowOi) {
+      refreshLiveOiBoard(clock).catch((err) => {
+        engineState.lastOiError = err.message || 'OI board failed';
+      });
+    }
     evaluateEntry().catch((err) => {
       engineState.lastError = `OI Scalp entry poll: ${err.message}`;
     });

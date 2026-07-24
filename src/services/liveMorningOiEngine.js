@@ -1,7 +1,7 @@
 /**
- * Strategy 7 (UI) — NIFTY Morning Option Chain OI paper live.
- * 09:15–09:20: fetch live OI (memory only, never Mongo). Dominant Put → CE, Call → PE.
- * Wait for spot near level + reaction candle, then one ATM long. Target % on premium; SL % optional.
+ * Strategy 7 (UI) — NIFTY OI Wall Entry paper live.
+ * All-day monitor: live OI wall near spot · Put≥Call → CE / Call→PE · one strong entry when spot + 1m candle confirm.
+ * Target % / SL % on premium · EOD square-off.
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -41,9 +41,8 @@ const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
 const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
-const DEFAULT_OI_FROM = 555; // 09:15
-const DEFAULT_OI_TO = 560; // 09:20
-const DEFAULT_LAST_ENTRY = 690; // 11:30 — wait for spot after OI Wall lock
+const DEFAULT_TRADE_FROM = 560; // 09:20
+const DEFAULT_TRADE_TO = 910; // 15:10 — last chance for the one daily entry
 const DEFAULT_EOD = 920; // 15:20
 /** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
@@ -58,14 +57,13 @@ const engineState = {
   settings: {
     symbol: 'NIFTY',
     lotCount: 5,
-    oiScanFromTime: '09:15',
-    oiScanToTime: '09:20',
-    lastEntryTime: '11:30',
+    tradeFromTime: '09:20',
+    tradeToTime: '15:10',
     eodExitTime: '15:20',
     targetPct: DEFAULT_TARGET_PCT,
     stopLossPct: 10,
     hasStopLoss: true,
-    proximityPoints: 25,
+    proximityPoints: 30,
     strikeLookaround: 10,
     strikeMode: 'ATM',
     candleInterval: DEFAULT_CANDLE_INTERVAL,
@@ -143,7 +141,7 @@ function normalizeSettings(settings = {}) {
     }
   }
 
-  const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 25);
+  const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 30);
   const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
@@ -153,9 +151,15 @@ function normalizeSettings(settings = {}) {
   return {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount,
-    oiScanFromTime: String(settings.oiScanFromTime || '09:15'),
-    oiScanToTime: String(settings.oiScanToTime || '09:20'),
-    lastEntryTime: String(settings.lastEntryTime || '11:30'),
+    tradeFromTime: String(settings.tradeFromTime || settings.oiScanFromTime || '09:20'),
+    // Never inherit old morning-only lastEntry (10:30/11:30) as tradeTo.
+    tradeToTime: (() => {
+      const raw = String(settings.tradeToTime || '').trim();
+      if (raw && raw !== '10:30' && raw !== '11:30') return raw;
+      const legacy = String(settings.lastEntryTime || '').trim();
+      if (legacy && legacy !== '10:30' && legacy !== '11:30') return legacy;
+      return '15:10';
+    })(),
     eodExitTime: String(settings.eodExitTime || '15:20'),
     targetPct,
     stopLossPct,
@@ -168,16 +172,12 @@ function normalizeSettings(settings = {}) {
   };
 }
 
-function oiScanFromMin() {
-  return parseClockMinutes(engineState.settings.oiScanFromTime, DEFAULT_OI_FROM);
+function tradeFromMin() {
+  return parseClockMinutes(engineState.settings.tradeFromTime, DEFAULT_TRADE_FROM);
 }
 
-function oiScanToMin() {
-  return parseClockMinutes(engineState.settings.oiScanToTime, DEFAULT_OI_TO);
-}
-
-function lastEntryMin() {
-  return parseClockMinutes(engineState.settings.lastEntryTime, DEFAULT_LAST_ENTRY);
+function tradeToMin() {
+  return parseClockMinutes(engineState.settings.tradeToTime, DEFAULT_TRADE_TO);
 }
 
 function eodExitMin() {
@@ -543,30 +543,17 @@ async function syncEngineTradeStateFromDb(clock) {
 }
 
 async function captureMorningOiSignal(clock) {
-  const from = oiScanFromMin();
-  const to = oiScanToMin();
+  const from = tradeFromMin();
+  const to = tradeToMin();
   const existing = engineState.morningSignal;
   const sameDay = existing?.dateKey === clock.dateKey;
 
-  // After scan window: keep locked signal (success or terminal skip).
-  if (sameDay && clock.minutes > to) return existing;
-  // Before scan window: nothing yet.
+  // Outside monitor window: keep last signal for UI, do not refresh.
   if (clock.minutes < from) return sameDay ? existing : null;
+  if (clock.minutes > to) return sameDay ? existing : null;
 
-  // During scan window: refresh periodically so OI/ΔOI stay live.
-  if (
-    sameDay
-    && !existing?.skip
-    && Date.now() - engineState.lastOiFetchAt < OI_REFRESH_MIN_GAP_MS
-  ) {
-    return existing;
-  }
-  if (
-    sameDay
-    && existing?.skip
-    && existing.skipReason === 'no_dominant_oi'
-    && Date.now() - engineState.lastOiFetchAt < OI_REFRESH_MIN_GAP_MS
-  ) {
+  // Throttle live OI wall refresh — wall + direction can update all day until one entry fills.
+  if (sameDay && Date.now() - engineState.lastOiFetchAt < OI_REFRESH_MIN_GAP_MS) {
     return existing;
   }
 
@@ -629,6 +616,12 @@ async function captureMorningOiSignal(clock) {
       return engineState.morningSignal;
     }
 
+    const prev = sameDay && !existing?.skip ? existing : null;
+    const changed =
+      !prev
+      || Number(prev.levelStrike) !== Number(dominant.strike)
+      || String(prev.optionType) !== String(dominant.optionType);
+
     engineState.morningSignal = {
       dateKey: clock.dateKey,
       skip: false,
@@ -652,18 +645,20 @@ async function captureMorningOiSignal(clock) {
       at: new Date().toISOString(),
     };
     logEntry('OI_SCAN_SIGNAL', engineState.morningSignal);
-    pushNotification({
-      type: 'OI_SIGNAL',
-      strategy: 'OI Wall',
-      title: `Buy ${dominant.optionType} · wall ${dominant.strike}`,
-      body: `${dominant.dominantSide} bias · ATM entry when spot is near ${dominant.strike} (± proximity) · PCR / OI live`,
-      meta: {
-        levelStrike: dominant.strike,
-        optionType: dominant.optionType,
-        spot: snapshot.spot,
-      },
-      dedupeKey: `morning-oi-signal:${clock.dateKey}:${dominant.strike}:${dominant.optionType}`,
-    });
+    if (changed) {
+      pushNotification({
+        type: 'OI_SIGNAL',
+        strategy: 'OI Wall',
+        title: `Buy ${dominant.optionType} · wall ${dominant.strike}`,
+        body: `${dominant.dominantSide} bias · ATM when spot near ${dominant.strike} (± proximity) · all-day 1-entry`,
+        meta: {
+          levelStrike: dominant.strike,
+          optionType: dominant.optionType,
+          spot: snapshot.spot,
+        },
+        dedupeKey: `morning-oi-signal:${clock.dateKey}:${dominant.strike}:${dominant.optionType}`,
+      });
+    }
     return engineState.morningSignal;
   } catch (err) {
     engineState.lastOiError = err.message || 'OI fetch failed';
@@ -742,7 +737,7 @@ async function evaluateEntry() {
     const clock = getIstClock(new Date());
     await ensureNseHolidaysLoaded();
     if (!isNseCashTradingDay(clock.dateKey)) {
-      if (clock.minutes >= oiScanFromMin() && clock.minutes <= lastEntryMin()) {
+      if (clock.minutes >= tradeFromMin() && clock.minutes <= tradeToMin()) {
         logEntry('ENTRY_SKIP', {
           ist: istClockLabel(clock),
           reason: isWeekendDateKey(clock.dateKey) ? 'WEEKEND' : 'HOLIDAY',
@@ -753,14 +748,18 @@ async function evaluateEntry() {
     }
     await syncEngineTradeStateFromDb(clock);
 
+    // One strong entry per day only.
     if (engineState.tradeDateKey === clock.dateKey || engineState.openTradeId) return;
-    if (clock.minutes > lastEntryMin()) {
+
+    if (clock.minutes > tradeToMin()) {
       if (!engineState.skippedDateKey && clock.minutes < eodExitMin()) {
         engineState.skippedDateKey = clock.dateKey;
-        logEntry('DAY_SKIP_NO_ENTRY', { ist: istClockLabel(clock), reason: 'PAST_LAST_ENTRY' });
+        logEntry('DAY_SKIP_NO_ENTRY', { ist: istClockLabel(clock), reason: 'PAST_TRADE_WINDOW' });
       }
       return;
     }
+
+    if (clock.minutes < tradeFromMin()) return;
 
     let signal;
     try {
@@ -769,15 +768,7 @@ async function evaluateEntry() {
       engineState.lastError = `OI signal: ${err.message}`;
       return;
     }
-    if (!signal) return;
-    if (signal.skip) {
-      if (clock.minutes > oiScanToMin()) {
-        engineState.skippedDateKey = clock.dateKey;
-        engineState.tradeDateKey = clock.dateKey;
-      }
-      return;
-    }
-    if (clock.minutes < oiScanFromMin()) return;
+    if (!signal || signal.skip) return;
 
     let spot;
     try {
@@ -1145,9 +1136,9 @@ async function updateEngineSettings(partial = {}) {
   const next = normalizeSettings({ ...engineState.settings, ...partial });
   engineState.settings = next;
   syncEngineSymbolFromSettings();
-  // Extending last-entry window should unblock a same-day PAST_LAST_ENTRY skip.
+  // Widening trade window should clear a same-day PAST_TRADE_WINDOW / old PAST_LAST_ENTRY skip.
   const clock = getIstClock(new Date());
-  if (engineState.skippedDateKey === clock.dateKey && clock.minutes <= lastEntryMin()) {
+  if (engineState.skippedDateKey === clock.dateKey && clock.minutes <= tradeToMin()) {
     engineState.skippedDateKey = null;
   }
   if (getEngineSymbol() !== prevSymbol) {
@@ -1176,15 +1167,27 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     const persisted = wallet.strategy12EngineSettings
       ? wallet.strategy12EngineSettings.toObject?.() || wallet.strategy12EngineSettings
       : {};
-    // Migrate previous default 10:30 → 11:30 so OI lock can wait for spot later in the morning.
+    // Migrate old morning-only window → all-day monitor (one entry).
     const migrated = { ...persisted };
-    if (!migrated.lastEntryTime || migrated.lastEntryTime === '10:30') {
-      migrated.lastEntryTime = '11:30';
+    if (!migrated.tradeFromTime) {
+      migrated.tradeFromTime = migrated.oiScanFromTime === '09:15' ? '09:20' : (migrated.oiScanFromTime || '09:20');
+    }
+    if (!migrated.tradeToTime) {
+      // Old lastEntry 10:30/11:30 was morning-only — open to full session.
+      const oldLast = String(migrated.lastEntryTime || '');
+      migrated.tradeToTime =
+        oldLast === '10:30' || oldLast === '11:30' || !oldLast ? '15:10' : oldLast;
+    } else if (migrated.tradeToTime === '10:30' || migrated.tradeToTime === '11:30') {
+      // Previously saved last-entry values that leaked into tradeTo.
+      migrated.tradeToTime = '15:10';
     }
     const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
-    if (migrated.lastEntryTime !== persisted.lastEntryTime) {
-      wallet.strategy12EngineSettings = normalized;
-      await wallet.save();
+    wallet.strategy12EngineSettings = normalized;
+    await wallet.save();
+    // Clear stale same-day skip from old 11:30 last-entry logic.
+    const clock = getIstClock(new Date());
+    if (engineState.skippedDateKey === clock.dateKey) {
+      engineState.skippedDateKey = null;
     }
     return startEngine({ symbol: normalized.symbol || symbol, settings: normalized });
   } catch (err) {

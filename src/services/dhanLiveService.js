@@ -132,10 +132,13 @@ const OPTION_CHAIN_MIN_INTERVAL_MS = 4000;
 const OPTION_CHAIN_STALE_MAX_AGE_MS = 5 * 60 * 1000;
 const OPTION_CHAIN_429_COOLDOWN_MS = 60 * 1000;
 const OPTION_CHAIN_5XX_COOLDOWN_MS = 12 * 1000;
+/** When no warm cache exists, do not hard-block for the full cooldown — probe sooner. */
+const OPTION_CHAIN_EMPTY_CACHE_PROBE_MS = 8000;
 const OPTION_CHAIN_HTTP_TIMEOUT_MS = 12000;
 const optionChainCache = new Map();
 const optionChainInflight = new Map();
 let optionChainRateLimitedUntil = 0;
+let optionChainLastEmptyProbeAt = 0;
 
 function isHttpRateLimitError(error) {
   const status = Number(error?.response?.status);
@@ -204,8 +207,20 @@ async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}
 
   if (optionChainRateLimitedUntil && now < optionChainRateLimitedUntil) {
     if (cached && allowStale) return cached.data;
-    const waitSec = Math.ceil((optionChainRateLimitedUntil - now) / 1000);
-    throw new Error(`Dhan option chain cooling down — retry in ~${waitSec}s`);
+    // No cache yet (common right after boot) — allow a sparse probe so engines are not stuck ~60s.
+    const canProbeEmpty =
+      !cached && now - optionChainLastEmptyProbeAt >= OPTION_CHAIN_EMPTY_CACHE_PROBE_MS;
+    if (!canProbeEmpty) {
+      const waitSec = Math.ceil(
+        Math.min(
+          optionChainRateLimitedUntil - now,
+          Math.max(0, OPTION_CHAIN_EMPTY_CACHE_PROBE_MS - (now - optionChainLastEmptyProbeAt)),
+        ) / 1000,
+      );
+      throw new Error(`Dhan option chain cooling down — retry in ~${Math.max(1, waitSec)}s`);
+    }
+    optionChainLastEmptyProbeAt = now;
+    // fall through to fetch
   }
 
   if (cached && now - cached.at < OPTION_CHAIN_MIN_INTERVAL_MS) {
@@ -220,6 +235,7 @@ async function fetchOptionChainCached({ symbol, expiry, allowStale = true } = {}
     try {
       const data = await fetchOptionChain({ symbol, expiry });
       optionChainCache.set(key, { at: Date.now(), data });
+      optionChainRateLimitedUntil = 0;
       return data;
     } catch (error) {
       const status = axiosStatus(error);
