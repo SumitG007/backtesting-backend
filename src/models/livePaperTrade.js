@@ -34,6 +34,8 @@ const livePaperTradeSchema = new mongoose.Schema(
     exitTime: { type: Date, default: null },
     status: { type: String, enum: ['OPEN', 'CLOSED'], default: 'OPEN', index: true },
     reason: { type: String, default: null },
+    /** Short human reason for why the entry was taken (scalp / signals). */
+    entryReason: { type: String, default: null },
     investedAmount: { type: Number, required: true },
     creditReceived: { type: Number, default: null },
     finalValue: { type: Number, default: null },
