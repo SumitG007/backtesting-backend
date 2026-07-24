@@ -1,7 +1,7 @@
 /**
  * Strategy 7 (UI) — NIFTY OI Wall Entry paper live.
- * All-day monitor: live OI wall near spot · Put≥Call → CE / Call→PE · one strong entry when spot + 1m candle confirm.
- * Target % / SL % on premium · EOD square-off.
+ * Multi-trade: live OI wall · Put≥Call → CE / Call→PE · enter only on pure signal at fill time.
+ * Default target +15% / SL −10% on option premium · EOD square-off. Skip if OI/ΔOI flips before entry.
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -25,7 +25,7 @@ const {
 } = require('./dhanLiveService');
 const { fetchTradingDayCandles } = require('./dhanDataService');
 const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
-const { pushNotification, pruneTradeNotifications, clearNotifications } = require('./notificationHub');
+const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
 
 const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy12';
@@ -39,11 +39,12 @@ const MIN_HOLD_MS = 2000;
 const OI_REFRESH_MIN_GAP_MS = 5000;
 const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
-const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_TRADE_FROM = 560; // 09:20
-const DEFAULT_TRADE_TO = 910; // 15:10 — last chance for the one daily entry
+const DEFAULT_TRADE_TO = 910; // 15:10
 const DEFAULT_EOD = 920; // 15:20
+const DEFAULT_TARGET_PCT = 15;
+const DEFAULT_STOP_PCT = 10;
 /** After OI side flip, wait before arming a new entry setup. */
 const OI_FLIP_COOLDOWN_MS = 60_000;
 /** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
@@ -63,11 +64,13 @@ const engineState = {
     tradeToTime: '15:10',
     eodExitTime: '15:20',
     targetPct: DEFAULT_TARGET_PCT,
-    stopLossPct: 10,
+    stopLossPct: DEFAULT_STOP_PCT,
     hasStopLoss: true,
     proximityPoints: 30,
     strikeLookaround: 10,
     strikeMode: 'ATM',
+    maxTradesPerDay: 8,
+    cooldownMinutes: 2,
     candleInterval: DEFAULT_CANDLE_INTERVAL,
     perTradeCost: 100,
   },
@@ -76,11 +79,11 @@ const engineState = {
   expiryDateKey: null,
   lastSpot: null,
   lastOptionTick: null,
-  /** In-memory only — never written to Mongo. */
   morningSignal: null,
-  /** Live OI board for UI (memory only). */
+  /** Live truth for UI — never sticky Buy CE when invalid. */
+  liveSignal: null,
+  lastSignalNotifKey: null,
   liveOiBoard: null,
-  /** Armed CE/PE bias while waiting for spot — cleared on OI flip. */
   armedBias: null,
   oiFlipUntilMs: 0,
   lastOiBoardFetchAt: 0,
@@ -89,8 +92,9 @@ const engineState = {
   todayBars1m: [],
   lastCandleFetchAt: 0,
   lastCandleError: null,
-  skippedDateKey: null,
-  tradeDateKey: null,
+  tradesTodayCount: 0,
+  tradesTodayDateKey: null,
+  lastExitAtMs: 0,
   openTradeId: null,
   closingTrade: false,
   enteringTrade: false,
@@ -123,12 +127,12 @@ function syncEngineSymbolFromSettings() {
 
 function normalizeSettings(settings = {}) {
   const lotCount = Math.max(1, Number(settings.lotCount) || 5);
-  const targetRaw = Number(settings.targetPct);
+  const targetRaw = Number(settings.targetPct ?? settings.targetPoints);
   const targetPct =
     Number.isFinite(targetRaw) && targetRaw > 0 ? Math.min(500, targetRaw) : DEFAULT_TARGET_PCT;
 
   let hasStopLoss = true;
-  let stopLossPct = 10;
+  let stopLossPct = DEFAULT_STOP_PCT;
   if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPct')) {
     const slRaw = settings.stopLossPct;
     if (slRaw === '' || slRaw === null || slRaw === undefined) {
@@ -144,10 +148,17 @@ function normalizeSettings(settings = {}) {
         stopLossPct = Math.min(90, n);
       }
     }
+  } else if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')) {
+    // Migrate old points setting → % default if they only had points stored.
+    const n = Number(settings.stopLossPoints);
+    hasStopLoss = Number.isFinite(n) && n > 0;
+    stopLossPct = hasStopLoss ? DEFAULT_STOP_PCT : null;
   }
 
   const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 30);
   const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
+  const maxTradesPerDay = Math.max(1, Math.min(30, Math.floor(Number(settings.maxTradesPerDay) || 8)));
+  const cooldownMinutes = Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 2));
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
@@ -157,7 +168,6 @@ function normalizeSettings(settings = {}) {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount,
     tradeFromTime: String(settings.tradeFromTime || settings.oiScanFromTime || '09:20'),
-    // Never inherit old morning-only lastEntry (10:30/11:30) as tradeTo.
     tradeToTime: (() => {
       const raw = String(settings.tradeToTime || '').trim();
       if (raw && raw !== '10:30' && raw !== '11:30') return raw;
@@ -172,6 +182,8 @@ function normalizeSettings(settings = {}) {
     proximityPoints,
     strikeLookaround,
     strikeMode: String(settings.strikeMode || 'ATM').toUpperCase() === 'ITM' ? 'ITM' : 'ATM',
+    maxTradesPerDay,
+    cooldownMinutes,
     candleInterval: '1',
     perTradeCost,
   };
@@ -339,6 +351,310 @@ async function revalidateWallEntry(clock, intended) {
     return { ok: false, reason: arm === 'FLIPPED' ? 'OI_SIDE_FLIPPED' : 'OI_FLIP_COOLDOWN', live };
   }
   return { ok: true, signal: live };
+}
+
+function readLastCandleSnapshot(rows) {
+  if (!Array.isArray(rows) || rows.length < 1) return null;
+  const bar = rows.length >= 2 ? rows[rows.length - 2] : rows[rows.length - 1];
+  const prev = rows.length >= 2 ? rows[rows.length - 3] : null;
+  const open = Number(bar[1]);
+  const high = Number(bar[2]);
+  const low = Number(bar[3]);
+  const close = Number(bar[4]);
+  const prevClose = prev != null ? Number(prev[4]) : null;
+  if (![open, high, low, close].every(Number.isFinite)) return null;
+  return {
+    open,
+    high,
+    low,
+    close,
+    prevClose: Number.isFinite(prevClose) ? prevClose : null,
+    green: close > open,
+    red: close < open,
+  };
+}
+
+function candleConfirms(signal, candle) {
+  if (!signal || !candle) return false;
+  const level = Number(signal.levelStrike);
+  const prox = engineState.settings.proximityPoints;
+  if (!Number.isFinite(level)) return false;
+  if (signal.optionType === 'CE') {
+    const nearSupport = candle.low <= level + prox;
+    const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
+    return nearSupport && candle.green && bounce;
+  }
+  const nearResist = candle.high >= level - prox;
+  const reject = Number.isFinite(candle.prevClose) ? candle.close <= candle.prevClose : true;
+  return nearResist && candle.red && reject;
+}
+
+/**
+ * Publish live signal status for UI + day notifications.
+ * Status is never a sticky "Buy CE" when criteria are off.
+ */
+function publishLiveSignal(next) {
+  const prev = engineState.liveSignal;
+  engineState.liveSignal = {
+    ...next,
+    at: new Date().toISOString(),
+    ageMs: 0,
+  };
+
+  const key = [
+    next.status,
+    next.optionType || '',
+    next.levelStrike || '',
+    next.reason || '',
+  ].join(':');
+
+  if (key === engineState.lastSignalNotifKey) return;
+  const prevKey = engineState.lastSignalNotifKey;
+  engineState.lastSignalNotifKey = key;
+
+  const status = String(next.status || '');
+  const notable =
+    status === 'READY'
+    || status === 'CAUTION'
+    || status === 'CLEARED'
+    || status === 'WATCHING'
+    || (status === 'NEAR' && (!prev || prev.status !== 'NEAR' || prev.optionType !== next.optionType));
+
+  // Notify on arm / change / clear / ready — skip noisy same-phase WATCHING repeats via key above.
+  if (!notable && status !== 'READY' && status !== 'CAUTION' && status !== 'CLEARED') {
+    // Still notify first WATCHING of a new wall/side.
+    const wallChanged =
+      prev
+      && (String(prev.optionType) !== String(next.optionType)
+        || Number(prev.levelStrike) !== Number(next.levelStrike));
+    if (!(status === 'WATCHING' && (!prevKey || wallChanged))) return;
+  }
+
+  if (status === 'OUTSIDE_WINDOW' || status === 'IN_TRADE' || status === 'MAX_TRADES' || status === 'COOLDOWN') {
+    return;
+  }
+
+  let type = 'OI_SIGNAL';
+  let title = next.label || status;
+  let body = next.detail || '';
+
+  if (status === 'CLEARED') {
+    type = 'SIGNAL_CLEARED';
+    title = next.label || 'Signal cleared';
+  } else if (status === 'READY') {
+    type = 'SIGNAL_READY';
+    title = next.label || `Ready ${next.optionType} · ${next.levelStrike}`;
+  } else if (status === 'CAUTION') {
+    type = 'SIGNAL_CAUTION';
+    title = next.label || `Caution ${next.optionType} · ${next.levelStrike}`;
+  } else if (
+    prev
+    && (String(prev.optionType) !== String(next.optionType)
+      || Number(prev.levelStrike) !== Number(next.levelStrike))
+  ) {
+    type = 'SIGNAL_CHANGED';
+    title = next.label || `Signal → ${next.optionType} · ${next.levelStrike}`;
+  }
+
+  pushNotification({
+    type,
+    strategy: 'OI Wall',
+    title: String(title).slice(0, 160),
+    body: String(body).slice(0, 400),
+    meta: {
+      status: next.status,
+      optionType: next.optionType,
+      levelStrike: next.levelStrike,
+      reason: next.reason,
+      spotDist: next.spotDist,
+    },
+    dedupeKey: `oi-wall-live:${key}:${Math.floor(Date.now() / 30000)}`,
+  });
+}
+
+async function refreshLiveSignalStatus(clock) {
+  const prox = Number(engineState.settings.proximityPoints) || 30;
+
+  if (clock.minutes < tradeFromMin() || clock.minutes > tradeToMin()) {
+    publishLiveSignal({
+      status: 'OUTSIDE_WINDOW',
+      label: 'Outside trade window',
+      detail: `Active ${engineState.settings.tradeFromTime}–${engineState.settings.tradeToTime}`,
+      reason: 'OUTSIDE_WINDOW',
+      optionType: null,
+      levelStrike: null,
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (engineState.openTradeId) {
+    publishLiveSignal({
+      status: 'IN_TRADE',
+      label: 'In trade',
+      detail: 'One position open — no new entry until exit + cooldown',
+      reason: 'POSITION_OPEN',
+      optionType: engineState.morningSignal?.optionType || null,
+      levelStrike: engineState.morningSignal?.levelStrike || null,
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) {
+    publishLiveSignal({
+      status: 'MAX_TRADES',
+      label: 'Max trades hit',
+      detail: `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} today`,
+      reason: 'MAX_TRADES',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+  if (cooldownMs > 0 && engineState.lastExitAtMs && Date.now() - engineState.lastExitAtMs < cooldownMs) {
+    publishLiveSignal({
+      status: 'COOLDOWN',
+      label: 'Cooldown',
+      detail: 'Waiting after last exit before next signal entry',
+      reason: 'COOLDOWN',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  let signal;
+  try {
+    signal = await captureMorningOiSignal(clock);
+  } catch (err) {
+    publishLiveSignal({
+      status: 'CLEARED',
+      label: 'OI unavailable',
+      detail: err.message || 'OI fetch failed',
+      reason: 'OI_ERROR',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (!signal || signal.skip) {
+    publishLiveSignal({
+      status: 'CLEARED',
+      label: 'No wall signal',
+      detail: signal?.skipReason || 'Waiting for dominant OI wall',
+      reason: signal?.skipReason || 'NO_WALL',
+      optionType: null,
+      levelStrike: null,
+      buyLive: false,
+      putOi: signal?.putOi,
+      callOi: signal?.callOi,
+    });
+    return engineState.liveSignal;
+  }
+
+  const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+  const level = Number(signal.levelStrike);
+  const spot = Number(engineState.lastSpot ?? signal.spotAtScan);
+  const spotDist = Number.isFinite(spot) && Number.isFinite(level) ? Math.abs(spot - level) : null;
+  const proximityOk = Number.isFinite(spotDist) && spotDist <= prox;
+  const deltaFighting = isDeltaOiFighting(optionType, signal.putChgOi, signal.callChgOi);
+  const flipCooling = Date.now() < engineState.oiFlipUntilMs;
+
+  let candle = null;
+  let candleOk = false;
+  try {
+    const rows = await refreshOneMinuteCandles(clock);
+    candle = readLastCandleSnapshot(rows);
+    candleOk = candleConfirms(signal, candle);
+  } catch {
+    candleOk = false;
+  }
+
+  const base = {
+    optionType,
+    levelStrike: level,
+    dominantSide: signal.dominantSide,
+    putOi: signal.putOi,
+    callOi: signal.callOi,
+    putChgOi: signal.putChgOi,
+    callChgOi: signal.callChgOi,
+    ratio: signal.ratio,
+    spot: Number.isFinite(spot) ? spot : null,
+    spotDist: Number.isFinite(spotDist) ? Number(spotDist.toFixed(1)) : null,
+    proximityPoints: prox,
+    proximityOk,
+    deltaOk: !deltaFighting,
+    candleOk,
+    candle,
+    buyLive: false,
+  };
+
+  if (flipCooling) {
+    publishLiveSignal({
+      ...base,
+      status: 'CAUTION',
+      label: `Stabilizing after flip · was ${optionType}`,
+      detail: 'OI side flipped recently — wait ~1m before trusting a new bias',
+      reason: 'OI_FLIP_COOLDOWN',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (deltaFighting) {
+    publishLiveSignal({
+      ...base,
+      status: 'CAUTION',
+      label: `Watch ${optionType} · wall ${level} · ΔOI fighting`,
+      detail:
+        optionType === 'CE'
+          ? 'Wall still Put-biased, but Call ΔOI rising faster — not a live buy'
+          : 'Wall still Call-biased, but Put ΔOI rising faster — not a live buy',
+      reason: 'DELTA_OI_FIGHTING',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (!proximityOk) {
+    publishLiveSignal({
+      ...base,
+      status: 'WATCHING',
+      label: `Watch ${optionType} · wall ${level}`,
+      detail: Number.isFinite(spotDist)
+        ? `Spot ${spotDist.toFixed(0)} pts from wall — need ≤ ${prox} pts`
+        : 'Waiting for spot near wall',
+      reason: 'WAIT_PROXIMITY',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (!candleOk) {
+    publishLiveSignal({
+      ...base,
+      status: 'NEAR',
+      label: `Near wall · ${optionType} ${level}`,
+      detail:
+        optionType === 'CE'
+          ? 'In proximity — waiting for 1m green bounce confirm'
+          : 'In proximity — waiting for 1m red reject confirm',
+      reason: 'WAIT_CANDLE',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  publishLiveSignal({
+    ...base,
+    status: 'READY',
+    label: `LIVE BUY ${optionType} · wall ${level}`,
+    detail: 'Wall + proximity + ΔOI + 1m candle all aligned — entry eligible',
+    reason: 'READY',
+    buyLive: true,
+  });
+  return engineState.liveSignal;
 }
 
 /**
@@ -604,24 +920,37 @@ async function dedupeOpenTradesInDb(clock) {
   return keep;
 }
 
+async function syncTradesToday(clock) {
+  if (engineState.tradesTodayDateKey === clock.dateKey) return;
+  const count = await LivePaperTrade.countDocuments({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+  });
+  engineState.tradesTodayCount = count;
+  engineState.tradesTodayDateKey = clock.dateKey;
+  engineState.armedBias = null;
+  engineState.oiFlipUntilMs = 0;
+  const last = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+    exitTime: { $ne: null },
+  })
+    .sort({ exitTime: -1 })
+    .select({ exitTime: 1 })
+    .lean();
+  engineState.lastExitAtMs = last?.exitTime ? new Date(last.exitTime).getTime() : 0;
+}
+
 async function syncEngineTradeStateFromDb(clock) {
+  await syncTradesToday(clock);
   const open = await LivePaperTrade.findOne({ strategyKey: STRATEGY_KEY, exitTime: null }).sort({
     entryTime: -1,
   });
   if (open) {
     engineState.openTradeId = open._id.toString();
-    engineState.tradeDateKey = open.entryDateKey;
     return;
   }
   if (engineState.openTradeId) clearOpenTrade();
-  const tradedToday = await LivePaperTrade.exists({
-    strategyKey: STRATEGY_KEY,
-    entryDateKey: clock.dateKey,
-  });
-  if (tradedToday) engineState.tradeDateKey = clock.dateKey;
-  else if (engineState.tradeDateKey === clock.dateKey && engineState.skippedDateKey !== clock.dateKey) {
-    engineState.tradeDateKey = null;
-  }
   if (engineState.morningSignal?.dateKey && engineState.morningSignal.dateKey !== clock.dateKey) {
     engineState.morningSignal = null;
     engineState.armedBias = null;
@@ -733,21 +1062,10 @@ async function captureMorningOiSignal(clock) {
     };
     const armStatus = trackArmedBias(engineState.morningSignal);
     engineState.morningSignal.armStatus = armStatus;
-    logEntry('OI_SCAN_SIGNAL', engineState.morningSignal);
-    if (changed) {
-      pushNotification({
-        type: 'OI_SIGNAL',
-        strategy: 'OI Wall',
-        title: `Buy ${dominant.optionType} · wall ${dominant.strike}`,
-        body: `${dominant.dominantSide} bias · ATM when spot near ${dominant.strike} (± proximity) · re-check OI at entry`,
-        meta: {
-          levelStrike: dominant.strike,
-          optionType: dominant.optionType,
-          spot: snapshot.spot,
-        },
-        dedupeKey: `morning-oi-signal:${clock.dateKey}:${dominant.strike}:${dominant.optionType}`,
-      });
-    }
+    logEntry('OI_SCAN_SIGNAL', {
+      ...engineState.morningSignal,
+      wallChanged: changed,
+    });
     return engineState.morningSignal;
   } catch (err) {
     engineState.lastOiError = err.message || 'OI fetch failed';
@@ -837,18 +1155,25 @@ async function evaluateEntry() {
     }
     await syncEngineTradeStateFromDb(clock);
 
-    // One strong entry per day only.
-    if (engineState.tradeDateKey === clock.dateKey || engineState.openTradeId) return;
+    // One open position at a time; multi entries/day on pure signals only.
+    if (engineState.openTradeId) return;
 
-    if (clock.minutes > tradeToMin()) {
-      if (!engineState.skippedDateKey && clock.minutes < eodExitMin()) {
-        engineState.skippedDateKey = clock.dateKey;
-        logEntry('DAY_SKIP_NO_ENTRY', { ist: istClockLabel(clock), reason: 'PAST_TRADE_WINDOW' });
-      }
+    if (clock.minutes > tradeToMin() || clock.minutes < tradeFromMin()) return;
+
+    if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'MAX_TRADES',
+        count: engineState.tradesTodayCount,
+      });
       return;
     }
 
-    if (clock.minutes < tradeFromMin()) return;
+    const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+    if (cooldownMs > 0 && engineState.lastExitAtMs && Date.now() - engineState.lastExitAtMs < cooldownMs) {
+      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), reason: 'COOLDOWN' });
+      return;
+    }
 
     let signal;
     try {
@@ -997,7 +1322,8 @@ async function placeLongOption(clock, signal, spot) {
   engineState.enteringTrade = true;
   try {
     await syncEngineTradeStateFromDb(clock);
-    if (engineState.openTradeId || engineState.tradeDateKey === clock.dateKey) return;
+    if (engineState.openTradeId) return;
+    if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) return;
 
     const symbol = getEngineSymbol();
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
@@ -1022,9 +1348,12 @@ async function placeLongOption(clock, signal, spot) {
     const qty = lotSize * lots;
     const invested = entryPremium * qty;
     const charges = engineState.settings.perTradeCost;
-    const targetPremium = entryPremium * (1 + engineState.settings.targetPct / 100);
-    const stopLossPremium = engineState.settings.hasStopLoss
-      ? Math.max(0.05, entryPremium * (1 - engineState.settings.stopLossPct / 100))
+    const tgPct = engineState.settings.targetPct;
+    const hasSl = engineState.settings.hasStopLoss;
+    const slPct = engineState.settings.stopLossPct;
+    const targetPremium = entryPremium * (1 + tgPct / 100);
+    const stopLossPremium = hasSl
+      ? Math.max(0.05, entryPremium * (1 - slPct / 100))
       : null;
 
     const tradeDoc = await LivePaperTrade.create({
@@ -1047,15 +1376,16 @@ async function placeLongOption(clock, signal, spot) {
       charges: Number(charges.toFixed(2)),
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
       targetPremium: Number(targetPremium.toFixed(2)),
-      stopLossMode: engineState.settings.hasStopLoss ? 'PCT' : null,
+      stopLossMode: hasSl ? 'PCT' : null,
       targetMode: 'PCT',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
-      notes: `morning_oi; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; putOi=${signal.putOi}; callOi=${signal.callOi}; tg=${engineState.settings.targetPct}%; sl=${engineState.settings.hasStopLoss ? `${engineState.settings.stopLossPct}%` : 'off'}`,
+      entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · ΔOI ok`,
+      notes: `oi_wall; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
-    engineState.tradeDateKey = clock.dateKey;
-    engineState.skippedDateKey = null;
+    engineState.tradesTodayCount += 1;
+    engineState.tradesTodayDateKey = clock.dateKey;
     engineState.armedBias = null;
     engineState.oiFlipUntilMs = 0;
     engineState.lastSignalAt = new Date();
@@ -1067,13 +1397,13 @@ async function placeLongOption(clock, signal, spot) {
       levelStrike: signal.levelStrike,
       entryPremium: Number(entryPremium.toFixed(2)),
       targetPremium: Number(targetPremium.toFixed(2)),
-      stopLossPremium,
+      stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
     });
     pushNotification({
       type: 'ENTRY',
       strategy: 'OI Wall',
       title: `Entered ${optionType} ${strike}`,
-      body: `Premium ₹${Number(entryPremium.toFixed(2))} · wall ${signal.levelStrike} · target ₹${Number(targetPremium.toFixed(2))}`,
+      body: `Wall ${signal.levelStrike} · +${tgPct}%${hasSl ? ` / −${slPct}%` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
       meta: { tradeId: tradeDoc._id.toString(), optionType, strike },
       dedupeKey: `morning-oi-entry:${tradeDoc._id.toString()}`,
     });
@@ -1217,6 +1547,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
       meta: { tradeId: trade._id.toString(), reason, pnl },
       dedupeKey: `morning-oi-exit:${trade._id.toString()}`,
     });
+    engineState.lastExitAtMs = Date.now();
     clearOpenTrade();
   } catch (err) {
     engineState.lastError = `Exit failed: ${err.message}`;
@@ -1234,6 +1565,9 @@ function startPoll() {
       if (!engineState.liveOiBoard) {
         engineState.lastError = `OI board: ${engineState.lastOiError}`;
       }
+    });
+    refreshLiveSignalStatus(clock).catch((err) => {
+      engineState.lastError = `OI Wall signal: ${err.message}`;
     });
     evaluateEntry().catch((err) => {
       engineState.lastError = `OI Wall entry poll: ${err.message}`;
@@ -1272,7 +1606,6 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     const orphan = await dedupeOpenTradesInDb(clock);
     if (orphan) {
       engineState.openTradeId = orphan._id.toString();
-      engineState.tradeDateKey = orphan.entryDateKey;
       await subscribeOpenOption(orphan);
       startPositionPoll();
       await checkOpenTrade();
@@ -1303,17 +1636,13 @@ async function updateEngineSettings(partial = {}) {
   const next = normalizeSettings({ ...engineState.settings, ...partial });
   engineState.settings = next;
   syncEngineSymbolFromSettings();
-  // Widening trade window should clear a same-day PAST_TRADE_WINDOW / old PAST_LAST_ENTRY skip.
-  const clock = getIstClock(new Date());
-  if (engineState.skippedDateKey === clock.dateKey && clock.minutes <= tradeToMin()) {
-    engineState.skippedDateKey = null;
-  }
   if (getEngineSymbol() !== prevSymbol) {
     try {
       engineState.lotSize = await getCurrentLotSize(getEngineSymbol());
       engineState.expiry = null;
       engineState.expiryDateKey = null;
       engineState.morningSignal = null;
+      engineState.armedBias = null;
     } catch (err) {
       engineState.lastError = `Symbol change: ${err.message}`;
     }
@@ -1334,28 +1663,29 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     const persisted = wallet.strategy12EngineSettings
       ? wallet.strategy12EngineSettings.toObject?.() || wallet.strategy12EngineSettings
       : {};
-    // Migrate old morning-only window → all-day monitor (one entry).
+    // Migrate old morning-only / points exits → all-day multi-trade + % exits.
     const migrated = { ...persisted };
     if (!migrated.tradeFromTime) {
       migrated.tradeFromTime = migrated.oiScanFromTime === '09:15' ? '09:20' : (migrated.oiScanFromTime || '09:20');
     }
     if (!migrated.tradeToTime) {
-      // Old lastEntry 10:30/11:30 was morning-only — open to full session.
       const oldLast = String(migrated.lastEntryTime || '');
       migrated.tradeToTime =
         oldLast === '10:30' || oldLast === '11:30' || !oldLast ? '15:10' : oldLast;
     } else if (migrated.tradeToTime === '10:30' || migrated.tradeToTime === '11:30') {
-      // Previously saved last-entry values that leaked into tradeTo.
       migrated.tradeToTime = '15:10';
     }
+    if (migrated.targetPct == null) {
+      migrated.targetPct = DEFAULT_TARGET_PCT;
+    }
+    if (migrated.stopLossPct == null || migrated.stopLossPct === '') {
+      migrated.stopLossPct = DEFAULT_STOP_PCT;
+    }
+    delete migrated.targetPoints;
+    delete migrated.stopLossPoints;
     const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
     wallet.strategy12EngineSettings = normalized;
     await wallet.save();
-    // Clear stale same-day skip from old 11:30 last-entry logic.
-    const clock = getIstClock(new Date());
-    if (engineState.skippedDateKey === clock.dateKey) {
-      engineState.skippedDateKey = null;
-    }
     return startEngine({ symbol: normalized.symbol || symbol, settings: normalized });
   } catch (err) {
     engineState.lastError = `OI Wall boot failed: ${err.message}`;
@@ -1387,11 +1717,7 @@ async function syncOiWallNotificationsWithDb() {
   try {
     const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select({ _id: 1 }).lean();
     const ids = rows.map((r) => String(r._id));
-    if (ids.length === 0) {
-      clearNotifications({ strategy: 'OI Wall' });
-    } else {
-      pruneTradeNotifications({ strategy: 'OI Wall', validTradeIds: ids });
-    }
+    pruneTradeNotifications({ strategy: 'OI Wall', validTradeIds: ids });
   } catch (err) {
     console.warn('[OI Wall] notification sync:', err.message);
   }
@@ -1423,13 +1749,14 @@ function getEngineSnapshot() {
     lastSpot: engineState.lastSpot,
     lastOptionTick: engineState.lastOptionTick,
     morningSignal: engineState.morningSignal,
+    liveSignal: engineState.liveSignal,
     liveOiBoard: engineState.liveOiBoard,
     lastOiError: engineState.lastOiError,
     lastCandleError: engineState.lastCandleError,
     candleInterval: '1',
     oneMinuteBars: engineState.todayBars1m.length,
-    skippedDateKey: engineState.skippedDateKey,
-    tradeDateKey: engineState.tradeDateKey,
+    tradesTodayCount: engineState.tradesTodayCount,
+    maxTradesPerDay: engineState.settings.maxTradesPerDay,
     openTradeId: engineState.openTradeId,
     lastSignalAt: engineState.lastSignalAt,
     lastError: engineState.lastError,
@@ -1504,7 +1831,8 @@ async function refreshOpenPositionMarkForStatus() {
 }
 
 async function clearDailySkipState() {
-  engineState.skippedDateKey = null;
+  engineState.armedBias = null;
+  engineState.oiFlipUntilMs = 0;
   engineState.morningSignal = null;
   return { ok: true };
 }

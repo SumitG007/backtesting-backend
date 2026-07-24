@@ -11,7 +11,6 @@ const { initRealtime } = require('./services/realtimeSocket');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategySevenPaperEngine = require('./services/livePutBuyEngine');
 const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
-const strategyThirteenPaperEngine = require('./services/liveOiScalpEngine');
 
 /** Legacy Strategy A reopen env — engine retired. */
 async function runPendingStrategyAReopenFromEnv() {
@@ -28,7 +27,6 @@ async function bootBackgroundServices() {
     await s6.reconcileOpenTrades();
     await s7.reconcileOpenTrades();
     await require('./services/liveMorningOiEngine').reconcileOpenTrades();
-    await require('./services/liveOiScalpEngine').reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
   }
@@ -86,24 +84,12 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategyThirteenPaperEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('OI Scalp paper-live started (strategy-10)');
-    } else {
-      console.warn('OI Scalp paper-live boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('OI Scalp paper-live boot failed:', err.message);
-  }
-
-  try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
     if (
       resume.strategy6?.resumed
       || resume.strategy7?.resumed
       || resume.strategy12?.resumed
-      || resume.strategy13?.resumed
     ) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }

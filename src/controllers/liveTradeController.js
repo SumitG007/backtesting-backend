@@ -4,20 +4,17 @@ const LivePaperTrade = require('../models/livePaperTrade');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
-const strategyThirteenEngine = require('../services/liveOiScalpEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
-  STRATEGY_THIRTEEN_OI_SCALP_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
-  STRATEGY_THIRTEEN_OI_SCALP_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -273,37 +270,14 @@ function morningOiPaperLiveCtx(strategyId) {
   };
 }
 
-function oiScalpPaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: strategyThirteenEngine.STRATEGY_KEY,
-    startEngine: strategyThirteenEngine.startEngine,
-    stopEngine: strategyThirteenEngine.stopEngine,
-    updateEngineSettings: strategyThirteenEngine.updateEngineSettings,
-    getEngineSnapshot: strategyThirteenEngine.getEngineSnapshot,
-    ensureWallet: strategyThirteenEngine.ensureWallet,
-    recalcWallet: strategyThirteenEngine.recalcWalletFromTrades,
-    ensureRunning: strategyThirteenEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyThirteenEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyThirteenEngine.closeOpenPosition,
-    refreshOpenMark: strategyThirteenEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategyThirteenEngine.clearDailySkipState,
-  };
-}
-
 function isMorningOiLiveStrategyId(strategyId) {
   return strategyId === 'strategy-9';
-}
-
-function isOiScalpLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-10';
 }
 
 const LIVE_STRATEGIES = {
   'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-9': morningOiPaperLiveCtx('strategy-9'),
-  'strategy-10': oiScalpPaperLiveCtx('strategy-10'),
 };
 
 function getLiveContext(req) {
@@ -385,9 +359,7 @@ async function getStatus(req, res) {
               ? 'Put & Call buy'
               : isMorningOiLiveStrategyId(ctx.strategyId)
                 ? 'OI Wall Entry'
-                : isOiScalpLiveStrategyId(ctx.strategyId)
-                  ? 'OI Scalp'
-                  : 'Paper-live',
+                : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -436,8 +408,8 @@ function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    // OI Wall Entry / OI Scalp are always-on — ignore stop requests.
-    if (isMorningOiLiveStrategyId(ctx.strategyId) || isOiScalpLiveStrategyId(ctx.strategyId)) {
+    // OI Wall Entry is always-on — ignore stop requests.
+    if (isMorningOiLiveStrategyId(ctx.strategyId)) {
       return res.json({
         ok: true,
         ignored: true,

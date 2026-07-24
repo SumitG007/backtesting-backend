@@ -108,8 +108,8 @@ function clearNotifications({ strategy = null } = {}) {
 }
 
 /**
- * Drop ENTRY/EXIT (and strategy-scoped) notifications whose tradeId is gone from DB.
- * If validTradeIds is empty and strategy is set, clears all notifications for that strategy.
+ * Drop ENTRY/EXIT notifications whose tradeId is gone from DB.
+ * Keeps signal history (no tradeId) even when there are zero trades today.
  */
 function pruneTradeNotifications({ strategy, validTradeIds = [] } = {}) {
   ensureToday();
@@ -117,14 +117,11 @@ function pruneTradeNotifications({ strategy, validTradeIds = [] } = {}) {
   const needle = strategy ? String(strategy).trim().toLowerCase() : null;
   const before = store.items.length;
 
-  if (needle && valid.size === 0) {
-    return clearNotifications({ strategy });
-  }
-
   store.items = store.items.filter((n) => {
     if (needle && String(n.strategy || '').toLowerCase() !== needle) return true;
     const tid = n.meta?.tradeId;
-    if (!tid) return true; // keep OI_SIGNAL / info without trade id
+    if (!tid) return true; // keep signal / caution / ready history
+    if (valid.size === 0) return false; // orphan trade notifs only
     return valid.has(String(tid));
   });
 
