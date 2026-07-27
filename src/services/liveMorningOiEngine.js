@@ -44,6 +44,9 @@ const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
 const FUT_PRICE_REFRESH_MIN_GAP_MS = 2000;
 const DEFAULT_CANDLE_INTERVAL = '1';
+/** Favorable candle confirm only (FUT + option). Live proximity stays on 1m. */
+const DEFAULT_CONFIRM_CANDLE_INTERVAL = '5';
+const CONFIRM_CANDLE_REFRESH_MIN_GAP_MS = 15000;
 const DEFAULT_TRADE_FROM = 560; // 09:20
 const DEFAULT_TRADE_TO = 910; // 15:10
 const DEFAULT_EOD = 920; // 15:20
@@ -76,6 +79,7 @@ const engineState = {
     maxTradesPerDay: 8,
     cooldownMinutes: 2,
     candleInterval: DEFAULT_CANDLE_INTERVAL,
+    confirmCandleInterval: DEFAULT_CONFIRM_CANDLE_INTERVAL,
     perTradeCost: 100,
   },
   lotSize: 65,
@@ -105,6 +109,13 @@ const engineState = {
   todayBars1m: [],
   lastCandleFetchAt: 0,
   lastCandleError: null,
+  /** Confirm-timeframe bars (5m/15m) — FUT + entry option. */
+  todayConfirmBarsFut: [],
+  todayConfirmBarsOption: [],
+  lastConfirmFutFetchAt: 0,
+  lastConfirmOptionFetchAt: 0,
+  confirmOptionCacheKey: null,
+  lastConfirmCandleError: null,
   tradesTodayCount: 0,
   tradesTodayDateKey: null,
   lastExitAtMs: 0,
@@ -259,8 +270,17 @@ function normalizeSettings(settings = {}) {
     maxTradesPerDay,
     cooldownMinutes,
     candleInterval: '1',
+    confirmCandleInterval: String(settings.confirmCandleInterval || DEFAULT_CONFIRM_CANDLE_INTERVAL) === '15'
+      ? '15'
+      : '5',
     perTradeCost,
   };
+}
+
+function getConfirmCandleInterval() {
+  return String(engineState.settings.confirmCandleInterval || DEFAULT_CONFIRM_CANDLE_INTERVAL) === '15'
+    ? '15'
+    : '5';
 }
 
 function tradeFromMin() {
@@ -493,6 +513,26 @@ function candleConfirms(signal, candle) {
   return nearResist && candle.red && reject;
 }
 
+/** Long option premium confirm — green + close ≥ prior close. */
+function optionPremiumCandleConfirms(candle) {
+  if (!candle) return false;
+  const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
+  return candle.green && bounce;
+}
+
+function resolveEntryStrikeForSignal(signal, spot) {
+  const optionType = signal?.optionType === 'PE' ? 'PE' : 'CE';
+  const strikeStep = getStrikeStep(getEngineSymbol());
+  const fut = Number(spot);
+  if (!Number.isFinite(fut) || fut <= 0) return null;
+  return pickStrike({
+    entrySpot: fut,
+    strikeStep,
+    optionType,
+    strikeMode: engineState.settings.strikeMode,
+  });
+}
+
 /**
  * Publish live signal status for UI + day notifications.
  * Status is never a sticky "Buy CE" when criteria are off.
@@ -671,11 +711,18 @@ async function refreshLiveSignalStatus(clock) {
   const flipCooling = Date.now() < engineState.oiFlipUntilMs;
 
   let candle = null;
+  let optionCandle = null;
   let candleOk = false;
+  let futCandleOk = false;
+  let optionCandleOk = false;
+  const confirmInterval = getConfirmCandleInterval();
   try {
-    const rows = await refreshOneMinuteCandles(clock);
-    candle = readLastCandleSnapshot(rows);
-    candleOk = candleConfirms(signal, candle);
+    const confirm = await hasReactionConfirmation(clock, signal, spot);
+    candle = confirm.futCandle;
+    optionCandle = confirm.optionCandle;
+    futCandleOk = Boolean(confirm.futOk);
+    optionCandleOk = Boolean(confirm.optionOk);
+    candleOk = Boolean(confirm.ok);
   } catch {
     candleOk = false;
   }
@@ -698,7 +745,11 @@ async function refreshLiveSignalStatus(clock) {
     proximityOk,
     deltaOk: !deltaFighting,
     candleOk,
+    futCandleOk,
+    optionCandleOk,
+    confirmCandleInterval: confirmInterval,
     candle,
+    optionCandle,
     buyLive: false,
   };
 
@@ -744,14 +795,17 @@ async function refreshLiveSignalStatus(clock) {
   }
 
   if (!candleOk) {
+    const waitingParts = [];
+    if (!futCandleOk) waitingParts.push(`FUT ${confirmInterval}m`);
+    if (!optionCandleOk) waitingParts.push(`option ${confirmInterval}m`);
     publishLiveSignal({
       ...base,
       status: 'NEAR',
       label: `Near wall · ${optionType} ${level}`,
       detail:
         optionType === 'CE'
-          ? 'In proximity — waiting for 1m green bounce confirm'
-          : 'In proximity — waiting for 1m red reject confirm',
+          ? `In proximity — need ${waitingParts.join(' + ') || `${confirmInterval}m`} green bounce confirm (FUT + option)`
+          : `In proximity — need FUT ${confirmInterval}m red reject + option ${confirmInterval}m green confirm`,
       reason: 'WAIT_CANDLE',
       buyLive: false,
     });
@@ -762,7 +816,7 @@ async function refreshLiveSignalStatus(clock) {
     ...base,
     status: 'READY',
     label: `LIVE BUY ${optionType} · wall ${level}`,
-    detail: 'Wall + FUT proximity + ΔOI + FUT 1m candle all aligned — entry eligible',
+    detail: `Wall + FUT proximity + ΔOI + FUT & option ${confirmInterval}m confirm aligned — entry eligible`,
     reason: 'READY',
     buyLive: true,
   });
@@ -1359,40 +1413,121 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
   }
 }
 
-async function hasReactionConfirmation(clock, signal) {
-  const rows = await refreshOneMinuteCandles(clock);
-  if (!Array.isArray(rows) || rows.length < 2) {
-    logEntry('WAIT_REACTION', {
-      ist: istClockLabel(clock),
-      reason: 'NO_1M_CANDLES',
-      bars: rows?.length || 0,
-      candleError: engineState.lastCandleError,
+async function refreshFutConfirmCandles(clock, { force = false } = {}) {
+  const interval = getConfirmCandleInterval();
+  const now = Date.now();
+  if (
+    !force
+    && engineState.todayConfirmBarsFut.length > 0
+    && now - engineState.lastConfirmFutFetchAt < CONFIRM_CANDLE_REFRESH_MIN_GAP_MS
+  ) {
+    return engineState.todayConfirmBarsFut;
+  }
+  try {
+    const fut = await ensureFutInstrument(clock);
+    const { rows } = await fetchIntradayCandlesBySecurity({
+      securityId: fut.securityId,
+      exchangeSegment: fut.exchangeSegment || 'NSE_FNO',
+      instrument: fut.instrument || 'FUTIDX',
+      interval,
+      dateKey: clock.dateKey,
     });
-    return false;
+    engineState.todayConfirmBarsFut = Array.isArray(rows) ? rows : [];
+    engineState.lastConfirmFutFetchAt = now;
+    engineState.lastConfirmCandleError = null;
+    return engineState.todayConfirmBarsFut;
+  } catch (err) {
+    engineState.lastConfirmCandleError = err.message || `${interval}m FUT candles failed`;
+    return engineState.todayConfirmBarsFut;
   }
-  const last = rows[rows.length - 1];
-  const prev = rows[rows.length - 2];
-  const open = Number(last[1]);
-  const high = Number(last[2]);
-  const low = Number(last[3]);
-  const close = Number(last[4]);
-  const prevClose = Number(prev[4]);
-  if (![open, high, low, close].every(Number.isFinite)) return false;
+}
 
-  const level = Number(signal.levelStrike);
-  const prox = engineState.settings.proximityPoints;
-  if (!Number.isFinite(level)) return false;
-
-  if (signal.optionType === 'CE') {
-    const nearSupport = low <= level + prox;
-    const green = close > open;
-    const bounce = Number.isFinite(prevClose) ? close >= prevClose : true;
-    return nearSupport && green && bounce;
+async function refreshOptionConfirmCandles(clock, signal, spot, { force = false } = {}) {
+  const interval = getConfirmCandleInterval();
+  const optionType = signal?.optionType === 'PE' ? 'PE' : 'CE';
+  const strike = resolveEntryStrikeForSignal(signal, spot);
+  const expiry = signal?.expiry || (await getEntryExpiry(getEngineSymbol(), clock.dateKey));
+  if (!Number.isFinite(strike) || !expiry) {
+    engineState.todayConfirmBarsOption = [];
+    engineState.confirmOptionCacheKey = null;
+    return { rows: [], strike: null, optionType, expiry: null };
   }
-  const nearResist = high >= level - prox;
-  const red = close < open;
-  const reject = Number.isFinite(prevClose) ? close <= prevClose : true;
-  return nearResist && red && reject;
+
+  const cacheKey = `${getEngineSymbol()}:${expiry}:${strike}:${optionType}:${interval}:${clock.dateKey}`;
+  const now = Date.now();
+  if (
+    !force
+    && engineState.confirmOptionCacheKey === cacheKey
+    && engineState.todayConfirmBarsOption.length > 0
+    && now - engineState.lastConfirmOptionFetchAt < CONFIRM_CANDLE_REFRESH_MIN_GAP_MS
+  ) {
+    return {
+      rows: engineState.todayConfirmBarsOption,
+      strike,
+      optionType,
+      expiry,
+    };
+  }
+
+  try {
+    const instrument = await resolveOptionInstrument({
+      symbol: getEngineSymbol(),
+      strike,
+      expiry,
+      optionType,
+    });
+    const { rows } = await fetchIntradayCandlesBySecurity({
+      securityId: instrument.securityId,
+      exchangeSegment: instrument.exchangeSegment || 'NSE_FNO',
+      instrument: instrument.instrument || 'OPTIDX',
+      interval,
+      dateKey: clock.dateKey,
+    });
+    engineState.todayConfirmBarsOption = Array.isArray(rows) ? rows : [];
+    engineState.lastConfirmOptionFetchAt = now;
+    engineState.confirmOptionCacheKey = cacheKey;
+    engineState.lastConfirmCandleError = null;
+    return {
+      rows: engineState.todayConfirmBarsOption,
+      strike,
+      optionType,
+      expiry,
+    };
+  } catch (err) {
+    engineState.lastConfirmCandleError = err.message || `${interval}m option candles failed`;
+    engineState.todayConfirmBarsOption = [];
+    engineState.confirmOptionCacheKey = null;
+    return { rows: [], strike, optionType, expiry };
+  }
+}
+
+/**
+ * Favorable confirm on BOTH:
+ * - FUT closed bar at confirm interval (5m default / 15m)
+ * - Entry option strike closed bar at same interval
+ * Everything else (proximity / board) stays on 1m live.
+ */
+async function hasReactionConfirmation(clock, signal, spot) {
+  const interval = getConfirmCandleInterval();
+  const futRows = await refreshFutConfirmCandles(clock);
+  const futCandle = readLastCandleSnapshot(futRows);
+  const futOk = candleConfirms(signal, futCandle);
+
+  const optionPack = await refreshOptionConfirmCandles(clock, signal, spot);
+  const optionCandle = readLastCandleSnapshot(optionPack.rows);
+  const optionOk = optionPremiumCandleConfirms(optionCandle);
+
+  return {
+    ok: Boolean(futOk && optionOk),
+    futOk: Boolean(futOk),
+    optionOk: Boolean(optionOk),
+    interval,
+    strike: optionPack.strike,
+    optionType: optionPack.optionType,
+    futCandle,
+    optionCandle,
+    candleError: engineState.lastConfirmCandleError,
+  };
 }
 
 async function evaluateEntry() {
@@ -1493,10 +1628,12 @@ async function evaluateEntry() {
     }
 
     let confirmed = false;
+    let confirmDetail = null;
     try {
-      confirmed = await hasReactionConfirmation(clock, signal);
+      confirmDetail = await hasReactionConfirmation(clock, signal, spot);
+      confirmed = Boolean(confirmDetail?.ok);
     } catch (err) {
-      engineState.lastError = `1m FUT reaction: ${err.message}`;
+      engineState.lastError = `${getConfirmCandleInterval()}m confirm: ${err.message}`;
       return;
     }
     if (!confirmed) {
@@ -1506,7 +1643,10 @@ async function evaluateEntry() {
         level: signal.levelStrike,
         fut: spot,
         priceSource: 'FUT',
-        candleInterval: '1',
+        confirmInterval: confirmDetail?.interval || getConfirmCandleInterval(),
+        futOk: confirmDetail?.futOk,
+        optionOk: confirmDetail?.optionOk,
+        optionStrike: confirmDetail?.strike,
       });
       return;
     }
@@ -1548,10 +1688,12 @@ async function evaluateEntry() {
     }
 
     let freshConfirmed = false;
+    let freshConfirmDetail = null;
     try {
-      freshConfirmed = await hasReactionConfirmation(clock, fresh);
+      freshConfirmDetail = await hasReactionConfirmation(clock, fresh, spot);
+      freshConfirmed = Boolean(freshConfirmDetail?.ok);
     } catch (err) {
-      engineState.lastError = `1m reaction: ${err.message}`;
+      engineState.lastError = `${getConfirmCandleInterval()}m reaction: ${err.message}`;
       return;
     }
     if (!freshConfirmed) {
@@ -1561,6 +1703,10 @@ async function evaluateEntry() {
         level: fresh.levelStrike,
         spot,
         afterRevalidate: true,
+        confirmInterval: freshConfirmDetail?.interval || getConfirmCandleInterval(),
+        futOk: freshConfirmDetail?.futOk,
+        optionOk: freshConfirmDetail?.optionOk,
+        optionStrike: freshConfirmDetail?.strike,
       });
       return;
     }
@@ -2030,6 +2176,7 @@ function getEngineSnapshot() {
     lastOiError: engineState.lastOiError,
     lastCandleError: engineState.lastCandleError,
     candleInterval: '1',
+    confirmCandleInterval: getConfirmCandleInterval(),
     candleSource: 'FUT',
     oneMinuteBars: engineState.todayBars1m.length,
     futDayOhl: summarizeFutDayOhl(),
