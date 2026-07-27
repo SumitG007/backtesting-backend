@@ -552,6 +552,7 @@ async function getOptionChainOiSnapshot({
 
   return {
     spot: Number.isFinite(spot) ? spot : null,
+    chainSpot: Number.isFinite(Number(chain.last_price)) ? Number(chain.last_price) : null,
     atm,
     strikeStep,
     expiry,

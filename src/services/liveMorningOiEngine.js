@@ -22,8 +22,11 @@ const {
   resolveOptionInstrument,
   subscribeLiveInstrument,
   unsubscribeLiveSymbol,
+  listFutureExpiries,
+  resolveFutureInstrument,
+  getFutureLtp,
 } = require('./dhanLiveService');
-const { fetchTradingDayCandles } = require('./dhanDataService');
+const { fetchTradingDayCandles, fetchIntradayCandlesBySecurity } = require('./dhanDataService');
 const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
 const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
 
@@ -39,6 +42,7 @@ const MIN_HOLD_MS = 2000;
 const OI_REFRESH_MIN_GAP_MS = 5000;
 const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
 const CANDLE_REFRESH_MIN_GAP_MS = 8000;
+const FUT_PRICE_REFRESH_MIN_GAP_MS = 2000;
 const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_TRADE_FROM = 560; // 09:20
 const DEFAULT_TRADE_TO = 910; // 15:10
@@ -47,7 +51,7 @@ const DEFAULT_TARGET_PCT = 15;
 const DEFAULT_STOP_PCT = 10;
 /** After OI side flip, wait before arming a new entry setup. */
 const OI_FLIP_COOLDOWN_MS = 60_000;
-/** Board shows enough strikes around spot to catch the real high-OI wall (e.g. 24000). */
+/** Board shows enough strikes around FUT to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
 
 const engineState = {
@@ -77,6 +81,14 @@ const engineState = {
   lotSize: 65,
   expiry: null,
   expiryDateKey: null,
+  /** Master price for ATM / proximity / candles = current month FUT LTP. */
+  lastFut: null,
+  lastFutFetchAt: 0,
+  futExpiry: null,
+  futInstrument: null,
+  /** Option-chain cash/index print (secondary; not used for signals). */
+  chainSpot: null,
+  /** Alias of lastFut for older UI fields — signals always use FUT. */
   lastSpot: null,
   lastOptionTick: null,
   morningSignal: null,
@@ -89,6 +101,7 @@ const engineState = {
   lastOiBoardFetchAt: 0,
   lastOiFetchAt: 0,
   lastOiError: null,
+  lastFutError: null,
   todayBars1m: [],
   lastCandleFetchAt: 0,
   lastCandleError: null,
@@ -123,6 +136,67 @@ function getEngineSymbol() {
 
 function syncEngineSymbolFromSettings() {
   engineState.symbol = String(engineState.settings.symbol || engineState.symbol || 'NIFTY').toUpperCase();
+}
+
+/** Nearest NSE FUT contract for the engine underlying (rollover when expiry passes). */
+async function ensureFutInstrument(clock = null) {
+  const symbol = getEngineSymbol();
+  const today = (clock && clock.dateKey) || getIstClock(new Date()).dateKey;
+  const cached = engineState.futInstrument;
+  if (
+    cached?.securityId
+    && engineState.futExpiry
+    && String(engineState.futExpiry) >= today
+    && String(cached.symbol || '').toUpperCase() === symbol
+  ) {
+    return cached;
+  }
+  const expiries = await listFutureExpiries(symbol);
+  if (!Array.isArray(expiries) || expiries.length === 0) {
+    throw new Error(`No FUT contracts for ${symbol}`);
+  }
+  const nearest = expiries[0];
+  const inst = await resolveFutureInstrument({ symbol, expiry: nearest.expiry });
+  engineState.futInstrument = inst;
+  engineState.futExpiry = inst.expiry;
+  return inst;
+}
+
+/** Live FUT LTP — master price for ATM, proximity, and signal distance. */
+async function refreshFutPrice({ force = false, clock = null } = {}) {
+  const now = Date.now();
+  if (
+    !force
+    && Number.isFinite(engineState.lastFut)
+    && now - engineState.lastFutFetchAt < FUT_PRICE_REFRESH_MIN_GAP_MS
+  ) {
+    return engineState.lastFut;
+  }
+  try {
+    const inst = await ensureFutInstrument(clock);
+    const { ltp } = await getFutureLtp({ symbol: getEngineSymbol(), expiry: inst.expiry });
+    if (Number.isFinite(ltp) && ltp > 0) {
+      engineState.lastFut = Number(ltp);
+      engineState.lastSpot = engineState.lastFut;
+      engineState.lastFutFetchAt = now;
+      engineState.lastFutError = null;
+      return engineState.lastFut;
+    }
+    throw new Error('FUT LTP unavailable');
+  } catch (err) {
+    engineState.lastFutError = err.message || 'FUT price failed';
+    if (!Number.isFinite(engineState.lastFut)) {
+      throw err;
+    }
+    return engineState.lastFut;
+  }
+}
+
+function masterPrice() {
+  const fut = Number(engineState.lastFut);
+  if (Number.isFinite(fut) && fut > 0) return fut;
+  const spot = Number(engineState.lastSpot);
+  return Number.isFinite(spot) && spot > 0 ? spot : null;
 }
 
 function normalizeSettings(settings = {}) {
@@ -374,6 +448,36 @@ function readLastCandleSnapshot(rows) {
   };
 }
 
+/** Today's FUT session Open / High / Low from 1m bars (+ live LTP for H/L). */
+function summarizeFutDayOhl(rows = engineState.todayBars1m) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { open: null, high: null, low: null, bars: 0 };
+  }
+  let open = null;
+  let high = -Infinity;
+  let low = Infinity;
+  for (let i = 0; i < rows.length; i += 1) {
+    const bar = rows[i];
+    const o = Number(bar[1]);
+    const h = Number(bar[2]);
+    const l = Number(bar[3]);
+    if (open == null && Number.isFinite(o)) open = o;
+    if (Number.isFinite(h) && h > high) high = h;
+    if (Number.isFinite(l) && l < low) low = l;
+  }
+  const live = Number(engineState.lastFut ?? engineState.lastSpot);
+  if (Number.isFinite(live)) {
+    if (live > high) high = live;
+    if (live < low) low = live;
+  }
+  return {
+    open: Number.isFinite(open) ? Number(open.toFixed(2)) : null,
+    high: Number.isFinite(high) && high !== -Infinity ? Number(high.toFixed(2)) : null,
+    low: Number.isFinite(low) && low !== Infinity ? Number(low.toFixed(2)) : null,
+    bars: rows.length,
+  };
+}
+
 function candleConfirms(signal, candle) {
   if (!signal || !candle) return false;
   const level = Number(signal.levelStrike);
@@ -555,7 +659,12 @@ async function refreshLiveSignalStatus(clock) {
 
   const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
   const level = Number(signal.levelStrike);
-  const spot = Number(engineState.lastSpot ?? signal.spotAtScan);
+  try {
+    await refreshFutPrice({ clock });
+  } catch {
+    /* keep lastFut if any */
+  }
+  const spot = Number(masterPrice() ?? signal.spotAtScan);
   const spotDist = Number.isFinite(spot) && Number.isFinite(level) ? Math.abs(spot - level) : null;
   const proximityOk = Number.isFinite(spotDist) && spotDist <= prox;
   const deltaFighting = isDeltaOiFighting(optionType, signal.putChgOi, signal.callChgOi);
@@ -580,7 +689,10 @@ async function refreshLiveSignalStatus(clock) {
     putChgOi: signal.putChgOi,
     callChgOi: signal.callChgOi,
     ratio: signal.ratio,
+    priceSource: 'FUT',
+    futExpiry: engineState.futExpiry,
     spot: Number.isFinite(spot) ? spot : null,
+    fut: Number.isFinite(spot) ? spot : null,
     spotDist: Number.isFinite(spotDist) ? Number(spotDist.toFixed(1)) : null,
     proximityPoints: prox,
     proximityOk,
@@ -623,8 +735,8 @@ async function refreshLiveSignalStatus(clock) {
       status: 'WATCHING',
       label: `Watch ${optionType} · wall ${level}`,
       detail: Number.isFinite(spotDist)
-        ? `Spot ${spotDist.toFixed(0)} pts from wall — need ≤ ${prox} pts`
-        : 'Waiting for spot near wall',
+        ? `FUT ${spotDist.toFixed(0)} pts from wall — need ≤ ${prox} pts`
+        : 'Waiting for FUT near wall',
       reason: 'WAIT_PROXIMITY',
       buyLive: false,
     });
@@ -650,7 +762,7 @@ async function refreshLiveSignalStatus(clock) {
     ...base,
     status: 'READY',
     label: `LIVE BUY ${optionType} · wall ${level}`,
-    detail: 'Wall + proximity + ΔOI + 1m candle all aligned — entry eligible',
+    detail: 'Wall + FUT proximity + ΔOI + FUT 1m candle all aligned — entry eligible',
     reason: 'READY',
     buyLive: true,
   });
@@ -658,7 +770,7 @@ async function refreshLiveSignalStatus(clock) {
 }
 
 /**
- * Live OI board for UI — memory only, refreshed often so we can see the real high-OI strike near spot.
+ * Live OI board for UI — option OI walls + FUT price for ATM / dashed line.
  */
 async function refreshLiveOiBoard(clock, { force = false } = {}) {
   const now = Date.now();
@@ -676,6 +788,14 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       engineState.lastOiError = 'No weekly expiry from Dhan';
       return engineState.liveOiBoard;
     }
+    let futLtp = null;
+    try {
+      futLtp = await refreshFutPrice({ force, clock });
+    } catch (err) {
+      engineState.lastFutError = err.message || 'FUT price failed';
+    }
+    // Keep day O/H/L fresh for the top bar (cached by CANDLE_REFRESH_MIN_GAP_MS).
+    refreshOneMinuteCandles(clock).catch(() => {});
     const lookaround = Math.max(
       OI_BOARD_LOOKAROUND,
       Number(engineState.settings.strikeLookaround) || 10,
@@ -684,9 +804,14 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       symbol,
       expiry,
       lookaroundStrikes: lookaround,
+      spotOverride: Number.isFinite(futLtp) ? futLtp : null,
     });
     engineState.lastOiBoardFetchAt = now;
-    if (Number.isFinite(snapshot.spot)) engineState.lastSpot = snapshot.spot;
+    if (Number.isFinite(snapshot.chainSpot)) engineState.chainSpot = snapshot.chainSpot;
+    if (Number.isFinite(snapshot.spot)) {
+      engineState.lastSpot = snapshot.spot;
+      if (Number.isFinite(futLtp)) engineState.lastFut = futLtp;
+    }
 
     const strikes = (snapshot.strikes || []).map((r) => ({
       strike: r.strike,
@@ -722,7 +847,11 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
     engineState.liveOiBoard = {
       at: new Date().toISOString(),
       dateKey: clock.dateKey,
+      priceSource: 'FUT',
       spot: snapshot.spot,
+      fut: Number.isFinite(futLtp) ? futLtp : snapshot.spot,
+      futExpiry: engineState.futExpiry,
+      chainSpot: snapshot.chainSpot ?? engineState.chainSpot,
       atm: snapshot.atm,
       expiry,
       strikeStep: snapshot.strikeStep,
@@ -983,6 +1112,13 @@ async function captureMorningOiSignal(clock) {
       return existing || null;
     }
 
+    let futLtp = null;
+    try {
+      futLtp = await refreshFutPrice({ clock });
+    } catch (err) {
+      engineState.lastFutError = err.message || 'FUT price failed';
+    }
+
     const snapshot = await getOptionChainOiSnapshot({
       symbol,
       expiry,
@@ -990,6 +1126,7 @@ async function captureMorningOiSignal(clock) {
         OI_BOARD_LOOKAROUND,
         Number(engineState.settings.strikeLookaround) || 10,
       ),
+      spotOverride: Number.isFinite(futLtp) ? futLtp : null,
     });
     engineState.lastOiFetchAt = Date.now();
     engineState.lastOiError = null;
@@ -1001,11 +1138,14 @@ async function captureMorningOiSignal(clock) {
         ist: istClockLabel(clock),
         allStrikeCount: snapshot.allStrikeCount || 0,
         spot: snapshot.spot,
+        fut: futLtp,
       });
       return existing || null;
     }
 
+    if (Number.isFinite(snapshot.chainSpot)) engineState.chainSpot = snapshot.chainSpot;
     if (Number.isFinite(snapshot.spot)) engineState.lastSpot = snapshot.spot;
+    if (Number.isFinite(futLtp)) engineState.lastFut = futLtp;
 
     const withOi = snapshot.strikes.filter(
       (r) => Number.isFinite(r.putOi) && Number.isFinite(r.callOi) && r.putOi > 0 && r.callOi > 0,
@@ -1085,8 +1225,11 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
     return engineState.todayBars1m;
   }
   try {
-    const { rows } = await fetchTradingDayCandles({
-      symbol: getEngineSymbol(),
+    const fut = await ensureFutInstrument(clock);
+    const { rows } = await fetchIntradayCandlesBySecurity({
+      securityId: fut.securityId,
+      exchangeSegment: fut.exchangeSegment || 'NSE_FNO',
+      instrument: fut.instrument || 'FUTIDX',
       interval: '1',
       dateKey: clock.dateKey,
     });
@@ -1095,9 +1238,22 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
     engineState.lastCandleError = null;
     return engineState.todayBars1m;
   } catch (err) {
-    engineState.lastCandleError = err.message || '1m candle fetch failed';
-    engineState.lastError = `1m candles: ${engineState.lastCandleError}`;
-    return engineState.todayBars1m;
+    // Fallback to index 1m if FUT candles fail (e.g. holiday instrument glitch).
+    try {
+      const { rows } = await fetchTradingDayCandles({
+        symbol: getEngineSymbol(),
+        interval: '1',
+        dateKey: clock.dateKey,
+      });
+      engineState.todayBars1m = Array.isArray(rows) ? rows : [];
+      engineState.lastCandleFetchAt = now;
+      engineState.lastCandleError = `FUT candles failed (${err.message}); using index 1m`;
+      return engineState.todayBars1m;
+    } catch (err2) {
+      engineState.lastCandleError = err.message || err2.message || '1m candle fetch failed';
+      engineState.lastError = `1m candles: ${engineState.lastCandleError}`;
+      return engineState.todayBars1m;
+    }
   }
 }
 
@@ -1207,28 +1363,26 @@ async function evaluateEntry() {
 
     let spot;
     try {
-      const spotMark = await getAtmPremiums({
-        symbol: getEngineSymbol(),
-        strike: signal.levelStrike,
-        expiry: signal.expiry || engineState.expiry,
-      });
-      spot = Number(spotMark.chainSpot || spotMark.spot);
+      spot = await refreshFutPrice({ force: true, clock });
     } catch (err) {
-      engineState.lastError = `Live spot: ${err.message}`;
-      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), reason: 'SPOT_FETCH_FAILED', error: err.message });
+      engineState.lastError = `Live FUT: ${err.message}`;
+      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), reason: 'FUT_FETCH_FAILED', error: err.message });
       return;
     }
     if (!Number.isFinite(spot) || spot <= 0) {
-      engineState.lastError = 'Live spot unavailable from Dhan chain';
+      engineState.lastError = 'Live FUT unavailable from Dhan';
       return;
     }
+    engineState.lastFut = spot;
     engineState.lastSpot = spot;
 
     const dist = Math.abs(spot - Number(signal.levelStrike));
     if (dist > engineState.settings.proximityPoints) {
       logEntry('WAIT_PROXIMITY', {
         ist: istClockLabel(clock),
-        spot,
+        priceSource: 'FUT',
+        fut: spot,
+        futExpiry: engineState.futExpiry,
         level: signal.levelStrike,
         dist: Number(dist.toFixed(1)),
         need: engineState.settings.proximityPoints,
@@ -1240,7 +1394,7 @@ async function evaluateEntry() {
     try {
       confirmed = await hasReactionConfirmation(clock, signal);
     } catch (err) {
-      engineState.lastError = `1m reaction: ${err.message}`;
+      engineState.lastError = `1m FUT reaction: ${err.message}`;
       return;
     }
     if (!confirmed) {
@@ -1248,7 +1402,8 @@ async function evaluateEntry() {
         ist: istClockLabel(clock),
         optionType: signal.optionType,
         level: signal.levelStrike,
-        spot,
+        fut: spot,
+        priceSource: 'FUT',
         candleInterval: '1',
       });
       return;
@@ -1746,7 +1901,12 @@ function getEngineSnapshot() {
     lotSize: engineState.lotSize,
     expiry: engineState.expiry,
     settings: engineState.settings,
-    lastSpot: engineState.lastSpot,
+    priceSource: 'FUT',
+    lastFut: engineState.lastFut,
+    futExpiry: engineState.futExpiry,
+    chainSpot: engineState.chainSpot,
+    lastSpot: engineState.lastFut ?? engineState.lastSpot,
+    lastFutError: engineState.lastFutError,
     lastOptionTick: engineState.lastOptionTick,
     morningSignal: engineState.morningSignal,
     liveSignal: engineState.liveSignal,
@@ -1754,7 +1914,9 @@ function getEngineSnapshot() {
     lastOiError: engineState.lastOiError,
     lastCandleError: engineState.lastCandleError,
     candleInterval: '1',
+    candleSource: 'FUT',
     oneMinuteBars: engineState.todayBars1m.length,
+    futDayOhl: summarizeFutDayOhl(),
     tradesTodayCount: engineState.tradesTodayCount,
     maxTradesPerDay: engineState.settings.maxTradesPerDay,
     openTradeId: engineState.openTradeId,
