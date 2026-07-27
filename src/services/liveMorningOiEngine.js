@@ -2,6 +2,8 @@
  * Strategy 7 (UI) — NIFTY OI Wall Entry paper live.
  * Multi-trade: live OI wall · Put≥Call → CE / Call→PE · enter only on pure signal at fill time.
  * Default target +15% / SL −10% on option premium · EOD square-off. Skip if OI/ΔOI flips before entry.
+ * Display-only overall buildup (Long/Short buildup, covering, unwinding) on UI + notifications.
+ * After max trades: keep full signals + notifications, no new entries.
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -104,6 +106,8 @@ const engineState = {
   liveSignal: null,
   lastSignalNotifKey: null,
   liveOiBoard: null,
+  /** Display-only overall FUT price + option ΔOI regime (does not gate entries). */
+  marketStructure: null,
   armedBias: null,
   oiFlipUntilMs: 0,
   lastOiBoardFetchAt: 0,
@@ -515,6 +519,150 @@ function summarizeFutDayOhl(rows = engineState.todayBars1m) {
   };
 }
 
+/** Sum Call+Put ΔOI across the live OI board (overall chain change today). */
+function sumBoardOiChange(board = engineState.liveOiBoard) {
+  const strikes = board?.strikes;
+  if (!Array.isArray(strikes) || strikes.length === 0) {
+    return { callChgOi: null, putChgOi: null, totalChgOi: null };
+  }
+  let callChg = 0;
+  let putChg = 0;
+  let sawCall = false;
+  let sawPut = false;
+  for (let i = 0; i < strikes.length; i += 1) {
+    const c = Number(strikes[i]?.callChgOi);
+    const p = Number(strikes[i]?.putChgOi);
+    if (Number.isFinite(c)) {
+      callChg += c;
+      sawCall = true;
+    }
+    if (Number.isFinite(p)) {
+      putChg += p;
+      sawPut = true;
+    }
+  }
+  if (!sawCall && !sawPut) {
+    return { callChgOi: null, putChgOi: null, totalChgOi: null };
+  }
+  const callChgOi = sawCall ? callChg : null;
+  const putChgOi = sawPut ? putChg : null;
+  const totalChgOi = (sawCall ? callChg : 0) + (sawPut ? putChg : 0);
+  return { callChgOi, putChgOi, totalChgOi };
+}
+
+/**
+ * Overall market structure from FUT session move + overall option ΔOI.
+ * Display / notification only — never blocks or changes entry rules.
+ */
+function classifyOverallBuildup({ priceDelta, oiDelta, futOpen, futPrice } = {}) {
+  const priceOk = Number.isFinite(priceDelta);
+  const oiOk = Number.isFinite(oiDelta);
+  if (!priceOk || !oiOk) {
+    return {
+      key: 'UNAVAILABLE',
+      label: 'Buildup n/a',
+      lean: null,
+      hint: 'Need FUT session open + option ΔOI',
+      priceDelta: priceOk ? Number(priceDelta.toFixed(1)) : null,
+      oiDelta: oiOk ? Math.round(oiDelta) : null,
+      futOpen: Number.isFinite(futOpen) ? futOpen : null,
+      futPrice: Number.isFinite(futPrice) ? futPrice : null,
+      alignsWith: null,
+    };
+  }
+
+  const priceEps = Math.max(5, Math.abs(Number(futPrice) || 0) * 0.0002);
+  const oiEps = 1000;
+  const priceUp = priceDelta > priceEps;
+  const priceDown = priceDelta < -priceEps;
+  const oiUp = oiDelta > oiEps;
+  const oiDown = oiDelta < -oiEps;
+
+  let key = 'NEUTRAL';
+  let label = 'Neutral / chop';
+  let lean = null;
+  let hint = 'No clear overall buildup yet';
+  let alignsWith = null;
+
+  if (priceUp && oiUp) {
+    key = 'LONG_BUILDUP';
+    label = 'Long buildup';
+    lean = 'CE';
+    hint = 'Fresh longs · overall bullish bias';
+    alignsWith = 'CE';
+  } else if (priceDown && oiUp) {
+    key = 'SHORT_BUILDUP';
+    label = 'Short buildup';
+    lean = 'PE';
+    hint = 'Fresh shorts · overall bearish bias';
+    alignsWith = 'PE';
+  } else if (priceUp && oiDown) {
+    key = 'SHORT_COVERING';
+    label = 'Short covering';
+    lean = 'CE_WEAK';
+    hint = 'Shorts covering · bounce may fade';
+    alignsWith = 'CE';
+  } else if (priceDown && oiDown) {
+    key = 'LONG_UNWINDING';
+    label = 'Long unwinding';
+    lean = 'PE_WEAK';
+    hint = 'Longs exiting · dip may fade';
+    alignsWith = 'PE';
+  } else if (priceUp || priceDown) {
+    key = 'PRICE_ONLY';
+    label = priceUp ? 'Price up · flat OI' : 'Price down · flat OI';
+    lean = priceUp ? 'CE' : 'PE';
+    hint = 'Price moved but overall OI is flat';
+    alignsWith = priceUp ? 'CE' : 'PE';
+  } else if (oiUp || oiDown) {
+    key = 'OI_ONLY';
+    label = oiUp ? 'OI rising · flat price' : 'OI falling · flat price';
+    hint = 'OI changing without a clear FUT session move';
+  }
+
+  return {
+    key,
+    label,
+    lean,
+    hint,
+    priceDelta: Number(priceDelta.toFixed(1)),
+    oiDelta: Math.round(oiDelta),
+    futOpen: Number.isFinite(futOpen) ? Number(Number(futOpen).toFixed(2)) : null,
+    futPrice: Number.isFinite(futPrice) ? Number(Number(futPrice).toFixed(2)) : null,
+    alignsWith,
+  };
+}
+
+/** Refresh display-only overall buildup onto engineState.marketStructure. */
+function refreshOverallBuildup({ board = engineState.liveOiBoard, futPrice = null } = {}) {
+  const day = summarizeFutDayOhl();
+  const price = Number(
+    futPrice
+    ?? engineState.lastFut
+    ?? board?.fut
+    ?? board?.spot
+    ?? engineState.lastSpot,
+  );
+  const open = Number(day.open);
+  const oiParts = sumBoardOiChange(board);
+  const priceDelta = Number.isFinite(price) && Number.isFinite(open) ? price - open : null;
+  const structure = classifyOverallBuildup({
+    priceDelta,
+    oiDelta: oiParts.totalChgOi,
+    futOpen: open,
+    futPrice: price,
+  });
+  engineState.marketStructure = {
+    ...structure,
+    callChgOi: oiParts.callChgOi != null ? Math.round(oiParts.callChgOi) : null,
+    putChgOi: oiParts.putChgOi != null ? Math.round(oiParts.putChgOi) : null,
+    at: new Date().toISOString(),
+    source: 'FUT_SESSION_OPEN + OPTION_CHAIN_ΔOI',
+    displayOnly: true,
+  };
+  return engineState.marketStructure;
+}
+
 /**
  * FUT closed confirm candle:
  * CE (support) → green bounce
@@ -588,11 +736,21 @@ function resolveEntryStrikeForSignal(signal, spot) {
 /**
  * Publish live signal status for UI + day notifications.
  * Status is never a sticky "Buy CE" when criteria are off.
+ * marketStructure is attached for display only (never gates trades).
  */
 function publishLiveSignal(next) {
   const prev = engineState.liveSignal;
+  const marketStructure = engineState.marketStructure || null;
+  const optionType = next.optionType === 'PE' || next.optionType === 'CE' ? next.optionType : null;
+  const buildupAligns = Boolean(
+    marketStructure?.alignsWith
+    && optionType
+    && marketStructure.alignsWith === optionType,
+  );
   engineState.liveSignal = {
     ...next,
+    marketStructure,
+    buildupAligns: marketStructure ? buildupAligns : null,
     at: new Date().toISOString(),
     ageMs: 0,
   };
@@ -604,6 +762,9 @@ function publishLiveSignal(next) {
     next.optionType || '',
     next.levelStrike || '',
     next.reason || '',
+    next.signalOnly ? 'SO' : 'TR',
+    next.entryBlock || '',
+    marketStructure?.key || '',
   ].join(':');
 
   if (key === engineState.lastSignalNotifKey) return;
@@ -628,7 +789,7 @@ function publishLiveSignal(next) {
     if (!(status === 'WATCHING' && (!prevKey || wallChanged))) return;
   }
 
-  if (status === 'OUTSIDE_WINDOW' || status === 'IN_TRADE' || status === 'MAX_TRADES' || status === 'COOLDOWN') {
+  if (status === 'OUTSIDE_WINDOW' || status === 'IN_TRADE' || status === 'COOLDOWN') {
     return;
   }
 
@@ -640,8 +801,8 @@ function publishLiveSignal(next) {
     type = 'SIGNAL_CLEARED';
     title = next.label || 'Signal cleared';
   } else if (status === 'READY') {
-    type = 'SIGNAL_READY';
-    title = next.label || `Ready ${next.optionType} · ${next.levelStrike}`;
+    type = next.signalOnly ? 'SIGNAL_INFO' : 'SIGNAL_READY';
+    title = next.label || `${next.signalOnly ? 'Signal' : 'Ready'} ${next.optionType} · ${next.levelStrike}`;
   } else if (status === 'CAUTION') {
     type = 'SIGNAL_CAUTION';
     title = next.label || `Caution ${next.optionType} · ${next.levelStrike}`;
@@ -652,6 +813,16 @@ function publishLiveSignal(next) {
   ) {
     type = 'SIGNAL_CHANGED';
     title = next.label || `Signal → ${next.optionType} · ${next.levelStrike}`;
+  }
+
+  if (marketStructure?.label && marketStructure.key !== 'UNAVAILABLE') {
+    const alignNote = optionType && marketStructure.alignsWith
+      ? (buildupAligns ? ' · aligns' : ' · differs')
+      : '';
+    body = [body, `Overall: ${marketStructure.label}${alignNote}`].filter(Boolean).join(' · ');
+  }
+  if (next.signalOnly) {
+    body = [body, 'No trade · signal only'].filter(Boolean).join(' · ');
   }
 
   pushNotification({
@@ -665,6 +836,20 @@ function publishLiveSignal(next) {
       levelStrike: next.levelStrike,
       reason: next.reason,
       spotDist: next.spotDist,
+      signalOnly: Boolean(next.signalOnly),
+      entryBlock: next.entryBlock || null,
+      buyLive: Boolean(next.buyLive),
+      marketStructure: marketStructure
+        ? {
+          key: marketStructure.key,
+          label: marketStructure.label,
+          lean: marketStructure.lean,
+          alignsWith: marketStructure.alignsWith,
+          priceDelta: marketStructure.priceDelta,
+          oiDelta: marketStructure.oiDelta,
+        }
+        : null,
+      buildupAligns: marketStructure ? buildupAligns : null,
     },
     dedupeKey: `oi-wall-live:${key}:${Math.floor(Date.now() / 30000)}`,
   });
@@ -672,6 +857,21 @@ function publishLiveSignal(next) {
 
 async function refreshLiveSignalStatus(clock) {
   const prox = Number(engineState.settings.proximityPoints) || 20;
+  const maxTradesHit = engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay;
+  const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+  const cooldownActive = Boolean(
+    cooldownMs > 0
+    && engineState.lastExitAtMs
+    && Date.now() - engineState.lastExitAtMs < cooldownMs,
+  );
+
+  // Keep display-only overall buildup fresh whenever we evaluate signals.
+  try {
+    await refreshOneMinuteCandles(clock);
+  } catch {
+    /* keep prior 1m bars */
+  }
+  refreshOverallBuildup({ board: engineState.liveOiBoard });
 
   if (clock.minutes < tradeFromMin() || clock.minutes > tradeToMin()) {
     publishLiveSignal({
@@ -682,6 +882,7 @@ async function refreshLiveSignalStatus(clock) {
       optionType: null,
       levelStrike: null,
       buyLive: false,
+      signalOnly: false,
     });
     return engineState.liveSignal;
   }
@@ -695,29 +896,7 @@ async function refreshLiveSignalStatus(clock) {
       optionType: engineState.morningSignal?.optionType || null,
       levelStrike: engineState.morningSignal?.levelStrike || null,
       buyLive: false,
-    });
-    return engineState.liveSignal;
-  }
-
-  if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) {
-    publishLiveSignal({
-      status: 'MAX_TRADES',
-      label: 'Max trades hit',
-      detail: `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} today`,
-      reason: 'MAX_TRADES',
-      buyLive: false,
-    });
-    return engineState.liveSignal;
-  }
-
-  const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
-  if (cooldownMs > 0 && engineState.lastExitAtMs && Date.now() - engineState.lastExitAtMs < cooldownMs) {
-    publishLiveSignal({
-      status: 'COOLDOWN',
-      label: 'Cooldown',
-      detail: 'Waiting after last exit before next signal entry',
-      reason: 'COOLDOWN',
-      buyLive: false,
+      signalOnly: false,
     });
     return engineState.liveSignal;
   }
@@ -732,19 +911,25 @@ async function refreshLiveSignalStatus(clock) {
       detail: err.message || 'OI fetch failed',
       reason: 'OI_ERROR',
       buyLive: false,
+      signalOnly: false,
+      entryBlock: maxTradesHit ? 'MAX_TRADES' : null,
     });
     return engineState.liveSignal;
   }
 
   if (!signal || signal.skip) {
     publishLiveSignal({
-      status: 'CLEARED',
-      label: 'No wall signal',
-      detail: signal?.skipReason || 'Waiting for dominant OI wall',
-      reason: signal?.skipReason || 'NO_WALL',
+      status: maxTradesHit ? 'MAX_TRADES' : 'CLEARED',
+      label: maxTradesHit ? 'Max trades · no wall yet' : 'No wall signal',
+      detail: maxTradesHit
+        ? `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} done · waiting for next wall signal (info only)`
+        : (signal?.skipReason || 'Waiting for dominant OI wall'),
+      reason: maxTradesHit ? 'MAX_TRADES' : (signal?.skipReason || 'NO_WALL'),
       optionType: null,
       levelStrike: null,
       buyLive: false,
+      signalOnly: maxTradesHit,
+      entryBlock: maxTradesHit ? 'MAX_TRADES' : null,
       putOi: signal?.putOi,
       callOi: signal?.callOi,
     });
@@ -752,25 +937,23 @@ async function refreshLiveSignalStatus(clock) {
   }
 
   const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
-  if (sideAlreadyTradedToday(optionType)) {
-    publishLiveSignal({
-      status: 'MAX_TRADES',
-      label: `${optionType} side done today`,
-      detail: 'Max 1 trade per side (support CE / resistance PE) · max 2/day',
-      reason: 'SAME_SIDE_DONE',
-      optionType,
-      levelStrike: signal.levelStrike,
-      buyLive: false,
-      sidesTradedToday: engineState.sidesTradedToday,
-    });
-    return engineState.liveSignal;
-  }
+  const sideDone = sideAlreadyTradedToday(optionType);
+  let entryBlock = null;
+  if (maxTradesHit) entryBlock = 'MAX_TRADES';
+  else if (sideDone) entryBlock = 'SAME_SIDE_DONE';
+  else if (cooldownActive) entryBlock = 'COOLDOWN';
+  const signalOnly = Boolean(entryBlock);
+
   const level = Number(signal.levelStrike);
   try {
     await refreshFutPrice({ clock });
   } catch {
     /* keep lastFut if any */
   }
+  refreshOverallBuildup({
+    board: engineState.liveOiBoard,
+    futPrice: masterPrice(),
+  });
   const spot = Number(masterPrice() ?? signal.spotAtScan);
   const spotDist = Number.isFinite(spot) && Number.isFinite(level) ? Math.abs(spot - level) : null;
   const proximityOk = Number.isFinite(spotDist) && spotDist <= prox;
@@ -793,6 +976,14 @@ async function refreshLiveSignalStatus(clock) {
   } catch {
     candleOk = false;
   }
+
+  const entryBlockDetail = entryBlock === 'MAX_TRADES'
+    ? `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} trades done · signal only`
+    : entryBlock === 'SAME_SIDE_DONE'
+      ? `${optionType} side already traded today · signal only`
+      : entryBlock === 'COOLDOWN'
+        ? 'Cooldown after exit · signal only'
+        : null;
 
   const base = {
     optionType,
@@ -818,6 +1009,11 @@ async function refreshLiveSignalStatus(clock) {
     candle,
     optionCandle,
     buyLive: false,
+    signalOnly,
+    entryBlock,
+    sidesTradedToday: engineState.sidesTradedToday,
+    tradesTodayCount: engineState.tradesTodayCount,
+    maxTradesPerDay: engineState.settings.maxTradesPerDay,
   };
 
   if (flipCooling) {
@@ -825,7 +1021,10 @@ async function refreshLiveSignalStatus(clock) {
       ...base,
       status: 'CAUTION',
       label: `Stabilizing after flip · was ${optionType}`,
-      detail: 'OI side flipped recently — wait ~1m before trusting a new bias',
+      detail: [
+        'OI side flipped recently — wait ~1m before trusting a new bias',
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
       reason: 'OI_FLIP_COOLDOWN',
       buyLive: false,
     });
@@ -837,10 +1036,12 @@ async function refreshLiveSignalStatus(clock) {
       ...base,
       status: 'CAUTION',
       label: `Watch ${optionType} · wall ${level} · ΔOI fighting`,
-      detail:
+      detail: [
         optionType === 'CE'
           ? 'Wall still Put-biased, but Call ΔOI rising faster — not a live buy'
           : 'Wall still Call-biased, but Put ΔOI rising faster — not a live buy',
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
       reason: 'DELTA_OI_FIGHTING',
       buyLive: false,
     });
@@ -852,9 +1053,12 @@ async function refreshLiveSignalStatus(clock) {
       ...base,
       status: 'WATCHING',
       label: `Watch ${optionType} · wall ${level}`,
-      detail: Number.isFinite(spotDist)
-        ? `FUT ${spotDist.toFixed(0)} pts from wall — need ≤ ${prox} pts`
-        : 'Waiting for FUT near wall',
+      detail: [
+        Number.isFinite(spotDist)
+          ? `FUT ${spotDist.toFixed(0)} pts from wall — need ≤ ${prox} pts`
+          : 'Waiting for FUT near wall',
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
       reason: 'WAIT_PROXIMITY',
       buyLive: false,
     });
@@ -869,12 +1073,30 @@ async function refreshLiveSignalStatus(clock) {
       ...base,
       status: 'NEAR',
       label: `Near wall · ${optionType} ${level}`,
-      detail:
+      detail: [
         optionType === 'CE'
           ? `In proximity — need ${waitingParts.join(' + ') || `${confirmInterval}m`} green bounce confirm (FUT + option)`
           : `In proximity — need FUT ${confirmInterval}m red reject + option ${confirmInterval}m green confirm`,
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
       reason: 'WAIT_CANDLE',
       buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (signalOnly) {
+    publishLiveSignal({
+      ...base,
+      status: 'READY',
+      label: `SIGNAL ${optionType} · wall ${level}`,
+      detail: [
+        `Wall + FUT proximity + ΔOI + FUT & option ${confirmInterval}m confirm aligned`,
+        entryBlockDetail || 'No trade · signal only',
+      ].filter(Boolean).join(' · '),
+      reason: entryBlock || 'SIGNAL_ONLY',
+      buyLive: false,
+      signalOnly: true,
     });
     return engineState.liveSignal;
   }
@@ -886,6 +1108,8 @@ async function refreshLiveSignalStatus(clock) {
     detail: `Wall + FUT proximity + ΔOI + FUT & option ${confirmInterval}m confirm aligned — entry eligible`,
     reason: 'READY',
     buyLive: true,
+    signalOnly: false,
+    entryBlock: null,
   });
   return engineState.liveSignal;
 }
@@ -965,6 +1189,28 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       else if (biasPcr <= 0.9) pcrBias = 'CALL_HEAVY';
     }
 
+    let callChgSum = 0;
+    let putChgSum = 0;
+    let sawCallChg = false;
+    let sawPutChg = false;
+    for (const row of strikes) {
+      if (Number.isFinite(row.putChgOi)) {
+        putChgSum += row.putChgOi;
+        sawPutChg = true;
+      }
+      if (Number.isFinite(row.callChgOi)) {
+        callChgSum += row.callChgOi;
+        sawCallChg = true;
+      }
+    }
+    const oiChg = {
+      callChgOi: sawCallChg ? Math.round(callChgSum) : null,
+      putChgOi: sawPutChg ? Math.round(putChgSum) : null,
+      totalChgOi: (sawCallChg || sawPutChg)
+        ? Math.round((sawCallChg ? callChgSum : 0) + (sawPutChg ? putChgSum : 0))
+        : null,
+    };
+
     engineState.liveOiBoard = {
       at: new Date().toISOString(),
       dateKey: clock.dateKey,
@@ -980,6 +1226,9 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
       totals: {
         callOi: totals.callOi ?? null,
         putOi: totals.putOi ?? null,
+        callChgOi: oiChg.callChgOi,
+        putChgOi: oiChg.putChgOi,
+        totalChgOi: oiChg.totalChgOi,
         pcr: Number.isFinite(pcr) ? pcr : null,
         nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
         pcrBias,
@@ -990,6 +1239,10 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
         maxTotalStrike: maxTotal?.strike ?? null,
       },
     };
+    refreshOverallBuildup({
+      board: engineState.liveOiBoard,
+      futPrice: Number.isFinite(futLtp) ? futLtp : snapshot.spot,
+    });
     engineState.lastOiError = null;
     if (String(engineState.lastError || '').startsWith('OI board:')) {
       engineState.lastError = null;
@@ -2035,8 +2288,24 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       type: 'ENTRY',
       strategy: 'OI Wall',
       title: `Entered ${optionType} ${strike}`,
-      body: `Wall ${signal.levelStrike} · +${tgPct}%${hasSl ? ` / −${slPct}%` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
-      meta: { tradeId: tradeDoc._id.toString(), optionType, strike },
+      body: [
+        `Wall ${signal.levelStrike} · +${tgPct}%${hasSl ? ` / −${slPct}%` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
+        engineState.marketStructure?.label && engineState.marketStructure.key !== 'UNAVAILABLE'
+          ? `Overall: ${engineState.marketStructure.label}`
+          : null,
+      ].filter(Boolean).join(' · '),
+      meta: {
+        tradeId: tradeDoc._id.toString(),
+        optionType,
+        strike,
+        marketStructure: engineState.marketStructure
+          ? {
+            key: engineState.marketStructure.key,
+            label: engineState.marketStructure.label,
+            lean: engineState.marketStructure.lean,
+          }
+          : null,
+      },
       dedupeKey: `morning-oi-entry:${tradeDoc._id.toString()}`,
     });
     await subscribeOpenOption(tradeDoc);
@@ -2417,6 +2686,7 @@ function getEngineSnapshot() {
     morningSignal: engineState.morningSignal,
     liveSignal: engineState.liveSignal,
     liveOiBoard: engineState.liveOiBoard,
+    marketStructure: engineState.marketStructure,
     lastOiError: engineState.lastOiError,
     lastCandleError: engineState.lastCandleError,
     candleInterval: '1',
