@@ -916,20 +916,34 @@ function optionTickIsFresh() {
 
 function getOptionMarkFromTrade(trade, chain = null) {
   const optionType = tradeOptionType(trade);
+  const futSpot = Number(masterPrice());
   const chainLtp = premiumFromChain(chain, optionType);
   if (Number.isFinite(chainLtp) && chainLtp > 0) {
-    return { optionLtp: chainLtp, spot: Number(chain.chainSpot) || null, source: 'chain', optionType };
+    return {
+      optionLtp: chainLtp,
+      spot: Number.isFinite(futSpot) ? futSpot : null,
+      source: 'chain',
+      optionType,
+      priceSource: 'FUT',
+    };
   }
   const tickLtp = Number(engineState.lastOptionTick?.ltp);
   if (Number.isFinite(tickLtp) && tickLtp > 0) {
-    return { optionLtp: tickLtp, spot: engineState.lastSpot, source: 'websocket', optionType };
+    return {
+      optionLtp: tickLtp,
+      spot: Number.isFinite(futSpot) ? futSpot : null,
+      source: 'websocket',
+      optionType,
+      priceSource: 'FUT',
+    };
   }
   const entryPrem = Number(trade.entryPremium);
   return {
     optionLtp: Number.isFinite(entryPrem) ? entryPrem : 0.05,
-    spot: engineState.lastSpot || trade.entrySpot,
+    spot: Number.isFinite(futSpot) ? futSpot : trade.entrySpot,
     source: 'entry',
     optionType,
+    priceSource: 'FUT',
   };
 }
 
@@ -948,9 +962,9 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = false, allowChain 
       strike: trade.strike,
       expiry: trade.expiryDate,
     });
-    const mark = getOptionMarkFromTrade(trade, chain);
-    if (Number.isFinite(mark.spot)) engineState.lastSpot = mark.spot;
-    return mark;
+    if (Number.isFinite(chain?.chainSpot)) engineState.chainSpot = chain.chainSpot;
+    // Keep option premium from chain; never overwrite FUT master with cash spot.
+    return getOptionMarkFromTrade(trade, chain);
   } catch (err) {
     engineState.lastError = `Mark fetch: ${err.message}`;
     return getOptionMarkFromTrade(trade, null);
@@ -966,7 +980,8 @@ function buildOpenPositionMark(trade, mark, clock) {
     optionType: tradeOptionType(trade),
     optionLtp: Number(ltp.toFixed(2)),
     entryPremium: entry,
-    spot: mark.spot,
+    spot: Number.isFinite(Number(mark.spot)) ? Number(Number(mark.spot).toFixed(2)) : null,
+    priceSource: 'FUT',
     source: mark.source,
     isLiveMark: mark.source === 'websocket' || mark.source === 'chain',
     unrealizedPnl: Number(unrealized.toFixed(2)),
@@ -1001,6 +1016,93 @@ async function subscribeOpenOption(trade) {
   } catch (err) {
     engineState.lastError = `OI Wall WS subscribe failed: ${err.message}`;
   }
+}
+
+/**
+ * Rewrite an open paper trade that was entered on cash Nifty so entrySpot /
+ * mark spot match local FUT-based engine (option legs/premium unchanged).
+ */
+async function alignOpenTradeToFut(trade, clock = getIstClock(new Date())) {
+  if (!trade || trade.exitTime) return trade;
+  const notes = String(trade.notes || '');
+  const currentEntry = Number(trade.entrySpot);
+  const alreadyAligned =
+    (notes.includes('priceSource=FUT') || notes.includes('entrySpotSource=FUT'))
+    && Number.isFinite(currentEntry)
+    && currentEntry > 1000;
+  if (alreadyAligned) return trade;
+
+  const barTsMs = (bar) => {
+    const raw = bar?.[0];
+    if (typeof raw === 'string') {
+      const ms = Date.parse(raw);
+      return Number.isFinite(ms) ? ms : NaN;
+    }
+    const t = Number(raw);
+    if (!Number.isFinite(t)) return NaN;
+    return t > 1e12 ? t : t * 1000;
+  };
+  const plausibleFut = (n) => Number.isFinite(n) && n > 1000;
+
+  let futAtEntry = null;
+  try {
+    const rows = await refreshOneMinuteCandles(clock, { force: true });
+    const entryMs = new Date(trade.entryTime).getTime();
+    if (Number.isFinite(entryMs) && Array.isArray(rows) && rows.length) {
+      let best = null;
+      for (const bar of rows) {
+        const ts = barTsMs(bar);
+        const close = Number(bar[4]);
+        if (!Number.isFinite(ts) || !plausibleFut(close)) continue;
+        if (!best || Math.abs(ts - entryMs) < Math.abs(best.ts - entryMs)) {
+          best = { ts, close };
+        }
+      }
+      if (best && Math.abs(best.ts - entryMs) <= 5 * 60 * 1000) {
+        futAtEntry = best.close;
+      }
+    }
+  } catch (err) {
+    engineState.lastCandleError = err.message || 'FUT candle align failed';
+  }
+
+  if (!plausibleFut(futAtEntry)) {
+    try {
+      futAtEntry = await refreshFutPrice({ force: true, clock });
+    } catch {
+      futAtEntry = Number(masterPrice());
+    }
+  }
+  if (!plausibleFut(futAtEntry)) {
+    logEntry('ALIGN_OPEN_TRADE_FUT_SKIP', {
+      tradeId: trade._id.toString(),
+      reason: 'NO_PLAUSIBLE_FUT',
+      cashEntrySpot: currentEntry,
+    });
+    return trade;
+  }
+
+  const cashSpot = Number.isFinite(currentEntry) && currentEntry > 1000
+    ? currentEntry
+    : Number(String(notes).match(/cashEntrySpot=([0-9.]+)/)?.[1]);
+  trade.entrySpot = Number(Number(futAtEntry).toFixed(2));
+  const baseNotes = notes
+    .replace(/\s*\|\s*entrySpotSource=FUT; priceSource=FUT; cashEntrySpot=[^|]*/g, '')
+    .trim();
+  trade.notes = [
+    baseNotes,
+    `entrySpotSource=FUT; priceSource=FUT; cashEntrySpot=${Number.isFinite(cashSpot) ? cashSpot : 'n/a'}`,
+  ]
+    .filter(Boolean)
+    .join(' | ')
+    .slice(0, 500);
+  await trade.save();
+  logEntry('ALIGN_OPEN_TRADE_FUT', {
+    tradeId: trade._id.toString(),
+    cashEntrySpot: cashSpot,
+    futEntrySpot: trade.entrySpot,
+  });
+  return trade;
 }
 
 function clearOpenTrade() {
@@ -1535,7 +1637,7 @@ async function placeLongOption(clock, signal, spot) {
       targetMode: 'PCT',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · ΔOI ok`,
-      notes: `oi_wall; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
+      notes: `oi_wall; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -1593,6 +1695,12 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     const mark = await resolveMarkForOpenTrade(trade, { allowChain: true, forceChain: true });
     await finalizeTrade(trade, { exitPremium: mark.optionLtp, mark, reason: 'DAY_CLOSE', forceChain: true });
     return;
+  }
+
+  try {
+    await refreshFutPrice({ force: false, clock });
+  } catch {
+    /* keep last FUT */
   }
 
   const mark = await resolveMarkForOpenTrade(trade, {
@@ -1760,8 +1868,9 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
     engineState.expiryDateKey = clock.dateKey;
     const orphan = await dedupeOpenTradesInDb(clock);
     if (orphan) {
-      engineState.openTradeId = orphan._id.toString();
-      await subscribeOpenOption(orphan);
+      const aligned = await alignOpenTradeToFut(orphan, clock);
+      engineState.openTradeId = aligned._id.toString();
+      await subscribeOpenOption(aligned);
       startPositionPoll();
       await checkOpenTrade();
     }
@@ -1854,11 +1963,12 @@ async function resumeOpenPositionFromDb() {
   try {
     await syncEngineTradeStateFromDb(clock);
     if (!engineState.openTradeId) return { ok: true, resumed: false, state: getEngineSnapshot() };
-    const trade = await LivePaperTrade.findById(engineState.openTradeId);
+    let trade = await LivePaperTrade.findById(engineState.openTradeId);
     if (!trade || trade.exitTime) {
       clearOpenTrade();
       return { ok: true, resumed: false, state: getEngineSnapshot() };
     }
+    trade = await alignOpenTradeToFut(trade, clock);
     await subscribeOpenOption(trade);
     if (!engineState.positionPollTimer) startPositionPoll();
     await checkOpenTrade();
@@ -1884,10 +1994,16 @@ async function ensureEngineRunning() {
   await syncEngineTradeStateFromDb(clock);
   await syncOiWallNotificationsWithDb();
   if (engineState.openTradeId && !engineState.positionPollTimer) {
-    const trade = await LivePaperTrade.findById(engineState.openTradeId);
-    if (trade && !trade.exitTime) {
-      await subscribeOpenOption(trade);
+    let openInDb = await LivePaperTrade.findById(engineState.openTradeId);
+    if (openInDb && !openInDb.exitTime) {
+      openInDb = await alignOpenTradeToFut(openInDb, clock);
+      await subscribeOpenOption(openInDb);
       startPositionPoll();
+    }
+  } else if (engineState.openTradeId) {
+    const openInDb = await LivePaperTrade.findById(engineState.openTradeId);
+    if (openInDb && !openInDb.exitTime) {
+      await alignOpenTradeToFut(openInDb, clock);
     }
   }
   return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
