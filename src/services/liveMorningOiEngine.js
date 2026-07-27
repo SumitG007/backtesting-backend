@@ -77,10 +77,10 @@ const engineState = {
     targetPct: DEFAULT_TARGET_PCT,
     stopLossPct: DEFAULT_STOP_PCT,
     hasStopLoss: true,
-    proximityPoints: 30,
+    proximityPoints: 20,
     strikeLookaround: 10,
     strikeMode: 'ATM',
-    maxTradesPerDay: 8,
+    maxTradesPerDay: 2,
     cooldownMinutes: 2,
     candleInterval: DEFAULT_CANDLE_INTERVAL,
     confirmCandleInterval: DEFAULT_CONFIRM_CANDLE_INTERVAL,
@@ -122,6 +122,10 @@ const engineState = {
   lastConfirmCandleError: null,
   tradesTodayCount: 0,
   tradesTodayDateKey: null,
+  /** One CE (support) + one PE (resistance) max per day. */
+  sidesTradedToday: { CE: false, PE: false },
+  /** Prevent re-entry on the same closed confirm candle. */
+  usedConfirmBarKeys: new Set(),
   lastExitAtMs: 0,
   openTradeId: null,
   /** Lite fields for instant tick → UI MTM without waiting on Mongo. */
@@ -249,9 +253,9 @@ function normalizeSettings(settings = {}) {
     stopLossPct = hasStopLoss ? DEFAULT_STOP_PCT : null;
   }
 
-  const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 30);
+  const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 20);
   const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
-  const maxTradesPerDay = Math.max(1, Math.min(30, Math.floor(Number(settings.maxTradesPerDay) || 8)));
+  const maxTradesPerDay = Math.max(1, Math.min(30, Math.floor(Number(settings.maxTradesPerDay) || 2)));
   const cooldownMinutes = Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 2));
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
@@ -456,16 +460,18 @@ async function revalidateWallEntry(clock, intended) {
   return { ok: true, signal: live };
 }
 
-function readLastCandleSnapshot(rows) {
-  if (!Array.isArray(rows) || rows.length < 1) return null;
-  const bar = rows.length >= 2 ? rows[rows.length - 2] : rows[rows.length - 1];
-  const prev = rows.length >= 2 ? rows[rows.length - 3] : null;
+function readClosedConfirmCandle(rows) {
+  // Need a closed bar: use second-to-last (last is usually still forming).
+  if (!Array.isArray(rows) || rows.length < 2) return null;
+  const bar = rows[rows.length - 2];
+  const prev = rows.length >= 3 ? rows[rows.length - 3] : null;
   const open = Number(bar[1]);
   const high = Number(bar[2]);
   const low = Number(bar[3]);
   const close = Number(bar[4]);
   const prevClose = prev != null ? Number(prev[4]) : null;
   if (![open, high, low, close].every(Number.isFinite)) return null;
+  if (!(close > open || close < open)) return null; // reject flat/doji as confirm
   return {
     open,
     high,
@@ -474,6 +480,8 @@ function readLastCandleSnapshot(rows) {
     prevClose: Number.isFinite(prevClose) ? prevClose : null,
     green: close > open,
     red: close < open,
+    barKey: String(bar[0] || ''),
+    closed: true,
   };
 }
 
@@ -507,26 +515,61 @@ function summarizeFutDayOhl(rows = engineState.todayBars1m) {
   };
 }
 
-function candleConfirms(signal, candle) {
-  if (!signal || !candle) return false;
+/**
+ * FUT closed confirm candle:
+ * CE (support) → green bounce
+ * PE (resistance) → red reject
+ * Live FUT proximity is checked separately before this.
+ */
+function futCandleConfirms(signal, candle) {
+  if (!signal || !candle || !candle.closed) return false;
   const level = Number(signal.levelStrike);
-  const prox = engineState.settings.proximityPoints;
+  const prox = Number(engineState.settings.proximityPoints) || 20;
   if (!Number.isFinite(level)) return false;
   if (signal.optionType === 'CE') {
-    const nearSupport = candle.low <= level + prox;
+    const touchedSupport = candle.low <= level + prox;
     const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
-    return nearSupport && candle.green && bounce;
+    return Boolean(touchedSupport && candle.green && bounce);
   }
-  const nearResist = candle.high >= level - prox;
+  const touchedResist = candle.high >= level - prox;
   const reject = Number.isFinite(candle.prevClose) ? candle.close <= candle.prevClose : true;
-  return nearResist && candle.red && reject;
+  return Boolean(touchedResist && candle.red && reject);
 }
 
-/** Long option premium confirm — green + close ≥ prior close. */
+/** Long option premium confirm — closed green candle only. */
 function optionPremiumCandleConfirms(candle) {
-  if (!candle) return false;
+  if (!candle || !candle.closed) return false;
   const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
-  return candle.green && bounce;
+  return Boolean(candle.green && bounce);
+}
+
+function sideAlreadyTradedToday(optionType) {
+  const side = optionType === 'PE' ? 'PE' : 'CE';
+  return Boolean(engineState.sidesTradedToday?.[side]);
+}
+
+function markSideTradedToday(optionType) {
+  const side = optionType === 'PE' ? 'PE' : 'CE';
+  engineState.sidesTradedToday = {
+    ...(engineState.sidesTradedToday || { CE: false, PE: false }),
+    [side]: true,
+  };
+}
+
+function confirmBarAlreadyUsed(optionType, futBarKey) {
+  if (!futBarKey) return false;
+  const key = `${engineState.tradesTodayDateKey || ''}:${optionType}:${futBarKey}`;
+  return engineState.usedConfirmBarKeys?.has(key);
+}
+
+function markConfirmBarUsed(optionType, futBarKey) {
+  if (!futBarKey) return;
+  if (!(engineState.usedConfirmBarKeys instanceof Set)) {
+    engineState.usedConfirmBarKeys = new Set();
+  }
+  engineState.usedConfirmBarKeys.add(
+    `${engineState.tradesTodayDateKey || ''}:${optionType}:${futBarKey}`,
+  );
 }
 
 function resolveEntryStrikeForSignal(signal, spot) {
@@ -628,7 +671,7 @@ function publishLiveSignal(next) {
 }
 
 async function refreshLiveSignalStatus(clock) {
-  const prox = Number(engineState.settings.proximityPoints) || 30;
+  const prox = Number(engineState.settings.proximityPoints) || 20;
 
   if (clock.minutes < tradeFromMin() || clock.minutes > tradeToMin()) {
     publishLiveSignal({
@@ -709,6 +752,19 @@ async function refreshLiveSignalStatus(clock) {
   }
 
   const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+  if (sideAlreadyTradedToday(optionType)) {
+    publishLiveSignal({
+      status: 'MAX_TRADES',
+      label: `${optionType} side done today`,
+      detail: 'Max 1 trade per side (support CE / resistance PE) · max 2/day',
+      reason: 'SAME_SIDE_DONE',
+      optionType,
+      levelStrike: signal.levelStrike,
+      buyLive: false,
+      sidesTradedToday: engineState.sidesTradedToday,
+    });
+    return engineState.liveSignal;
+  }
   const level = Number(signal.levelStrike);
   try {
     await refreshFutPrice({ clock });
@@ -1318,15 +1374,27 @@ async function dedupeOpenTradesInDb(clock) {
 }
 
 async function syncTradesToday(clock) {
-  if (engineState.tradesTodayDateKey === clock.dateKey) return;
-  const count = await LivePaperTrade.countDocuments({
+  const dayChanged = engineState.tradesTodayDateKey !== clock.dateKey;
+  const rows = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     entryDateKey: clock.dateKey,
-  });
-  engineState.tradesTodayCount = count;
+  })
+    .select({ optionType: 1, exitTime: 1 })
+    .lean();
+
+  engineState.tradesTodayCount = rows.length;
   engineState.tradesTodayDateKey = clock.dateKey;
-  engineState.armedBias = null;
-  engineState.oiFlipUntilMs = 0;
+  engineState.sidesTradedToday = {
+    CE: rows.some((r) => String(r.optionType || '').toUpperCase() === 'CE'),
+    PE: rows.some((r) => String(r.optionType || '').toUpperCase() === 'PE'),
+  };
+
+  if (dayChanged) {
+    engineState.armedBias = null;
+    engineState.oiFlipUntilMs = 0;
+    engineState.usedConfirmBarKeys = new Set();
+  }
+
   const last = await LivePaperTrade.findOne({
     strategyKey: STRATEGY_KEY,
     entryDateKey: clock.dateKey,
@@ -1614,28 +1682,34 @@ async function refreshOptionConfirmCandles(clock, signal, spot, { force = false 
 }
 
 /**
- * Favorable confirm on BOTH:
+ * Favorable confirm on BOTH closed bars (never forming candle):
  * - FUT closed bar at confirm interval (5m default / 15m)
- * - Entry option strike closed bar at same interval
- * Everything else (proximity / board) stays on 1m live.
+ * - Entry option strike closed bar at same interval (must be green)
+ * Live FUT proximity is checked separately. Everything else stays on 1m.
  */
-async function hasReactionConfirmation(clock, signal, spot) {
+async function hasReactionConfirmation(clock, signal, spot, { force = false } = {}) {
   const interval = getConfirmCandleInterval();
-  const futRows = await refreshFutConfirmCandles(clock);
-  const futCandle = readLastCandleSnapshot(futRows);
-  const futOk = candleConfirms(signal, futCandle);
+  const optionType = signal?.optionType === 'PE' ? 'PE' : 'CE';
 
-  const optionPack = await refreshOptionConfirmCandles(clock, signal, spot);
-  const optionCandle = readLastCandleSnapshot(optionPack.rows);
+  const futRows = await refreshFutConfirmCandles(clock, { force });
+  const futCandle = readClosedConfirmCandle(futRows);
+  const futOk = futCandleConfirms(signal, futCandle);
+
+  const optionPack = await refreshOptionConfirmCandles(clock, signal, spot, { force });
+  const optionCandle = readClosedConfirmCandle(optionPack.rows);
   const optionOk = optionPremiumCandleConfirms(optionCandle);
 
+  const usedSameBar = confirmBarAlreadyUsed(optionType, futCandle?.barKey);
+  const ok = Boolean(futOk && optionOk && !usedSameBar && optionPack.strike);
+
   return {
-    ok: Boolean(futOk && optionOk),
+    ok,
     futOk: Boolean(futOk),
     optionOk: Boolean(optionOk),
+    usedSameBar,
     interval,
     strike: optionPack.strike,
-    optionType: optionPack.optionType,
+    optionType: optionPack.optionType || optionType,
     futCandle,
     optionCandle,
     candleError: engineState.lastConfirmCandleError,
@@ -1660,7 +1734,7 @@ async function evaluateEntry() {
     }
     await syncEngineTradeStateFromDb(clock);
 
-    // One open position at a time; multi entries/day on pure signals only.
+    // One open position at a time; max 2/day · one support + one resistance.
     if (engineState.openTradeId) return;
 
     if (clock.minutes > tradeToMin() || clock.minutes < tradeFromMin()) return;
@@ -1670,6 +1744,7 @@ async function evaluateEntry() {
         ist: istClockLabel(clock),
         reason: 'MAX_TRADES',
         count: engineState.tradesTodayCount,
+        max: engineState.settings.maxTradesPerDay,
       });
       return;
     }
@@ -1688,6 +1763,17 @@ async function evaluateEntry() {
       return;
     }
     if (!signal || signal.skip) return;
+
+    const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    if (sideAlreadyTradedToday(optionType)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'SAME_SIDE_DONE',
+        optionType,
+        sides: engineState.sidesTradedToday,
+      });
+      return;
+    }
 
     if (Date.now() < engineState.oiFlipUntilMs) {
       logEntry('ENTRY_SKIP_REVALIDATE', {
@@ -1742,7 +1828,7 @@ async function evaluateEntry() {
     let confirmed = false;
     let confirmDetail = null;
     try {
-      confirmDetail = await hasReactionConfirmation(clock, signal, spot);
+      confirmDetail = await hasReactionConfirmation(clock, signal, spot, { force: true });
       confirmed = Boolean(confirmDetail?.ok);
     } catch (err) {
       engineState.lastError = `${getConfirmCandleInterval()}m confirm: ${err.message}`;
@@ -1758,6 +1844,7 @@ async function evaluateEntry() {
         confirmInterval: confirmDetail?.interval || getConfirmCandleInterval(),
         futOk: confirmDetail?.futOk,
         optionOk: confirmDetail?.optionOk,
+        usedSameBar: confirmDetail?.usedSameBar,
         optionStrike: confirmDetail?.strike,
       });
       return;
@@ -1802,7 +1889,7 @@ async function evaluateEntry() {
     let freshConfirmed = false;
     let freshConfirmDetail = null;
     try {
-      freshConfirmDetail = await hasReactionConfirmation(clock, fresh, spot);
+      freshConfirmDetail = await hasReactionConfirmation(clock, fresh, spot, { force: true });
       freshConfirmed = Boolean(freshConfirmDetail?.ok);
     } catch (err) {
       engineState.lastError = `${getConfirmCandleInterval()}m reaction: ${err.message}`;
@@ -1818,12 +1905,23 @@ async function evaluateEntry() {
         confirmInterval: freshConfirmDetail?.interval || getConfirmCandleInterval(),
         futOk: freshConfirmDetail?.futOk,
         optionOk: freshConfirmDetail?.optionOk,
+        usedSameBar: freshConfirmDetail?.usedSameBar,
         optionStrike: freshConfirmDetail?.strike,
       });
       return;
     }
 
-    await placeLongOption(clock, fresh, spot);
+    if (sideAlreadyTradedToday(fresh.optionType === 'PE' ? 'PE' : 'CE')) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'SAME_SIDE_DONE',
+        optionType: fresh.optionType,
+        afterRevalidate: true,
+      });
+      return;
+    }
+
+    await placeLongOption(clock, fresh, spot, freshConfirmDetail);
   } catch (err) {
     engineState.lastError = `Entry loop: ${err.message}`;
     logEntry('ENTRY_LOOP_ERROR', { error: err.message });
@@ -1832,7 +1930,7 @@ async function evaluateEntry() {
   }
 }
 
-async function placeLongOption(clock, signal, spot) {
+async function placeLongOption(clock, signal, spot, confirmDetail = null) {
   if (engineState.enteringTrade) return;
   engineState.enteringTrade = true;
   try {
@@ -1842,14 +1940,25 @@ async function placeLongOption(clock, signal, spot) {
 
     const symbol = getEngineSymbol();
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    if (sideAlreadyTradedToday(optionType)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'SAME_SIDE_DONE',
+        optionType,
+        atPlace: true,
+      });
+      return;
+    }
     const expiry = signal.expiry || (await getEntryExpiry(symbol, clock.dateKey));
     const strikeStep = getStrikeStep(symbol);
-    const strike = pickStrike({
-      entrySpot: spot,
-      strikeStep,
-      optionType,
-      strikeMode: engineState.settings.strikeMode,
-    });
+    const strike = Number.isFinite(Number(confirmDetail?.strike))
+      ? Number(confirmDetail.strike)
+      : pickStrike({
+        entrySpot: spot,
+        strikeStep,
+        optionType,
+        strikeMode: engineState.settings.strikeMode,
+      });
     const premiums = await getAtmPremiums({ symbol, strike, expiry });
     const entryPremium = premiumFromChain(premiums, optionType);
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
@@ -1871,6 +1980,8 @@ async function placeLongOption(clock, signal, spot) {
       ? Math.max(0.05, entryPremium * (1 - slPct / 100))
       : null;
 
+    const confirmInterval = confirmDetail?.interval || getConfirmCandleInterval();
+    const futBarKey = confirmDetail?.futCandle?.barKey || '';
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
       symbol,
@@ -1894,13 +2005,15 @@ async function placeLongOption(clock, signal, spot) {
       stopLossMode: hasSl ? 'PCT' : null,
       targetMode: 'PCT',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
-      entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · ΔOI ok`,
-      notes: `oi_wall; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
+      entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · FUT+opt ${confirmInterval}m confirm`,
+      notes: `oi_wall; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
     engineState.tradesTodayCount += 1;
     engineState.tradesTodayDateKey = clock.dateKey;
+    markSideTradedToday(optionType);
+    markConfirmBarUsed(optionType, futBarKey);
     engineState.armedBias = null;
     engineState.oiFlipUntilMs = 0;
     engineState.lastSignalAt = new Date();
@@ -1910,6 +2023,10 @@ async function placeLongOption(clock, signal, spot) {
       optionType,
       strike,
       levelStrike: signal.levelStrike,
+      confirmInterval,
+      futOk: confirmDetail?.futOk,
+      optionOk: confirmDetail?.optionOk,
+      futBarKey,
       entryPremium: Number(entryPremium.toFixed(2)),
       targetPremium: Number(targetPremium.toFixed(2)),
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
@@ -2208,6 +2325,16 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     if (migrated.stopLossPct == null || migrated.stopLossPct === '') {
       migrated.stopLossPct = DEFAULT_STOP_PCT;
     }
+    // Migrate old defaults → proximity 20 · max 2 trades/day.
+    if (migrated.proximityPoints == null || Number(migrated.proximityPoints) === 30) {
+      migrated.proximityPoints = 20;
+    }
+    if (migrated.maxTradesPerDay == null || Number(migrated.maxTradesPerDay) === 8) {
+      migrated.maxTradesPerDay = 2;
+    }
+    if (!migrated.confirmCandleInterval) {
+      migrated.confirmCandleInterval = DEFAULT_CONFIRM_CANDLE_INTERVAL;
+    }
     delete migrated.targetPoints;
     delete migrated.stopLossPoints;
     const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
@@ -2299,6 +2426,7 @@ function getEngineSnapshot() {
     futDayOhl: summarizeFutDayOhl(),
     tradesTodayCount: engineState.tradesTodayCount,
     maxTradesPerDay: engineState.settings.maxTradesPerDay,
+    sidesTradedToday: engineState.sidesTradedToday,
     openTradeId: engineState.openTradeId,
     lastSignalAt: engineState.lastSignalAt,
     lastError: engineState.lastError,
