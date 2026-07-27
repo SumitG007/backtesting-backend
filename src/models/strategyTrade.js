@@ -51,7 +51,6 @@ const strategyTradeSchema = new mongoose.Schema(
     signalHaColor: String,
     prevHaColor: String,
     entryHaColor: String,
-    /** Opening Price Reversal — 09:15 open reference / first excursion side. */
     openRef: Number,
     firstSide: String,
     stopLossPct: Number,

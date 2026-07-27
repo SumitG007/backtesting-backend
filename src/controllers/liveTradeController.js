@@ -2,18 +2,15 @@ const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
-const strategySevenEngine = require('../services/livePutBuyEngine');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
-  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
-  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
 ];
 
@@ -152,13 +149,6 @@ function resolveHintEntrySettings(engine, strategyId, wallet) {
       entryWindowMinutes: Math.max(0, Number(w?.entryWindowMinutes) || 2),
     };
   }
-  if (strategyId === 'strategy-3') {
-    const w = wallet?.strategy7EngineSettings;
-    return {
-      entryTime: String(w?.entryToTime || w?.entryTime || '11:15'),
-      entryWindowMinutes: 0,
-    };
-  }
   return {
     entryTime: '09:20',
     entryWindowMinutes: 2,
@@ -230,28 +220,6 @@ function isStraddleLiveStrategyId(strategyId) {
   return strategyId === 'strategy-6';
 }
 
-function isPutBuyLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-3';
-}
-
-function putBuyPaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: strategySevenEngine.STRATEGY_KEY,
-    startEngine: strategySevenEngine.startEngine,
-    stopEngine: strategySevenEngine.stopEngine,
-    updateEngineSettings: strategySevenEngine.updateEngineSettings,
-    getEngineSnapshot: strategySevenEngine.getEngineSnapshot,
-    ensureWallet: strategySevenEngine.ensureWallet,
-    recalcWallet: strategySevenEngine.recalcWalletFromTrades,
-    ensureRunning: strategySevenEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategySevenEngine.reconcileOpenTrades,
-    closeOpenPosition: strategySevenEngine.closeOpenPosition,
-    refreshOpenMark: strategySevenEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategySevenEngine.clearDailySkipState,
-  };
-}
-
 function morningOiPaperLiveCtx(strategyId) {
   return {
     strategyId,
@@ -275,7 +243,6 @@ function isMorningOiLiveStrategyId(strategyId) {
 }
 
 const LIVE_STRATEGIES = {
-  'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-9': morningOiPaperLiveCtx('strategy-9'),
 };
@@ -503,15 +470,6 @@ async function resetWallet(req, res) {
       await wallet.save();
     }
     const wallet = await ctx.ensureWallet();
-    if (isPutBuyLiveStrategyId(ctx.strategyId)) {
-      if (typeof ctx.clearDailySkip === 'function') {
-        await ctx.clearDailySkip();
-      } else {
-        wallet.strategy7SkippedDateKey = null;
-        wallet.strategy7LastSkipReason = null;
-        await wallet.save();
-      }
-    }
     return res.json({ ok: true, wallet, message: `Cleared paper trades for ${ctx.strategyId}` });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -655,9 +613,6 @@ async function getLiveMeta(req, res) {
     let expiry = null;
     if (isStraddleLiveStrategyId(ctx?.strategyId)) {
       expiry = await getNextWeeklyExpiry(symbol, clock.dateKey);
-      if (snapshot?.expiry) expiry = snapshot.expiry;
-    } else if (isPutBuyLiveStrategyId(ctx?.strategyId)) {
-      expiry = await getNearestWeeklyExpiry(symbol);
       if (snapshot?.expiry) expiry = snapshot.expiry;
     } else {
       expiry = await getNearestWeeklyExpiry(symbol);

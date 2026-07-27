@@ -29,6 +29,7 @@ const {
 const { fetchTradingDayCandles, fetchIntradayCandlesBySecurity } = require('./dhanDataService');
 const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
 const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
+const { broadcast } = require('./realtimeSocket');
 
 const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy12';
@@ -38,6 +39,9 @@ const POLL_INTERVAL_MS = 2000;
 const POSITION_POLL_MS = 1000;
 const OPEN_MARK_CHAIN_MIN_GAP_MS = 4000;
 const TICK_FRESH_MAX_AGE_MS = 20000;
+const STATUS_MARK_REFRESH_MIN_GAP_MS = 750;
+const MARK_DB_PERSIST_MIN_GAP_MS = 2000;
+const LIVE_MARK_EMIT_MIN_GAP_MS = 100;
 const MIN_HOLD_MS = 2000;
 const OI_REFRESH_MIN_GAP_MS = 5000;
 const OI_BOARD_REFRESH_MIN_GAP_MS = 4000;
@@ -120,6 +124,8 @@ const engineState = {
   tradesTodayDateKey: null,
   lastExitAtMs: 0,
   openTradeId: null,
+  /** Lite fields for instant tick → UI MTM without waiting on Mongo. */
+  openTradeLite: null,
   closingTrade: false,
   enteringTrade: false,
   evaluatingEntry: false,
@@ -127,6 +133,9 @@ const engineState = {
   positionPollTimer: null,
   lastSignalAt: null,
   lastError: null,
+  lastMarkPersistAt: 0,
+  lastLiveMarkEmitAt: 0,
+  liveMarkEmitTimer: null,
 };
 
 function istClockLabel(clock) {
@@ -544,6 +553,8 @@ function publishLiveSignal(next) {
     at: new Date().toISOString(),
     ageMs: 0,
   };
+  // Push live signal + open MTM to UI over Socket.IO (throttled).
+  publishLiveMarkSnapshot();
 
   const key = [
     next.status,
@@ -1050,9 +1061,108 @@ async function persistOpenMarkToDb(trade, positionMark) {
   await trade.save();
 }
 
+function cacheOpenTradeLite(trade) {
+  if (!trade) {
+    engineState.openTradeLite = null;
+    return null;
+  }
+  engineState.openTradeLite = {
+    _id: trade._id?.toString?.() || String(trade._id || engineState.openTradeId || ''),
+    id: trade._id?.toString?.() || String(trade._id || engineState.openTradeId || ''),
+    symbol: trade.symbol || getEngineSymbol(),
+    optionType: tradeOptionType(trade),
+    strike: Number(trade.strike) || null,
+    expiryDate: trade.expiryDate || null,
+    entryTime: trade.entryTime || null,
+    entryPremium: Number(trade.entryPremium) || 0,
+    entrySpot: Number(trade.entrySpot) || null,
+    qty: Number(trade.qty) || 0,
+    lots: Number(trade.lots) || null,
+    charges: Number(trade.charges) || 0,
+    investedAmount: Number(trade.investedAmount) || null,
+    targetPremium: trade.targetPremium != null ? Number(trade.targetPremium) : null,
+    stopLossPremium: trade.stopLossPremium != null ? Number(trade.stopLossPremium) : null,
+    status: 'OPEN',
+  };
+  return engineState.openTradeLite;
+}
+
+function getLiveMarkSnapshot() {
+  return {
+    strategyId: 'strategy-9',
+    open: Boolean(engineState.openTradeId),
+    tradeId: engineState.openTradeId,
+    mark: engineState.openPositionMark,
+    openTradeLite: engineState.openTradeLite,
+    lastFut: engineState.lastFut,
+    futExpiry: engineState.futExpiry,
+    liveSignal: engineState.liveSignal,
+    at: new Date().toISOString(),
+  };
+}
+
+function publishLiveMarkSnapshot(extra = {}) {
+  const payload = { ...getLiveMarkSnapshot(), ...extra };
+  const now = Date.now();
+  const gap = now - engineState.lastLiveMarkEmitAt;
+  if (gap >= LIVE_MARK_EMIT_MIN_GAP_MS) {
+    engineState.lastLiveMarkEmitAt = now;
+    broadcast('paper-live:mark', payload);
+    return;
+  }
+  if (engineState.liveMarkEmitTimer) return;
+  engineState.liveMarkEmitTimer = setTimeout(() => {
+    engineState.liveMarkEmitTimer = null;
+    engineState.lastLiveMarkEmitAt = Date.now();
+    broadcast('paper-live:mark', getLiveMarkSnapshot());
+  }, Math.max(20, LIVE_MARK_EMIT_MIN_GAP_MS - gap));
+}
+
+function publishOpenMark(trade, mark, clock, { persist = true, forcePersist = false } = {}) {
+  const positionMark = buildOpenPositionMark(trade, mark, clock);
+  engineState.openPositionMark = positionMark;
+  publishLiveMarkSnapshot();
+  if (!persist) return positionMark;
+  const now = Date.now();
+  if (!forcePersist && now - engineState.lastMarkPersistAt < MARK_DB_PERSIST_MIN_GAP_MS) {
+    return positionMark;
+  }
+  engineState.lastMarkPersistAt = now;
+  persistOpenMarkToDb(trade, positionMark).catch((err) => {
+    engineState.lastError = `Mark persist: ${err.message}`;
+  });
+  return positionMark;
+}
+
+/** Instant UI update from Dhan option websocket tick (no Mongo wait). */
+function publishTickMarkFast(ltp) {
+  const lite = engineState.openTradeLite;
+  if (!lite || !Number.isFinite(ltp) || ltp <= 0) return null;
+  const entry = Number(lite.entryPremium) || 0;
+  const qty = Number(lite.qty) || 0;
+  const unrealized = (ltp - entry) * qty - (Number(lite.charges) || 0);
+  const clock = getIstClock(new Date());
+  const positionMark = {
+    optionType: lite.optionType,
+    optionLtp: Number(ltp.toFixed(2)),
+    entryPremium: entry,
+    spot: Number.isFinite(Number(masterPrice())) ? Number(Number(masterPrice()).toFixed(2)) : null,
+    priceSource: 'FUT',
+    source: 'websocket',
+    isLiveMark: true,
+    unrealizedPnl: Number(unrealized.toFixed(2)),
+    at: new Date().toISOString(),
+    ist: istClockLabel(clock),
+  };
+  engineState.openPositionMark = positionMark;
+  publishLiveMarkSnapshot();
+  return positionMark;
+}
+
 async function subscribeOpenOption(trade) {
   unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
   engineState.lastOptionTick = null;
+  cacheOpenTradeLite(trade);
   const optionType = tradeOptionType(trade);
   try {
     const instrument = await resolveOptionInstrument({
@@ -1163,8 +1273,10 @@ function clearOpenTrade() {
   stopPositionPoll();
   unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
   engineState.openTradeId = null;
+  engineState.openTradeLite = null;
   engineState.lastOptionTick = null;
   engineState.openPositionMark = null;
+  publishLiveMarkSnapshot({ open: false, tradeId: null, mark: null });
 }
 
 function stopPositionPoll() {
@@ -1821,8 +1933,14 @@ async function placeLongOption(clock, signal, spot) {
 }
 
 async function onOptionTick({ ltp }) {
-  engineState.lastOptionTick = { ltp: Number(ltp), ts: Date.now() };
-  await checkOpenTrade({ preferTicks: true });
+  const n = Number(ltp);
+  engineState.lastOptionTick = { ltp: n, ts: Date.now() };
+  if (engineState.openTradeId && Number.isFinite(n) && n > 0) {
+    publishTickMarkFast(n);
+  }
+  checkOpenTrade({ preferTicks: true }).catch((err) => {
+    engineState.lastError = `OI Wall tick check: ${err.message}`;
+  });
 }
 
 async function checkOpenTrade({ preferTicks = false } = {}) {
@@ -1836,6 +1954,7 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     clearOpenTrade();
     return;
   }
+  cacheOpenTradeLite(trade);
 
   if (clock.dateKey !== trade.entryDateKey) {
     const mark = await resolveMarkForOpenTrade(trade, { allowChain: true, forceChain: true });
@@ -1854,9 +1973,7 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     allowChain: true,
     forceChain: !preferTicks && !optionTickIsFresh(),
   });
-  const positionMark = buildOpenPositionMark(trade, mark, clock);
-  engineState.openPositionMark = positionMark;
-  await persistOpenMarkToDb(trade, positionMark);
+  publishOpenMark(trade, mark, clock, { persist: true, forcePersist: false });
 
   const heldMs = Date.now() - new Date(trade.entryTime).getTime();
   if (heldMs < MIN_HOLD_MS) return;
@@ -2245,14 +2362,29 @@ async function closeOpenPosition() {
 
 async function refreshOpenPositionMarkForStatus() {
   if (!engineState.openTradeId) return null;
+  const current = engineState.openPositionMark;
+  if (current?.at) {
+    const ageMs = Date.now() - new Date(current.at).getTime();
+    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < STATUS_MARK_REFRESH_MIN_GAP_MS) {
+      publishLiveMarkSnapshot();
+      return current;
+    }
+  }
   const trade = await LivePaperTrade.findById(engineState.openTradeId);
   if (!trade || trade.exitTime) return null;
+  cacheOpenTradeLite(trade);
   const clock = getIstClock(new Date());
-  const mark = await resolveMarkForOpenTrade(trade, { allowChain: true, forceChain: true });
-  const positionMark = buildOpenPositionMark(trade, mark, clock);
-  engineState.openPositionMark = positionMark;
-  await persistOpenMarkToDb(trade, positionMark);
-  return positionMark;
+  try {
+    await refreshFutPrice({ force: false, clock });
+  } catch {
+    /* keep last FUT */
+  }
+  const mark = await resolveMarkForOpenTrade(trade, {
+    preferTicks: true,
+    allowChain: true,
+    forceChain: !optionTickIsFresh(),
+  });
+  return publishOpenMark(trade, mark, clock, { persist: true, forcePersist: false });
 }
 
 async function clearDailySkipState() {
@@ -2276,4 +2408,5 @@ module.exports = {
   closeOpenPosition,
   refreshOpenPositionMarkForStatus,
   clearDailySkipState,
+  getLiveMarkSnapshot,
 };
