@@ -8,7 +8,7 @@
 
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
-const { getIstClock, parseClockMinutes, isWeekendDateKey, buildIstWallClockTimestamp } = require('../utils/dateTime');
+const { getIstClock, parseClockMinutes, isWeekendDateKey, buildIstWallClockTimestamp, istCashSessionBucketStart, wallClockIsoFromMinutes } = require('../utils/dateTime');
 const {
   ensureNseHolidaysLoaded,
   isNseCashTradingDay,
@@ -469,52 +469,9 @@ function barOpenMs(bar) {
   return Number.isFinite(t) ? t : NaN;
 }
 
-/**
- * Last fully closed confirm bar (never the forming candle).
- * Uses open-time + interval — does NOT assume Dhan always appends a forming bar.
- * Skips bars that open before minBarOpenMinutes (e.g. 09:15 open noise when tradeFrom=09:20).
- */
-function readClosedConfirmCandle(rows, {
-  intervalMinutes = 5,
-  now = new Date(),
-  minBarOpenMinutes = null,
-  dateKey = null,
-} = {}) {
-  if (!Array.isArray(rows) || rows.length === 0) return null;
-  const intervalMs = Math.max(1, Number(intervalMinutes) || 5) * 60 * 1000;
-  const nowMs = now instanceof Date ? now.getTime() : Date.now();
-
-  let closedIdx = -1;
-  for (let i = rows.length - 1; i >= 0; i -= 1) {
-    const openMs = barOpenMs(rows[i]);
-    if (!Number.isFinite(openMs)) continue;
-    const closeMs = openMs + intervalMs;
-    // Still forming (or clock skew) — skip.
-    if (closeMs > nowMs + 1500) continue;
-
-    if (minBarOpenMinutes != null && dateKey) {
-      const openClock = getIstClock(new Date(openMs).toISOString());
-      if (openClock.dateKey === dateKey && openClock.minutes < minBarOpenMinutes) {
-        // Opening-range bar (e.g. 09:15) — not valid confirm. Older bars are earlier too.
-        continue;
-      }
-    }
-    closedIdx = i;
-    break;
-  }
-  if (closedIdx < 0) return null;
-
-  const bar = rows[closedIdx];
-  const prev = closedIdx > 0 ? rows[closedIdx - 1] : null;
-  const open = Number(bar[1]);
-  const high = Number(bar[2]);
-  const low = Number(bar[3]);
-  const close = Number(bar[4]);
-  const prevClose = prev != null ? Number(prev[4]) : null;
+function candleShapeFromOhlc(open, high, low, close, prevClose, meta = {}) {
   if (![open, high, low, close].every(Number.isFinite)) return null;
-  if (!(close > open || close < open)) return null; // reject flat/doji as confirm
-
-  const openMs = barOpenMs(bar);
+  if (!(close > open || close < open)) return null; // reject flat/doji
   return {
     open,
     high,
@@ -523,46 +480,123 @@ function readClosedConfirmCandle(rows, {
     prevClose: Number.isFinite(prevClose) ? prevClose : null,
     green: close > open,
     red: close < open,
-    barKey: String(bar[0] || ''),
-    openMs: Number.isFinite(openMs) ? openMs : null,
-    closeMs: Number.isFinite(openMs) ? openMs + intervalMs : null,
-    intervalMinutes: Number(intervalMinutes) || 5,
     closed: true,
+    ...meta,
   };
 }
 
-/** Option confirm must be the SAME closed IST bucket as the FUT confirm bar. */
-function readClosedConfirmCandleAt(rows, futCandle, {
+/**
+ * Build confirm-interval OHLC from FUT 1m bars on the NSE 09:15 grid.
+ * Closed detection uses IST minutes — never trust "last row is forming".
+ */
+function aggregateConfirmBarsFrom1m(rows1m, intervalMinutes = 5) {
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  const byKey = new Map();
+  for (let i = 0; i < (rows1m || []).length; i += 1) {
+    const bar = rows1m[i];
+    const clock = getIstClock(bar[0]);
+    if (!clock?.dateKey) continue;
+    if (clock.minutes < 555 || clock.minutes > 930) continue;
+    const bucket = istCashSessionBucketStart(clock.minutes, step);
+    const key = `${clock.dateKey}:${bucket}`;
+    const o = Number(bar[1]);
+    const h = Number(bar[2]);
+    const l = Number(bar[3]);
+    const c = Number(bar[4]);
+    if (![o, h, l, c].every(Number.isFinite)) continue;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        dateKey: clock.dateKey,
+        bucket,
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        barKey: wallClockIsoFromMinutes(clock.dateKey, bucket),
+        oneMinCount: 1,
+      });
+    } else {
+      existing.high = Math.max(existing.high, h);
+      existing.low = Math.min(existing.low, l);
+      existing.close = c;
+      existing.oneMinCount += 1;
+    }
+  }
+  return [...byKey.values()].sort((a, b) => {
+    if (a.dateKey !== b.dateKey) return a.dateKey.localeCompare(b.dateKey);
+    return a.bucket - b.bucket;
+  });
+}
+
+/**
+ * Latest fully closed confirm bucket only (exact previous grid bar — no stale older bar).
+ * Example: at 10:31 with 5m → only the 10:25–10:30 bar (closes at 10:30).
+ */
+function readExactClosedConfirmFromAgg(aggBars, {
   intervalMinutes = 5,
-  now = new Date(),
+  clock,
+  minBarOpenMinutes = null,
 } = {}) {
-  if (!futCandle || !Array.isArray(rows) || rows.length === 0) return null;
-  const intervalMs = Math.max(1, Number(intervalMinutes) || 5) * 60 * 1000;
-  const nowMs = now instanceof Date ? now.getTime() : Date.now();
+  if (!clock || !Array.isArray(aggBars) || aggBars.length === 0) return null;
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  const currentBucket = istCashSessionBucketStart(clock.minutes, step);
+  const expectedOpen = currentBucket - step;
+  if (!Number.isFinite(expectedOpen)) return null;
+  if (minBarOpenMinutes != null && expectedOpen < minBarOpenMinutes) return null;
+  // Bucket not closed until nowMinutes >= expectedOpen + step
+  if (clock.minutes < expectedOpen + step) return null;
 
   let idx = -1;
-  if (futCandle.barKey) {
-    idx = rows.findIndex((r) => String(r?.[0] || '') === String(futCandle.barKey));
-  }
-  if (idx < 0) {
-    const futOpenIso = futCandle.barKey || (Number.isFinite(futCandle.openMs)
-      ? new Date(futCandle.openMs).toISOString()
-      : null);
-    if (!futOpenIso) return null;
-    const futClock = getIstClock(futOpenIso);
-    idx = rows.findIndex((r) => {
-      const openMs = barOpenMs(r);
-      if (!Number.isFinite(openMs)) return false;
-      const c = getIstClock(new Date(openMs).toISOString());
-      return c.dateKey === futClock.dateKey && Math.abs(c.minutes - futClock.minutes) <= 1;
-    });
+  for (let i = 0; i < aggBars.length; i += 1) {
+    const b = aggBars[i];
+    if (b.dateKey === clock.dateKey && b.bucket === expectedOpen) {
+      idx = i;
+      break;
+    }
   }
   if (idx < 0) return null;
+  const bar = aggBars[idx];
+  // Need a full bucket of 1m prints (allow 4+ for rare gaps; reject tiny partials).
+  if (bar.oneMinCount < Math.max(3, step - 1)) return null;
+  const prev = idx > 0 && aggBars[idx - 1].dateKey === bar.dateKey ? aggBars[idx - 1] : null;
+  return candleShapeFromOhlc(bar.open, bar.high, bar.low, bar.close, prev ? prev.close : null, {
+    barKey: bar.barKey,
+    openMs: new Date(bar.barKey).getTime(),
+    closeMs: buildIstWallClockTimestamp(bar.dateKey, bar.bucket + step),
+    intervalMinutes: step,
+    bucket: bar.bucket,
+    source: 'FUT_1M_AGG',
+  });
+}
 
-  const openMs = barOpenMs(rows[idx]);
-  if (!Number.isFinite(openMs)) return null;
-  if (openMs + intervalMs > nowMs + 1500) return null; // not closed yet
+/**
+ * From vendor 5m/15m rows: take the bar that opens at expectedOpen and is fully closed by IST clock.
+ */
+function readExactClosedConfirmFromRows(rows, {
+  intervalMinutes = 5,
+  clock,
+  minBarOpenMinutes = null,
+  matchBucket = null,
+} = {}) {
+  if (!clock || !Array.isArray(rows) || rows.length === 0) return null;
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  const currentBucket = istCashSessionBucketStart(clock.minutes, step);
+  const expectedOpen = matchBucket != null ? matchBucket : currentBucket - step;
+  if (!Number.isFinite(expectedOpen)) return null;
+  if (minBarOpenMinutes != null && expectedOpen < minBarOpenMinutes) return null;
+  if (clock.minutes < expectedOpen + step) return null;
 
+  let idx = -1;
+  for (let i = 0; i < rows.length; i += 1) {
+    const c = getIstClock(rows[i][0]);
+    if (c.dateKey !== clock.dateKey) continue;
+    if (Math.abs(c.minutes - expectedOpen) <= 1) {
+      idx = i;
+      break;
+    }
+  }
+  if (idx < 0) return null;
   const bar = rows[idx];
   const prev = idx > 0 ? rows[idx - 1] : null;
   const open = Number(bar[1]);
@@ -570,22 +604,14 @@ function readClosedConfirmCandleAt(rows, futCandle, {
   const low = Number(bar[3]);
   const close = Number(bar[4]);
   const prevClose = prev != null ? Number(prev[4]) : null;
-  if (![open, high, low, close].every(Number.isFinite)) return null;
-  if (!(close > open || close < open)) return null;
-  return {
-    open,
-    high,
-    low,
-    close,
-    prevClose: Number.isFinite(prevClose) ? prevClose : null,
-    green: close > open,
-    red: close < open,
+  return candleShapeFromOhlc(open, high, low, close, prevClose, {
     barKey: String(bar[0] || ''),
-    openMs,
-    closeMs: openMs + intervalMs,
-    intervalMinutes: Number(intervalMinutes) || 5,
-    closed: true,
-  };
+    openMs: barOpenMs(bar),
+    closeMs: buildIstWallClockTimestamp(clock.dateKey, expectedOpen + step),
+    intervalMinutes: step,
+    bucket: expectedOpen,
+    source: 'VENDOR_TF',
+  });
 }
 
 /** Today's FUT session Open / High / Low from 1m bars (+ live LTP for H/L). */
@@ -763,10 +789,9 @@ function refreshOverallBuildup({ board = engineState.liveOiBoard, futPrice = nul
 }
 
 /**
- * FUT closed confirm candle (strict wall reaction):
- * CE (support bounce) → wick tags support zone + green close held at/above wall
- * PE (resistance reject) → wick tags resistance zone + red close held at/below wall
- * Live FUT proximity is checked separately before this.
+ * FUT closed confirm — real wall reaction only:
+ * CE: wick tags support, closes GREEN at/above wall (bounce).
+ * PE: wick tags resistance, closes RED at/below wall (reject).
  */
 function futCandleConfirms(signal, candle) {
   if (!signal || !candle || !candle.closed) return false;
@@ -775,18 +800,16 @@ function futCandleConfirms(signal, candle) {
   if (!Number.isFinite(level)) return false;
 
   if (signal.optionType === 'CE') {
-    // Must actually tag the support zone (not merely "somewhere below level+prox").
     const taggedSupport = candle.low <= level + prox && candle.low >= level - prox;
-    // Close held back up near/above wall (bounce), not a breakdown close.
-    const heldAbove = candle.close >= level - prox;
+    const closedAboveWall = candle.close >= level;
     const bounce = Number.isFinite(candle.prevClose) ? candle.close >= candle.prevClose : true;
-    return Boolean(taggedSupport && heldAbove && candle.green && bounce);
+    return Boolean(taggedSupport && closedAboveWall && candle.green && bounce);
   }
 
   const taggedResist = candle.high >= level - prox && candle.high <= level + prox;
-  const heldBelow = candle.close <= level + prox;
+  const closedBelowWall = candle.close <= level;
   const reject = Number.isFinite(candle.prevClose) ? candle.close <= candle.prevClose : true;
-  return Boolean(taggedResist && heldBelow && candle.red && reject);
+  return Boolean(taggedResist && closedBelowWall && candle.red && reject);
 }
 
 /** Long option premium confirm — closed green candle only (same bucket as FUT). */
@@ -2041,31 +2064,45 @@ async function refreshOptionConfirmCandles(clock, signal, spot, { force = false 
 
 /**
  * Favorable confirm on BOTH closed bars (never forming candle):
- * - FUT closed bar at confirm interval (5m default / 15m)
- * - Entry option strike closed bar at the SAME bucket (must be green)
+ * - FUT confirm built from 1m → exact previous 5m/15m IST bucket (09:15 grid)
+ * - Option vendor TF bar for the SAME bucket must be green
  * First valid confirm bar opens at/after tradeFrom (skips 09:15 open noise).
- * Live FUT proximity is checked separately. Everything else stays on 1m.
  */
 async function hasReactionConfirmation(clock, signal, spot, { force = false } = {}) {
   const interval = getConfirmCandleInterval();
   const intervalMinutes = Number(interval) === 15 ? 15 : 5;
   const optionType = signal?.optionType === 'PE' ? 'PE' : 'CE';
-  const now = new Date();
-  const candleOpts = {
-    intervalMinutes,
-    now,
-    minBarOpenMinutes: tradeFromMin(),
-    dateKey: clock.dateKey,
-  };
+  const minBarOpenMinutes = tradeFromMin();
 
-  const futRows = await refreshFutConfirmCandles(clock, { force });
-  const futCandle = readClosedConfirmCandle(futRows, candleOpts);
+  // Prefer FUT 1m aggregation so "closed" is based on IST clock, not Dhan row quirks.
+  const rows1m = await refreshOneMinuteCandles(clock, { force });
+  const agg = aggregateConfirmBarsFrom1m(rows1m, intervalMinutes);
+  let futCandle = readExactClosedConfirmFromAgg(agg, {
+    intervalMinutes,
+    clock,
+    minBarOpenMinutes,
+  });
+
+  // Fallback to vendor 5m/15m if 1m aggregate missing (rare).
+  if (!futCandle) {
+    const futRows = await refreshFutConfirmCandles(clock, { force });
+    futCandle = readExactClosedConfirmFromRows(futRows, {
+      intervalMinutes,
+      clock,
+      minBarOpenMinutes,
+    });
+  }
+
   const futOk = futCandleConfirms(signal, futCandle);
 
   const optionPack = await refreshOptionConfirmCandles(clock, signal, spot, { force });
-  // Option must confirm on the same closed time bucket as FUT (not an older green bar).
   const optionCandle = futCandle
-    ? readClosedConfirmCandleAt(optionPack.rows, futCandle, { intervalMinutes, now })
+    ? readExactClosedConfirmFromRows(optionPack.rows, {
+      intervalMinutes,
+      clock,
+      minBarOpenMinutes,
+      matchBucket: futCandle.bucket,
+    })
     : null;
   const optionOk = optionPremiumCandleConfirms(optionCandle);
 
@@ -2082,7 +2119,7 @@ async function hasReactionConfirmation(clock, signal, spot, { force = false } = 
     optionType: optionPack.optionType || optionType,
     futCandle,
     optionCandle,
-    candleError: engineState.lastConfirmCandleError,
+    candleError: engineState.lastConfirmCandleError || engineState.lastCandleError,
   };
 }
 
@@ -2418,6 +2455,27 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       futOk: confirmDetail?.futOk,
       optionOk: confirmDetail?.optionOk,
       futBarKey,
+      futCandle: confirmDetail?.futCandle
+        ? {
+          o: confirmDetail.futCandle.open,
+          h: confirmDetail.futCandle.high,
+          l: confirmDetail.futCandle.low,
+          c: confirmDetail.futCandle.close,
+          green: confirmDetail.futCandle.green,
+          red: confirmDetail.futCandle.red,
+          bucket: confirmDetail.futCandle.bucket,
+          source: confirmDetail.futCandle.source,
+        }
+        : null,
+      optionCandle: confirmDetail?.optionCandle
+        ? {
+          o: confirmDetail.optionCandle.open,
+          h: confirmDetail.optionCandle.high,
+          l: confirmDetail.optionCandle.low,
+          c: confirmDetail.optionCandle.close,
+          green: confirmDetail.optionCandle.green,
+        }
+        : null,
       entryPremium: Number(entryPremium.toFixed(2)),
       targetPremium: Number(targetPremium.toFixed(2)),
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,

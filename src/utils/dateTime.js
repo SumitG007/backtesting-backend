@@ -90,17 +90,29 @@ function parseClockMinutes(value, fallbackMinutes) {
   return hh * 60 + mm;
 }
 
-/** Align IST minute to cash-session 15m grid anchored at 09:15 (minute 555). Same formula as live candle poll. */
-function istCashSession15mBucketStart(minutes) {
+/** Align IST minute to cash-session N-minute grid anchored at 09:15 (minute 555). */
+function istCashSessionBucketStart(minutes, intervalMinutes = 5) {
+  const step = Math.max(1, Number(intervalMinutes) || 5);
   if (!Number.isFinite(minutes)) return minutes;
   if (minutes < 555 || minutes > 930) return minutes;
-  return 555 + Math.floor((minutes - 555) / 15) * 15;
+  return 555 + Math.floor((minutes - 555) / step) * step;
+}
+
+/** True once IST clock has reached the first minute AFTER this bucket (bucket is fully closed). */
+function istBucketFullyClosed({ bucketStartMinutes, nowMinutes, intervalMinutes = 5 }) {
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  if (!Number.isFinite(bucketStartMinutes) || !Number.isFinite(nowMinutes)) return false;
+  return nowMinutes >= bucketStartMinutes + step;
+}
+
+/** Align IST minute to cash-session 15m grid anchored at 09:15 (minute 555). Same formula as live candle poll. */
+function istCashSession15mBucketStart(minutes) {
+  return istCashSessionBucketStart(minutes, 15);
 }
 
 /** True once IST clock has reached the first minute AFTER this 15m bucket (bucket is fully closed). */
 function ist15mBucketFullyClosed({ bucketStartMinutes, nowMinutes }) {
-  if (!Number.isFinite(bucketStartMinutes) || !Number.isFinite(nowMinutes)) return false;
-  return nowMinutes >= bucketStartMinutes + 15;
+  return istBucketFullyClosed({ bucketStartMinutes, nowMinutes, intervalMinutes: 15 });
 }
 
 function sleep(ms) {
@@ -143,6 +155,8 @@ module.exports = {
   parseClockMinutes,
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,
+  istCashSessionBucketStart,
+  istBucketFullyClosed,
   buildIstWallClockTimestamp,
   barCloseIsoFromCandle,
   wallClockIsoFromMinutes,
