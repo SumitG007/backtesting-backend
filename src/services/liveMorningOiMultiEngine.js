@@ -1,9 +1,7 @@
 /**
- * Strategy 7 (UI) — NIFTY OI Wall Entry paper live.
- * Multi-trade: live OI wall · Put≥Call → CE / Call→PE · enter only on pure signal at fill time.
- * Default target +8 pts / SL −10 pts on option premium · EOD square-off. Skip if OI/ΔOI flips before entry.
- * Display-only overall buildup (Long/Short buildup, covering, unwinding) on UI + notifications.
- * After max trades: keep full signals + notifications, no new entries.
+ * Strategy 7 Multi — NIFTY OI Wall Multi Entry paper live.
+ * Same OI Wall signal rules as the limited page · separate Mongo trade book.
+ * Multi trades allowed (no 1 CE + 1 PE day cap) · default +8 / -10 pts · EOD square-off.
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -29,13 +27,13 @@ const {
   getFutureLtp,
 } = require('./dhanLiveService');
 const { fetchTradingDayCandles, fetchIntradayCandlesBySecurity } = require('./dhanDataService');
-const { STRATEGY_TWELVE_MORNING_OI_LIVE_KEY } = require('../strategies/keys');
+const { STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY } = require('../strategies/keys');
 const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
 const { broadcast } = require('./realtimeSocket');
 
-const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_LIVE_KEY;
-const WALLET_KEY = 'paper_live_strategy12';
-const OPTION_SUBSCRIPTION_KEY = 'engine:strategy12:option';
+const STRATEGY_KEY = STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY;
+const WALLET_KEY = 'paper_live_strategy12_multi';
+const OPTION_SUBSCRIPTION_KEY = 'engine:strategy12_multi:option';
 /** Fast live polls — keep under Dhan option-chain cache floor (~4s). */
 const POLL_INTERVAL_MS = 2000;
 const POSITION_POLL_MS = 1000;
@@ -86,7 +84,7 @@ const engineState = {
     proximityPoints: 20,
     strikeLookaround: 10,
     strikeMode: 'ATM',
-    maxTradesPerDay: 2,
+    maxTradesPerDay: 50,
     cooldownMinutes: 2,
     candleInterval: DEFAULT_CANDLE_INTERVAL,
     confirmCandleInterval: DEFAULT_CONFIRM_CANDLE_INTERVAL,
@@ -163,7 +161,7 @@ function istClockLabel(clock) {
 function logEntry(line, payload = {}) {
   const entry = { at: new Date().toISOString(), line, ...payload };
   engineState.lastEntryDebug = entry;
-  console.log(`[MorningOiPaperLive] ${line}`, JSON.stringify(entry));
+  console.log(`[MorningOiMultiPaperLive] ${line}`, JSON.stringify(entry));
 }
 
 function getEngineSymbol() {
@@ -267,7 +265,7 @@ function normalizeSettings(settings = {}) {
 
   const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 20);
   const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
-  const maxTradesPerDay = Math.max(1, Math.min(30, Math.floor(Number(settings.maxTradesPerDay) || 2)));
+  const maxTradesPerDay = Math.max(1, Math.min(100, Math.floor(Number(settings.maxTradesPerDay) || 50)));
   const cooldownMinutes = Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 2));
   const minOiRatio = Math.max(
     1.05,
@@ -890,17 +888,13 @@ function optionPremiumCandleConfirms(candle) {
   return Boolean(candle.green && bounce);
 }
 
-function sideAlreadyTradedToday(optionType) {
-  const side = optionType === 'PE' ? 'PE' : 'CE';
-  return Boolean(engineState.sidesTradedToday?.[side]);
+/** Multi book: allow repeated CE/PE trades the same day. */
+function sideAlreadyTradedToday() {
+  return false;
 }
 
-function markSideTradedToday(optionType) {
-  const side = optionType === 'PE' ? 'PE' : 'CE';
-  engineState.sidesTradedToday = {
-    ...(engineState.sidesTradedToday || { CE: false, PE: false }),
-    [side]: true,
-  };
+function markSideTradedToday() {
+  /* no-op — multi book has no same-side day lock */
 }
 
 function confirmBarAlreadyUsed(optionType, futBarKey) {
@@ -1026,7 +1020,7 @@ function publishLiveSignal(next) {
 
   pushNotification({
     type,
-    strategy: 'OI Wall',
+    strategy: 'OI Wall Multi',
     title: String(title).slice(0, 160),
     body: String(body).slice(0, 400),
     meta: {
@@ -1669,7 +1663,7 @@ function cacheOpenTradeLite(trade) {
 
 function getLiveMarkSnapshot() {
   return {
-    strategyId: 'strategy-9',
+    strategyId: 'strategy-10',
     open: Boolean(engineState.openTradeId),
     tradeId: engineState.openTradeId,
     mark: engineState.openPositionMark,
@@ -2307,7 +2301,7 @@ async function evaluateEntry() {
     }
     await syncEngineTradeStateFromDb(clock);
 
-    // One open position at a time; max 2/day · one support + one resistance.
+    // One open position at a time; multi trades/day allowed (no same-side lock).
     if (engineState.openTradeId) return;
 
     if (clock.minutes > tradeToMin() || clock.minutes < tradeFromMin()) return;
@@ -2806,7 +2800,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · FUT+opt ${confirmInterval}m confirm`,
-      notes: `oi_wall; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
+      notes: `oi_wall_multi; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -2854,7 +2848,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
     });
     pushNotification({
       type: 'ENTRY',
-      strategy: 'OI Wall',
+      strategy: 'OI Wall Multi',
       title: `Entered ${optionType} ${strike}`,
       body: [
         `Wall ${signal.levelStrike} · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
@@ -2874,7 +2868,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
           }
           : null,
       },
-      dedupeKey: `morning-oi-entry:${tradeDoc._id.toString()}`,
+      dedupeKey: `morning-oi-multi-entry:${tradeDoc._id.toString()}`,
     });
     await subscribeOpenOption(tradeDoc);
     startPositionPoll();
@@ -3021,11 +3015,11 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
     });
     pushNotification({
       type: 'EXIT',
-      strategy: 'OI Wall',
+      strategy: 'OI Wall Multi',
       title: `Closed ${trade.optionType} ${trade.strike}`,
       body: `${reason} · P/L ₹${Number(pnl.toFixed(2))} · exit ₹${Number(safeExitPremium.toFixed(2))}`,
       meta: { tradeId: trade._id.toString(), reason, pnl },
-      dedupeKey: `morning-oi-exit:${trade._id.toString()}`,
+      dedupeKey: `morning-oi-multi-exit:${trade._id.toString()}`,
     });
     engineState.lastExitAtMs = Date.now();
     clearOpenTrade();
@@ -3130,7 +3124,7 @@ async function updateEngineSettings(partial = {}) {
   }
   try {
     const wallet = await ensureWallet();
-    wallet.strategy12EngineSettings = next;
+    wallet.strategy12MultiEngineSettings = next;
     await wallet.save();
   } catch (err) {
     engineState.lastError = `Settings persist failed: ${err.message}`;
@@ -3141,8 +3135,8 @@ async function updateEngineSettings(partial = {}) {
 async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
   try {
     const wallet = await ensureWallet();
-    const persisted = wallet.strategy12EngineSettings
-      ? wallet.strategy12EngineSettings.toObject?.() || wallet.strategy12EngineSettings
+    const persisted = wallet.strategy12MultiEngineSettings
+      ? wallet.strategy12MultiEngineSettings.toObject?.() || wallet.strategy12MultiEngineSettings
       : {};
     // Migrate old morning-only / points exits → all-day multi-trade + % exits.
     const migrated = { ...persisted };
@@ -3172,18 +3166,18 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     if (migrated.proximityPoints == null || Number(migrated.proximityPoints) === 30) {
       migrated.proximityPoints = 20;
     }
-    if (migrated.maxTradesPerDay == null || Number(migrated.maxTradesPerDay) === 8) {
-      migrated.maxTradesPerDay = 2;
+    if (migrated.maxTradesPerDay == null || Number(migrated.maxTradesPerDay) === 2 || Number(migrated.maxTradesPerDay) === 8) {
+      migrated.maxTradesPerDay = 50;
     }
     if (!migrated.confirmCandleInterval) {
       migrated.confirmCandleInterval = DEFAULT_CONFIRM_CANDLE_INTERVAL;
     }
     const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
-    wallet.strategy12EngineSettings = normalized;
+    wallet.strategy12MultiEngineSettings = normalized;
     await wallet.save();
     return startEngine({ symbol: normalized.symbol || symbol, settings: normalized });
   } catch (err) {
-    engineState.lastError = `OI Wall boot failed: ${err.message}`;
+    engineState.lastError = `OI Wall Multi boot failed: ${err.message}`;
     return { ok: false, error: err.message };
   }
 }
@@ -3213,7 +3207,7 @@ async function syncOiWallNotificationsWithDb() {
   try {
     const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select({ _id: 1 }).lean();
     const ids = rows.map((r) => String(r._id));
-    pruneTradeNotifications({ strategy: 'OI Wall', validTradeIds: ids });
+    pruneTradeNotifications({ strategy: 'OI Wall Multi', validTradeIds: ids });
   } catch (err) {
     console.warn('[OI Wall] notification sync:', err.message);
   }
@@ -3274,7 +3268,7 @@ function getEngineSnapshot() {
     lastError: engineState.lastError,
     lastEntryDebug: engineState.lastEntryDebug,
     openPositionMark: engineState.openPositionMark,
-    scenarioLabel: 'OI Wall Entry',
+    scenarioLabel: 'OI Wall Multi',
   };
 }
 

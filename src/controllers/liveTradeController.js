@@ -3,15 +3,18 @@ const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
+const strategyTwelveMultiEngine = require('../services/liveMorningOiMultiEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
+  STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
+  STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -238,13 +241,32 @@ function morningOiPaperLiveCtx(strategyId) {
   };
 }
 
+function morningOiMultiPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategyTwelveMultiEngine.STRATEGY_KEY,
+    startEngine: strategyTwelveMultiEngine.startEngine,
+    stopEngine: strategyTwelveMultiEngine.stopEngine,
+    updateEngineSettings: strategyTwelveMultiEngine.updateEngineSettings,
+    getEngineSnapshot: strategyTwelveMultiEngine.getEngineSnapshot,
+    ensureWallet: strategyTwelveMultiEngine.ensureWallet,
+    recalcWallet: strategyTwelveMultiEngine.recalcWalletFromTrades,
+    ensureRunning: strategyTwelveMultiEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyTwelveMultiEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyTwelveMultiEngine.closeOpenPosition,
+    refreshOpenMark: strategyTwelveMultiEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategyTwelveMultiEngine.clearDailySkipState,
+  };
+}
+
 function isMorningOiLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-9';
+  return strategyId === 'strategy-9' || strategyId === 'strategy-10';
 }
 
 const LIVE_STRATEGIES = {
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-9': morningOiPaperLiveCtx('strategy-9'),
+  'strategy-10': morningOiMultiPaperLiveCtx('strategy-10'),
 };
 
 function getLiveContext(req) {
@@ -324,9 +346,11 @@ async function getStatus(req, res) {
           ? 'Short straddle'
           : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
-              : isMorningOiLiveStrategyId(ctx.strategyId)
-                ? 'OI Wall Entry'
-                : 'Paper-live',
+              : ctx.strategyId === 'strategy-10'
+                ? 'OI Wall Multi'
+                : isMorningOiLiveStrategyId(ctx.strategyId)
+                  ? 'OI Wall Entry'
+                  : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -427,7 +451,9 @@ function coerceLiveEngineSetting(key, value) {
     return Math.min(6, Math.floor(n));
   }
   if (key === 'maxTradesPerDay') {
-    return null;
+    if (value === '' || value === null || value === undefined) return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.min(100, Math.floor(n)) : null;
   }
   if (key === 'maxLossesPerSidePerDay') {
     return null;

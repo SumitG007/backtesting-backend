@@ -8,6 +8,7 @@ const STRATEGY_FOUR_SHORT_STRADDLE_LIVE_KEY = 'strategy4_short_straddle_next_day
 const STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY = 'strategy6_short_straddle_next_day_live';
 const STRATEGY_SEVEN_PUT_BUY_LIVE_KEY = 'strategy7_simple_920_market_live';
 const STRATEGY_TWELVE_MORNING_OI_LIVE_KEY = 'strategy12_morning_oi_live';
+const STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY = 'strategy12_morning_oi_multi_live';
 const MANUAL_CONSOLE_LIVE_KEY = 'manual_console_live';
 
 module.exports = {
@@ -17,5 +18,6 @@ module.exports = {
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
+  STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
   MANUAL_CONSOLE_LIVE_KEY,
 };

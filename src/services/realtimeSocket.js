@@ -77,9 +77,11 @@ function initRealtime(httpServer) {
     // Paper-live MTM / live mark snapshot (OI Wall + future strategies).
     socket.on('paper-live:subscribe', (msg = {}) => {
       const strategyId = String(msg?.strategyId || '').toLowerCase();
-      if (strategyId !== 'strategy-9') return;
+      if (strategyId !== 'strategy-9' && strategyId !== 'strategy-10') return;
       try {
-        const engine = require('./liveMorningOiEngine');
+        const engine = strategyId === 'strategy-10'
+          ? require('./liveMorningOiMultiEngine')
+          : require('./liveMorningOiEngine');
         const snap = typeof engine.getLiveMarkSnapshot === 'function'
           ? engine.getLiveMarkSnapshot()
           : null;
