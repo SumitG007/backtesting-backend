@@ -62,6 +62,10 @@ const DEFAULT_STOP_PCT = 10;
 const OI_FLIP_COOLDOWN_MS = 60_000;
 /** Board shows enough strikes around FUT to catch the real high-OI wall (e.g. 24000). */
 const OI_BOARD_LOOKAROUND = 12;
+/** Clear Put/Call dominance required on the wall (e.g. Put ≥ 1.2× Call). */
+const DEFAULT_MIN_OI_RATIO = 1.2;
+/** Enter only within this many minutes after the confirm candle closes. */
+const DEFAULT_CONFIRM_ENTRY_WINDOW_MIN = 2;
 
 const engineState = {
   running: false,
@@ -86,6 +90,8 @@ const engineState = {
     cooldownMinutes: 2,
     candleInterval: DEFAULT_CANDLE_INTERVAL,
     confirmCandleInterval: DEFAULT_CONFIRM_CANDLE_INTERVAL,
+    minOiRatio: DEFAULT_MIN_OI_RATIO,
+    confirmEntryWindowMinutes: DEFAULT_CONFIRM_ENTRY_WINDOW_MIN,
     perTradeCost: 100,
   },
   lotSize: 65,
@@ -263,6 +269,14 @@ function normalizeSettings(settings = {}) {
   const strikeLookaround = Math.max(1, Math.floor(Number(settings.strikeLookaround) || 10));
   const maxTradesPerDay = Math.max(1, Math.min(30, Math.floor(Number(settings.maxTradesPerDay) || 2)));
   const cooldownMinutes = Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 2));
+  const minOiRatio = Math.max(
+    1.05,
+    Math.min(3, Number(settings.minOiRatio) || DEFAULT_MIN_OI_RATIO),
+  );
+  const confirmEntryWindowMinutes = Math.max(
+    1,
+    Math.min(5, Math.floor(Number(settings.confirmEntryWindowMinutes) || DEFAULT_CONFIRM_ENTRY_WINDOW_MIN)),
+  );
   const perTradeCost =
     Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
       ? Number(settings.perTradeCost)
@@ -292,6 +306,8 @@ function normalizeSettings(settings = {}) {
     confirmCandleInterval: String(settings.confirmCandleInterval || DEFAULT_CONFIRM_CANDLE_INTERVAL) === '15'
       ? '15'
       : '5',
+    minOiRatio,
+    confirmEntryWindowMinutes,
     perTradeCost,
   };
 }
@@ -328,10 +344,51 @@ function premiumFromChain(chain, optionType) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function getMinOiRatio() {
+  return Math.max(1.05, Number(engineState.settings.minOiRatio) || DEFAULT_MIN_OI_RATIO);
+}
+
+function getConfirmEntryWindowMinutes() {
+  return Math.max(
+    1,
+    Math.floor(Number(engineState.settings.confirmEntryWindowMinutes) || DEFAULT_CONFIRM_ENTRY_WINDOW_MIN),
+  );
+}
+
+function isOiDominanceClear(ratio) {
+  return Number.isFinite(Number(ratio)) && Number(ratio) >= getMinOiRatio();
+}
+
+/**
+ * Confirm candle just closed → entry only for the next N IST minutes.
+ * Example: 10:25–10:30 bar closes at 10:30 → allow 10:30 and 10:31 if window=2.
+ */
+function isConfirmFreshForEntry(futCandle, clock) {
+  if (!futCandle || !clock || !Number.isFinite(Number(futCandle.bucket))) return false;
+  const step = Math.max(
+    1,
+    Number(futCandle.intervalMinutes) || (getConfirmCandleInterval() === '15' ? 15 : 5),
+  );
+  const closeMin = Number(futCandle.bucket) + step;
+  const windowMin = getConfirmEntryWindowMinutes();
+  return clock.minutes >= closeMin && clock.minutes < closeMin + windowMin;
+}
+
+function isStrongBuildupFighting(optionType, marketStructure = engineState.marketStructure) {
+  if (!marketStructure || !optionType) return false;
+  const key = String(marketStructure.key || '');
+  if (key !== 'LONG_BUILDUP' && key !== 'SHORT_BUILDUP') return false;
+  const lean = marketStructure.alignsWith === 'PE' || marketStructure.alignsWith === 'CE'
+    ? marketStructure.alignsWith
+    : null;
+  if (!lean) return false;
+  return lean !== optionType;
+}
+
 /**
  * Level = highest total OI near spot (the real wall, e.g. 24000).
- * Bias on that strike only: Put OI ≥ Call OI → Buy CE, else Buy PE.
- * No 1.5× / ΔOI filters for picking the level — those caused far junk strikes (e.g. 23650).
+ * Bias on that strike: Put OI ≥ Call OI → Buy CE, else Buy PE.
+ * Clear dominance (ratio ≥ minOiRatio, default 1.2) is enforced at signal/entry time.
  */
 function pickDominantStrike(snapshot) {
   const strikes = Array.isArray(snapshot?.strikes) ? snapshot.strikes : [];
@@ -446,6 +503,15 @@ async function revalidateWallEntry(clock, intended) {
   }
   if (intendedType === 'PE' && Number(live.callOi) < Number(live.putOi)) {
     return { ok: false, reason: 'WALL_SIDE_BROKEN', live };
+  }
+  if (!isOiDominanceClear(live.ratio)) {
+    return {
+      ok: false,
+      reason: 'WEAK_OI_RATIO',
+      ratio: live.ratio,
+      need: getMinOiRatio(),
+      live,
+    };
   }
   if (isDeltaOiFighting(live.optionType, live.putChgOi, live.callChgOi)) {
     return {
@@ -1098,16 +1164,22 @@ async function refreshLiveSignalStatus(clock) {
   let candleOk = false;
   let futCandleOk = false;
   let optionCandleOk = false;
+  let confirmFresh = false;
   const confirmInterval = getConfirmCandleInterval();
+  const minOiRatio = getMinOiRatio();
+  const ratioOk = isOiDominanceClear(signal.ratio);
+  const buildupFighting = isStrongBuildupFighting(optionType);
   try {
     const confirm = await hasReactionConfirmation(clock, signal, spot);
     candle = confirm.futCandle;
     optionCandle = confirm.optionCandle;
     futCandleOk = Boolean(confirm.futOk);
     optionCandleOk = Boolean(confirm.optionOk);
+    confirmFresh = Boolean(confirm.confirmFresh);
     candleOk = Boolean(confirm.ok);
   } catch {
     candleOk = false;
+    confirmFresh = false;
   }
 
   const entryBlockDetail = entryBlock === 'MAX_TRADES'
@@ -1127,6 +1199,8 @@ async function refreshLiveSignalStatus(clock) {
     putChgOi: signal.putChgOi,
     callChgOi: signal.callChgOi,
     ratio: signal.ratio,
+    ratioOk,
+    minOiRatio,
     priceSource: 'FUT',
     futExpiry: engineState.futExpiry,
     spot: Number.isFinite(spot) ? spot : null,
@@ -1135,9 +1209,12 @@ async function refreshLiveSignalStatus(clock) {
     proximityPoints: prox,
     proximityOk,
     deltaOk: !deltaFighting,
+    buildupOk: !buildupFighting,
     candleOk,
     futCandleOk,
     optionCandleOk,
+    confirmFresh,
+    confirmEntryWindowMinutes: getConfirmEntryWindowMinutes(),
     confirmCandleInterval: confirmInterval,
     candle,
     optionCandle,
@@ -1164,6 +1241,21 @@ async function refreshLiveSignalStatus(clock) {
     return engineState.liveSignal;
   }
 
+  if (!ratioOk) {
+    publishLiveSignal({
+      ...base,
+      status: 'CAUTION',
+      label: `Weak wall · ${optionType} ${level}`,
+      detail: [
+        `Need clear OI dominance ≥ ${minOiRatio.toFixed(2)}× (now ${Number(signal.ratio) || '—'}×)`,
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
+      reason: 'WEAK_OI_RATIO',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
   if (deltaFighting) {
     publishLiveSignal({
       ...base,
@@ -1176,6 +1268,22 @@ async function refreshLiveSignalStatus(clock) {
         entryBlockDetail,
       ].filter(Boolean).join(' · '),
       reason: 'DELTA_OI_FIGHTING',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (buildupFighting) {
+    const ms = engineState.marketStructure;
+    publishLiveSignal({
+      ...base,
+      status: 'CAUTION',
+      label: `Watch ${optionType} · wall ${level} · buildup fights`,
+      detail: [
+        `Overall ${ms?.label || 'buildup'} leans ${ms?.alignsWith || '?'} — skips ${optionType}`,
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
+      reason: 'BUILDUP_FIGHTING',
       buyLive: false,
     });
     return engineState.liveSignal;
@@ -1198,7 +1306,7 @@ async function refreshLiveSignalStatus(clock) {
     return engineState.liveSignal;
   }
 
-  if (!candleOk) {
+  if (!futCandleOk || !optionCandleOk) {
     const waitingParts = [];
     if (!futCandleOk) waitingParts.push(`FUT ${confirmInterval}m`);
     if (!optionCandleOk) waitingParts.push(`option ${confirmInterval}m`);
@@ -1218,13 +1326,43 @@ async function refreshLiveSignalStatus(clock) {
     return engineState.liveSignal;
   }
 
+  if (!confirmFresh) {
+    publishLiveSignal({
+      ...base,
+      status: 'NEAR',
+      label: `Confirm stale · ${optionType} ${level}`,
+      detail: [
+        `Closed ${confirmInterval}m OK but entry only within ${getConfirmEntryWindowMinutes()}m of candle close — wait next bar`,
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
+      reason: 'CONFIRM_WINDOW_EXPIRED',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
+  if (!candleOk) {
+    publishLiveSignal({
+      ...base,
+      status: 'NEAR',
+      label: `Near wall · ${optionType} ${level}`,
+      detail: [
+        'Confirm not ready yet (bucket / same-bar / option match)',
+        entryBlockDetail,
+      ].filter(Boolean).join(' · '),
+      reason: 'WAIT_CANDLE',
+      buyLive: false,
+    });
+    return engineState.liveSignal;
+  }
+
   if (signalOnly) {
     publishLiveSignal({
       ...base,
       status: 'READY',
       label: `SIGNAL ${optionType} · wall ${level}`,
       detail: [
-        `Wall + FUT proximity + ΔOI + FUT & option ${confirmInterval}m confirm aligned`,
+        `Wall ≥${minOiRatio}× · FUT proximity · dual ${confirmInterval}m confirm · within ${getConfirmEntryWindowMinutes()}m window`,
         entryBlockDetail || 'No trade · signal only',
       ].filter(Boolean).join(' · '),
       reason: entryBlock || 'SIGNAL_ONLY',
@@ -1238,7 +1376,7 @@ async function refreshLiveSignalStatus(clock) {
     ...base,
     status: 'READY',
     label: `LIVE BUY ${optionType} · wall ${level}`,
-    detail: `Wall + FUT proximity + ΔOI + FUT & option ${confirmInterval}m confirm aligned — entry eligible`,
+    detail: `Wall ≥${minOiRatio}× · FUT proximity · dual ${confirmInterval}m confirm · within ${getConfirmEntryWindowMinutes()}m of close — entry eligible`,
     reason: 'READY',
     buyLive: true,
     signalOnly: false,
@@ -2125,14 +2263,24 @@ async function hasReactionConfirmation(clock, signal, spot, { force = false } = 
   const optionOk = optionPremiumCandleConfirms(optionCandle);
 
   const usedSameBar = confirmBarAlreadyUsed(optionType, futCandle?.barKey);
-  const ok = Boolean(futOk && optionOk && !usedSameBar && optionPack.strike && futCandle);
+  const confirmFresh = Boolean(futCandle && isConfirmFreshForEntry(futCandle, clock));
+  const ok = Boolean(
+    futOk
+    && optionOk
+    && !usedSameBar
+    && optionPack.strike
+    && futCandle
+    && confirmFresh,
+  );
 
   return {
     ok,
     futOk: Boolean(futOk),
     optionOk: Boolean(optionOk),
+    confirmFresh,
     usedSameBar,
     interval,
+    confirmEntryWindowMinutes: getConfirmEntryWindowMinutes(),
     strike: optionPack.strike,
     optionType: optionPack.optionType || optionType,
     futCandle,
@@ -2190,6 +2338,17 @@ async function evaluateEntry() {
     if (!signal || signal.skip) return;
 
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    if (!isOiDominanceClear(signal.ratio)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'WEAK_OI_RATIO',
+        ratio: signal.ratio,
+        need: getMinOiRatio(),
+        level: signal.levelStrike,
+        optionType,
+      });
+      return;
+    }
     if (sideAlreadyTradedToday(optionType)) {
       logEntry('ENTRY_SKIP', {
         ist: istClockLabel(clock),
@@ -2217,6 +2376,17 @@ async function evaluateEntry() {
         level: signal.levelStrike,
         putChg: signal.putChgOi,
         callChg: signal.callChgOi,
+      });
+      return;
+    }
+    refreshOverallBuildup({ board: engineState.liveOiBoard });
+    if (isStrongBuildupFighting(optionType)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'BUILDUP_FIGHTING',
+        optionType,
+        buildup: engineState.marketStructure?.key,
+        lean: engineState.marketStructure?.alignsWith,
       });
       return;
     }
@@ -2319,6 +2489,16 @@ async function evaluateEntry() {
     }
 
     const fresh = check.signal;
+    if (!isOiDominanceClear(fresh.ratio)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'WEAK_OI_RATIO',
+        ratio: fresh.ratio,
+        need: getMinOiRatio(),
+        afterRevalidate: true,
+      });
+      return;
+    }
 
     // Fresh FUT after OI revalidate — never reuse pre-confirm spot for proximity / strike.
     let freshSpot = spot;
@@ -2490,6 +2670,27 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       return;
     }
     optionType = fillType;
+    if (!isOiDominanceClear(signal.ratio)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'WEAK_OI_RATIO',
+        ratio: signal.ratio,
+        need: getMinOiRatio(),
+        atPlace: true,
+      });
+      return;
+    }
+    refreshOverallBuildup({ board: engineState.liveOiBoard, futPrice: spot });
+    if (isStrongBuildupFighting(optionType)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'BUILDUP_FIGHTING',
+        optionType,
+        buildup: engineState.marketStructure?.key,
+        atPlace: true,
+      });
+      return;
+    }
     if (sideAlreadyTradedToday(optionType)) {
       logEntry('ENTRY_SKIP', {
         ist: istClockLabel(clock),
