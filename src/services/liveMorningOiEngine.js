@@ -1,7 +1,7 @@
 /**
  * Strategy 7 (UI) — NIFTY OI Wall Entry paper live.
  * Multi-trade: live OI wall · Put≥Call → CE / Call→PE · enter only on pure signal at fill time.
- * Default target +15% / SL −10% on option premium · EOD square-off. Skip if OI/ΔOI flips before entry.
+ * Default target +8 pts / SL −10 pts on option premium · EOD square-off. Skip if OI/ΔOI flips before entry.
  * Display-only overall buildup (Long/Short buildup, covering, unwinding) on UI + notifications.
  * After max trades: keep full signals + notifications, no new entries.
  */
@@ -56,8 +56,8 @@ const CONFIRM_CANDLE_REFRESH_MIN_GAP_MS = 15000;
 const DEFAULT_TRADE_FROM = 560; // 09:20
 const DEFAULT_TRADE_TO = 910; // 15:10
 const DEFAULT_EOD = 920; // 15:20
-const DEFAULT_TARGET_PCT = 15;
-const DEFAULT_STOP_PCT = 10;
+const DEFAULT_TARGET_POINTS = 8;
+const DEFAULT_STOP_POINTS = 10;
 /** After OI side flip, wait before arming a new entry setup. */
 const OI_FLIP_COOLDOWN_MS = 60_000;
 /** Board shows enough strikes around FUT to catch the real high-OI wall (e.g. 24000). */
@@ -80,8 +80,8 @@ const engineState = {
     tradeFromTime: '09:20',
     tradeToTime: '15:10',
     eodExitTime: '15:20',
-    targetPct: DEFAULT_TARGET_PCT,
-    stopLossPct: DEFAULT_STOP_PCT,
+    targetPoints: DEFAULT_TARGET_POINTS,
+    stopLossPoints: DEFAULT_STOP_POINTS,
     hasStopLoss: true,
     proximityPoints: 20,
     strikeLookaround: 10,
@@ -237,32 +237,32 @@ function masterPrice() {
 
 function normalizeSettings(settings = {}) {
   const lotCount = Math.max(1, Number(settings.lotCount) || 5);
-  const targetRaw = Number(settings.targetPct ?? settings.targetPoints);
-  const targetPct =
-    Number.isFinite(targetRaw) && targetRaw > 0 ? Math.min(500, targetRaw) : DEFAULT_TARGET_PCT;
+  const targetRaw = Number(settings.targetPoints ?? settings.targetPct);
+  const targetPoints =
+    Number.isFinite(targetRaw) && targetRaw > 0 ? Math.min(500, targetRaw) : DEFAULT_TARGET_POINTS;
 
   let hasStopLoss = true;
-  let stopLossPct = DEFAULT_STOP_PCT;
-  if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPct')) {
-    const slRaw = settings.stopLossPct;
+  let stopLossPoints = DEFAULT_STOP_POINTS;
+  if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')) {
+    const slRaw = settings.stopLossPoints;
     if (slRaw === '' || slRaw === null || slRaw === undefined) {
       hasStopLoss = false;
-      stopLossPct = null;
+      stopLossPoints = null;
     } else {
       const n = Number(slRaw);
       if (!Number.isFinite(n) || n <= 0) {
         hasStopLoss = false;
-        stopLossPct = null;
+        stopLossPoints = null;
       } else {
         hasStopLoss = true;
-        stopLossPct = Math.min(90, n);
+        stopLossPoints = Math.min(500, n);
       }
     }
-  } else if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')) {
-    // Migrate old points setting → % default if they only had points stored.
-    const n = Number(settings.stopLossPoints);
+  } else if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPct')) {
+    // Keep legacy saved field readable, but treat the number as points now.
+    const n = Number(settings.stopLossPct);
     hasStopLoss = Number.isFinite(n) && n > 0;
-    stopLossPct = hasStopLoss ? DEFAULT_STOP_PCT : null;
+    stopLossPoints = hasStopLoss ? Math.min(500, n) : null;
   }
 
   const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 20);
@@ -294,8 +294,8 @@ function normalizeSettings(settings = {}) {
       return '15:10';
     })(),
     eodExitTime: String(settings.eodExitTime || '15:20'),
-    targetPct,
-    stopLossPct,
+    targetPoints,
+    stopLossPoints,
     hasStopLoss,
     proximityPoints,
     strikeLookaround,
@@ -2772,12 +2772,12 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
     const qty = lotSize * lots;
     const invested = entryPremium * qty;
     const charges = engineState.settings.perTradeCost;
-    const tgPct = engineState.settings.targetPct;
+    const targetPoints = engineState.settings.targetPoints;
     const hasSl = engineState.settings.hasStopLoss;
-    const slPct = engineState.settings.stopLossPct;
-    const targetPremium = entryPremium * (1 + tgPct / 100);
+    const stopLossPoints = engineState.settings.stopLossPoints;
+    const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = hasSl
-      ? Math.max(0.05, entryPremium * (1 - slPct / 100))
+      ? Math.max(0.05, entryPremium - stopLossPoints)
       : null;
 
     const confirmInterval = confirmDetail?.interval || getConfirmCandleInterval();
@@ -2802,8 +2802,8 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       charges: Number(charges.toFixed(2)),
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
       targetPremium: Number(targetPremium.toFixed(2)),
-      stopLossMode: hasSl ? 'PCT' : null,
-      targetMode: 'PCT',
+      stopLossMode: hasSl ? 'POINTS' : null,
+      targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Buy ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide} · FUT+opt ${confirmInterval}m confirm`,
       notes: `oi_wall; priceSource=FUT; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${tgPct}%; sl=${hasSl ? `${slPct}%` : 'off'}`,
@@ -3156,11 +3156,17 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     } else if (migrated.tradeToTime === '10:30' || migrated.tradeToTime === '11:30') {
       migrated.tradeToTime = '15:10';
     }
-    if (migrated.targetPct == null) {
-      migrated.targetPct = DEFAULT_TARGET_PCT;
+    if (migrated.targetPoints == null) {
+      migrated.targetPoints =
+        migrated.targetPct == null || Number(migrated.targetPct) === 15
+          ? DEFAULT_TARGET_POINTS
+          : migrated.targetPct;
     }
-    if (migrated.stopLossPct == null || migrated.stopLossPct === '') {
-      migrated.stopLossPct = DEFAULT_STOP_PCT;
+    if (migrated.stopLossPoints == null || migrated.stopLossPoints === '') {
+      migrated.stopLossPoints =
+        migrated.stopLossPct == null || migrated.stopLossPct === ''
+          ? DEFAULT_STOP_POINTS
+          : migrated.stopLossPct;
     }
     // Migrate old defaults → proximity 20 · max 2 trades/day.
     if (migrated.proximityPoints == null || Number(migrated.proximityPoints) === 30) {
@@ -3172,8 +3178,6 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     if (!migrated.confirmCandleInterval) {
       migrated.confirmCandleInterval = DEFAULT_CONFIRM_CANDLE_INTERVAL;
     }
-    delete migrated.targetPoints;
-    delete migrated.stopLossPoints;
     const normalized = normalizeSettings({ ...migrated, symbol: migrated.symbol || symbol });
     wallet.strategy12EngineSettings = normalized;
     await wallet.save();

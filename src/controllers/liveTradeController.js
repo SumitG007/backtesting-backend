@@ -391,6 +391,7 @@ function stopLive(req, res) {
 }
 
 const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct', 'targetVolCrushPct', 'stopVolExpandPct']);
+const OPTIONAL_POINT_KEYS = new Set(['targetPoints', 'stopLossPoints', 'targetProfitPoints']);
 const SIGNAL_LIST_KEYS = new Set(['enabledPeSignals', 'enabledCeSignals']);
 
 function coerceLiveEngineSetting(key, value) {
@@ -412,13 +413,13 @@ function coerceLiveEngineSetting(key, value) {
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : null;
   }
-  if (key === 'skipExpiryDay') {
-    return value !== false && value !== 'false' && value !== 0 && value !== '0';
-  }
-  if (key === 'targetProfitPoints') {
+  if (OPTIONAL_POINT_KEYS.has(key)) {
     if (value === '' || value === null || value === undefined) return null;
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  if (key === 'skipExpiryDay') {
+    return value !== false && value !== 'false' && value !== 0 && value !== '0';
   }
   if (key === 'minDirectionScore') {
     const n = Number(value);
