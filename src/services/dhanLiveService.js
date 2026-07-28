@@ -60,9 +60,9 @@ async function getCurrentLotSize(underlying) {
     const candidates = rows.filter((r) => {
       const instr = (pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE', 'SEM_INSTRUMENT_NAME']) || '').toUpperCase();
       const ulName = (pickField(r, ['UNDERLYING_SYMBOL', 'SEM_TRADING_SYMBOL', 'SYMBOL_NAME']) || '').toUpperCase();
-      if (!(instr === 'FUTIDX' || instr === 'FUTSTK' || instr === 'OPTIDX')) return false;
+      if (!(instr === 'FUTIDX' || instr === 'FUTSTK' || instr === 'OPTIDX' || instr === 'OPTSTK')) return false;
       // Match strictly by underlying symbol so NIFTY does not accidentally pick up MIDCPNIFTY etc.
-      if (instr === 'FUTIDX' || instr === 'FUTSTK') return ulName === upper;
+      if (instr === 'FUTIDX' || instr === 'FUTSTK' || instr === 'OPTSTK') return ulName === upper;
       // For OPTIDX the trading symbol starts with the underlying followed by a separator.
       return ulName === upper || ulName.startsWith(`${upper}-`) || ulName.startsWith(`${upper} `);
     });
@@ -86,6 +86,7 @@ async function getCurrentLotSize(underlying) {
   // Sensible 2025+ SEBI defaults if master file is unavailable.
   if (upper === 'NIFTY') return 65;
   if (upper === 'BANKNIFTY') return 30;
+  if (upper === 'SENSEX') return 20;
   return 1;
 }
 
@@ -475,7 +476,21 @@ async function getOptionChainOiSnapshot({
   if (!strikesMap || Object.keys(strikesMap).length === 0) {
     throw new Error('Dhan option chain has no strike rows (oc empty)');
   }
-  const strikeStep = getStrikeStep(symbol);
+  const strikeStepDefault = getStrikeStep(symbol);
+  // Prefer live chain spacing when available (stocks/indexes differ).
+  const rawStrikeKeys = Object.keys(strikesMap)
+    .map((k) => Number(k))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => a - b);
+  let strikeStep = strikeStepDefault;
+  if (rawStrikeKeys.length >= 2) {
+    let minGap = Infinity;
+    for (let i = 1; i < rawStrikeKeys.length; i += 1) {
+      const gap = rawStrikeKeys[i] - rawStrikeKeys[i - 1];
+      if (gap > 0 && gap < minGap) minGap = gap;
+    }
+    if (Number.isFinite(minGap) && minGap > 0) strikeStep = minGap;
+  }
   const atm = Number.isFinite(spot) && spot > 0
     ? Math.round(spot / strikeStep) * strikeStep
     : null;
@@ -749,7 +764,18 @@ function normalizeExchangeSegment(row) {
 
 function futureInstrumentTypeForUnderlying(underlying) {
   const upper = String(underlying || '').toUpperCase();
-  return upper === 'NIFTY' || upper === 'BANKNIFTY' ? 'FUTIDX' : 'FUTSTK';
+  if (upper === 'NIFTY' || upper === 'BANKNIFTY' || upper === 'SENSEX' || upper === 'FINNIFTY' || upper === 'MIDCPNIFTY') {
+    return 'FUTIDX';
+  }
+  return 'FUTSTK';
+}
+
+/** SENSEX futures/options live on BSE; other indexes on NSE. */
+function futureExchangeAllowed(underlying, exch) {
+  const upper = String(underlying || '').toUpperCase();
+  const seg = String(exch || '').toUpperCase();
+  if (upper === 'SENSEX') return seg === 'BSE_FNO';
+  return seg === 'NSE_FNO';
 }
 
 function pickSecurityIdFromRow(row) {
@@ -779,7 +805,7 @@ async function listFutureExpiries(underlying, { includePastDays = 0 } = {}) {
   for (const r of rows) {
     if (!futureRowMatchesUnderlying(r, upper, futInstrument)) continue;
     const exch = normalizeExchangeSegment(r);
-    if (exch !== 'NSE_FNO') continue;
+    if (!futureExchangeAllowed(upper, exch)) continue;
     const exp = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
     if (!exp || exp < minDate) continue;
     const securityId = pickSecurityIdFromRow(r);
@@ -804,6 +830,8 @@ async function resolveFutureInstrument({ symbol, expiry }) {
   const rows = await loadInstrumentMaster();
   const match = rows.find((r) => {
     if (!futureRowMatchesUnderlying(r, upper, futInstrument)) return false;
+    const exch = normalizeExchangeSegment(r);
+    if (!futureExchangeAllowed(upper, exch)) return false;
     const rowExpiry = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
     return rowExpiry === normalizedExpiry;
   });
@@ -814,10 +842,12 @@ async function resolveFutureInstrument({ symbol, expiry }) {
   if (!securityId) {
     throw new Error(`Invalid security id for ${upper} future ${normalizedExpiry}`);
   }
+  const exchangeSegment = normalizeExchangeSegment(match)
+    || (upper === 'SENSEX' ? 'BSE_FNO' : 'NSE_FNO');
   return {
     symbol: upper,
     securityId,
-    exchangeSegment: normalizeExchangeSegment(match) || 'NSE_FNO',
+    exchangeSegment,
     instrument: futInstrument,
     expiry: normalizedExpiry,
     tradingSymbol: pickField(match, ['SYMBOL_NAME', 'DISPLAY_NAME', 'SEM_TRADING_SYMBOL']) || '',
@@ -1039,7 +1069,7 @@ async function resolveOptionInstrument({ symbol, strike, expiry, optionType }) {
     const rowExpiry = String(pickField(r, ['SM_EXPIRY_DATE', 'SEM_EXPIRY_DATE', 'EXPIRY_DATE']) || '').slice(0, 10);
     const rowStrike = Number(pickField(r, ['STRIKE_PRICE', 'STRIKE']));
     const rowType = String(pickField(r, ['OPTION_TYPE', 'OPT_TYPE']) || '').toUpperCase();
-    return instrument === 'OPTIDX'
+    return (instrument === 'OPTIDX' || instrument === 'OPTSTK')
       && underlying === upperSymbol
       && rowExpiry === normalizedExpiry
       && Math.abs(rowStrike - targetStrike) < 0.5

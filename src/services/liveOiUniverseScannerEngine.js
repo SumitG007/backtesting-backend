@@ -1,0 +1,1431 @@
+/**
+ * Strategy 13 — OI Universe Scanner paper live.
+ * Monitors NIFTY + BANKNIFTY + SENSEX + top liquid OPTSTK names on a priority OI schedule.
+ * Stronger entry filters than OI Wall Entry; one open position across the whole universe.
+ */
+
+const LivePaperTrade = require('../models/livePaperTrade');
+const LiveWallet = require('../models/liveWallet');
+const { getIstClock, parseClockMinutes } = require('../utils/dateTime');
+const {
+  ensureNseHolidaysLoaded,
+  isNseCashTradingDay,
+} = require('./nseHolidayService');
+const { PRESET_SYMBOLS } = require('../config/constants');
+const { getStrikeStep } = require('../utils/market');
+const { pickStrike } = require('../strategies/shared/intradayOptions');
+const {
+  getAtmPremiums,
+  getOptionChainOiSnapshot,
+  getCurrentLotSize,
+  getNearestWeeklyExpiry,
+  resolveOptionInstrument,
+  subscribeLiveInstrument,
+  unsubscribeLiveSymbol,
+  listFutureExpiries,
+  resolveFutureInstrument,
+  getFutureLtp,
+} = require('./dhanLiveService');
+const { STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY } = require('../strategies/keys');
+const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
+const { broadcast } = require('./realtimeSocket');
+
+const STRATEGY_KEY = STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY;
+const WALLET_KEY = 'paper_live_strategy13';
+const OPTION_SUBSCRIPTION_KEY = 'engine:strategy13:option';
+
+const DEFAULT_UNIVERSE = [
+  // Weekly indexes first
+  'NIFTY',
+  'BANKNIFTY',
+  'SENSEX',
+  // Top liquid OPTSTK — daily intraday OI (monthly expiry, high premium turnover)
+  'RELIANCE',
+  'HDFCBANK',
+  'ICICIBANK',
+  'SBIN',
+  'INFY',
+  'TCS',
+  'BHARTIARTL',
+  'AXISBANK',
+  'BAJFINANCE',
+  'KOTAKBANK',
+  'ITC',
+  'LT',
+  'NTPC',
+  'M&M',
+  'TATASTEEL',
+  'TMPV',
+  'HCLTECH',
+  'SUNPHARMA',
+  'MARUTI',
+  'ADANIENT',
+  'BEL',
+  'TITAN',
+  'POWERGRID',
+  'ONGC',
+  'JSWSTEEL',
+  'HINDALCO',
+  'WIPRO',
+  'TECHM',
+  'DLF',
+  'HAL',
+  'COALINDIA',
+  'HINDUNILVR',
+  'ASIANPAINT',
+];
+
+const POLL_INTERVAL_MS = 2500;
+const POSITION_POLL_MS = 1000;
+/** Near Dhan's ~4s option-chain floor — shared across paper engines. */
+const SYMBOL_SCAN_GAP_MS = 4200;
+const FUT_PRICE_REFRESH_MIN_GAP_MS = 1200;
+const FUT_BATCH_SIZE = 3;
+/** Indexes stay fresher — their OI age is weighted higher when picking next scan. */
+const INDEX_OI_AGE_WEIGHT = 2.8;
+const STATUS_MARK_REFRESH_MIN_GAP_MS = 750;
+const MARK_DB_PERSIST_MIN_GAP_MS = 2000;
+const LIVE_MARK_EMIT_MIN_GAP_MS = 100;
+const TICK_FRESH_MAX_AGE_MS = 20000;
+const MIN_HOLD_MS = 2000;
+const DEFAULT_TRADE_FROM = 560;
+const DEFAULT_TRADE_TO = 910;
+const DEFAULT_EOD = 920;
+const DEFAULT_TARGET_POINTS = 8;
+const DEFAULT_STOP_POINTS = 10;
+const DEFAULT_MIN_OI_RATIO = 1.5;
+const DEFAULT_PROXIMITY_POINTS_INDEX = 15;
+const DEFAULT_PROXIMITY_PCT_STOCK = 0.35;
+const OI_BOARD_LOOKAROUND = 10;
+
+const engineState = {
+  running: false,
+  startedAt: null,
+  settings: {
+    lotCount: 1,
+    tradeFromTime: '09:20',
+    tradeToTime: '15:10',
+    eodExitTime: '15:20',
+    targetPoints: DEFAULT_TARGET_POINTS,
+    stopLossPoints: DEFAULT_STOP_POINTS,
+    hasStopLoss: true,
+    minOiRatio: DEFAULT_MIN_OI_RATIO,
+    proximityPointsIndex: DEFAULT_PROXIMITY_POINTS_INDEX,
+    proximityPctStock: DEFAULT_PROXIMITY_PCT_STOCK,
+    maxTradesPerDay: 8,
+    cooldownMinutes: 3,
+    perTradeCost: 100,
+    universe: [...DEFAULT_UNIVERSE],
+  },
+  symbols: {},
+  scanOrder: [...DEFAULT_UNIVERSE],
+  scanCursor: 0,
+  futRefreshCursor: 0,
+  lastScanAt: 0,
+  openTradeId: null,
+  openTradeLite: null,
+  openPositionMark: null,
+  lastOptionTick: null,
+  tradesTodayCount: 0,
+  tradesTodayDateKey: null,
+  lastExitAtMs: 0,
+  lastError: null,
+  lastEntryDebug: null,
+  pollTimer: null,
+  positionPollTimer: null,
+  closingTrade: false,
+  enteringTrade: false,
+  evaluatingEntry: false,
+  lastMarkPersistAt: 0,
+  lastLiveMarkEmitAt: 0,
+  liveMarkEmitTimer: null,
+};
+
+function logLine(line, payload = {}) {
+  const entry = { at: new Date().toISOString(), line, ...payload };
+  engineState.lastEntryDebug = entry;
+  console.log(`[OiUniverseScanner] ${line}`, JSON.stringify(entry));
+}
+
+function ensureSymbolSlot(symbol) {
+  const key = String(symbol || '').toUpperCase();
+  if (!engineState.symbols[key]) {
+    engineState.symbols[key] = {
+      symbol: key,
+      kind: PRESET_SYMBOLS[key]?.instrument === 'EQUITY' ? 'STOCK' : 'INDEX',
+      lastFut: null,
+      futExpiry: null,
+      futInstrument: null,
+      lastFutFetchAt: 0,
+      expiry: null,
+      board: null,
+      signal: null,
+      lastOiAt: 0,
+      lastError: null,
+      lotSize: null,
+      lastSignalNotifKey: null,
+    };
+  }
+  return engineState.symbols[key];
+}
+
+/** Only drop symbols that are gone / renamed in the master (not liquid names). */
+const RETIRED_UNIVERSE = new Set([
+  'TATAMOTORS', // renamed → TMPV
+]);
+
+function normalizeUniverse(raw) {
+  const list = Array.isArray(raw) ? raw : String(raw || '').split(',');
+  const out = [];
+  for (const item of list) {
+    let sym = String(item || '').trim().toUpperCase();
+    if (sym === 'TATAMOTORS') sym = 'TMPV';
+    if (!sym || !PRESET_SYMBOLS[sym]) continue;
+    if (RETIRED_UNIVERSE.has(sym)) continue;
+    if (!out.includes(sym)) out.push(sym);
+  }
+  return out.length ? out : [...DEFAULT_UNIVERSE];
+}
+
+/** Prefer indexes + merge any newly added default names into older saved settings. */
+function migrateUniverseSettings(settings = {}) {
+  const next = { ...settings };
+  if (next.universe != null) {
+    let normalized = normalizeUniverse(next.universe);
+    // If saved list is only the old tiny index set, expand to full liquid default.
+    const onlyIndexes =
+      normalized.length > 0
+      && normalized.length <= 3
+      && normalized.every((s) => PRESET_SYMBOLS[s]?.instrument === 'INDEX');
+    if (onlyIndexes) {
+      normalized = [...DEFAULT_UNIVERSE];
+    }
+    next.universe = normalized;
+  }
+  return next;
+}
+
+function normalizeSettings(settings = {}) {
+  const targetRaw = Number(settings.targetPoints ?? settings.targetPct);
+  const targetPoints =
+    Number.isFinite(targetRaw) && targetRaw > 0 ? Math.min(500, targetRaw) : DEFAULT_TARGET_POINTS;
+
+  let hasStopLoss = true;
+  let stopLossPoints = DEFAULT_STOP_POINTS;
+  if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')) {
+    const slRaw = settings.stopLossPoints;
+    if (slRaw === '' || slRaw === null || slRaw === undefined) {
+      hasStopLoss = false;
+      stopLossPoints = null;
+    } else {
+      const n = Number(slRaw);
+      if (!Number.isFinite(n) || n <= 0) {
+        hasStopLoss = false;
+        stopLossPoints = null;
+      } else {
+        stopLossPoints = Math.min(500, n);
+      }
+    }
+  }
+
+  return {
+    lotCount: Math.max(1, Number(settings.lotCount) || 1),
+    tradeFromTime: String(settings.tradeFromTime || '09:20'),
+    tradeToTime: String(settings.tradeToTime || '15:10'),
+    eodExitTime: String(settings.eodExitTime || '15:20'),
+    targetPoints,
+    stopLossPoints,
+    hasStopLoss,
+    minOiRatio: Math.max(1.2, Math.min(3, Number(settings.minOiRatio) || DEFAULT_MIN_OI_RATIO)),
+    proximityPointsIndex: Math.max(
+      5,
+      Number(settings.proximityPointsIndex ?? settings.proximityPoints) || DEFAULT_PROXIMITY_POINTS_INDEX,
+    ),
+    proximityPctStock: Math.max(
+      0.1,
+      Math.min(2, Number(settings.proximityPctStock) || DEFAULT_PROXIMITY_PCT_STOCK),
+    ),
+    maxTradesPerDay: Math.max(1, Math.min(50, Math.floor(Number(settings.maxTradesPerDay) || 8))),
+    cooldownMinutes: Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 3)),
+    perTradeCost:
+      Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
+        ? Number(settings.perTradeCost)
+        : 100,
+    universe: normalizeUniverse(settings.universe),
+  };
+}
+
+function tradeFromMin() {
+  return parseClockMinutes(engineState.settings.tradeFromTime, DEFAULT_TRADE_FROM);
+}
+function tradeToMin() {
+  return parseClockMinutes(engineState.settings.tradeToTime, DEFAULT_TRADE_TO);
+}
+function eodMin() {
+  return parseClockMinutes(engineState.settings.eodExitTime, DEFAULT_EOD);
+}
+
+function proximityLimit(slot, price) {
+  if (slot.kind === 'INDEX') return engineState.settings.proximityPointsIndex;
+  const p = Number(price);
+  if (!Number.isFinite(p) || p <= 0) return 20;
+  return Math.max(5, Number((p * (engineState.settings.proximityPctStock / 100)).toFixed(1)));
+}
+
+function pickDominantStrike(snapshot, minRatio) {
+  const strikes = Array.isArray(snapshot?.strikes) ? snapshot.strikes : [];
+  if (!strikes.length) return null;
+  let best = null;
+  let bestScore = -1;
+  for (const row of strikes) {
+    const callOi = Number(row.callOi) || 0;
+    const putOi = Number(row.putOi) || 0;
+    const total = callOi + putOi;
+    if (total <= 0) continue;
+    const dist = Number(row.distanceFromAtm);
+    const nearBoost = Number.isFinite(dist) ? Math.max(0.55, 1 - Math.min(dist, 800) / 1600) : 0.7;
+    const score = total * nearBoost;
+    if (score > bestScore) {
+      bestScore = score;
+      best = row;
+    }
+  }
+  if (!best) return null;
+  const callOi = Number(best.callOi) || 0;
+  const putOi = Number(best.putOi) || 0;
+  const putDom = putOi >= callOi;
+  const ratio = putDom
+    ? (callOi > 0 ? putOi / callOi : putOi > 0 ? 99 : 0)
+    : (putOi > 0 ? callOi / putOi : callOi > 0 ? 99 : 0);
+  return {
+    levelStrike: Number(best.strike),
+    dominantSide: putDom ? 'PUT' : 'CALL',
+    optionType: putDom ? 'CE' : 'PE',
+    putOi,
+    callOi,
+    putChgOi: best.putChgOi,
+    callChgOi: best.callChgOi,
+    ratio: Number(ratio.toFixed(2)),
+    ratioOk: ratio >= minRatio,
+  };
+}
+
+function isDeltaFighting(optionType, putChg, callChg) {
+  const p = Number(putChg);
+  const c = Number(callChg);
+  if (!Number.isFinite(p) || !Number.isFinite(c)) return false;
+  if (optionType === 'CE') return c > 0 && c > p * 1.15;
+  return p > 0 && p > c * 1.15;
+}
+
+async function ensureFutInstrument(slot) {
+  const today = getIstClock(new Date()).dateKey;
+  const cached = slot.futInstrument;
+  if (cached?.securityId && slot.futExpiry && String(slot.futExpiry) >= today) {
+    return cached;
+  }
+  const expiries = await listFutureExpiries(slot.symbol);
+  if (!Array.isArray(expiries) || !expiries.length) {
+    throw new Error(`No FUT for ${slot.symbol}`);
+  }
+  const inst = await resolveFutureInstrument({ symbol: slot.symbol, expiry: expiries[0].expiry });
+  slot.futInstrument = inst;
+  slot.futExpiry = inst.expiry;
+  return inst;
+}
+
+async function refreshFutPrice(slot, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && Number.isFinite(slot.lastFut) && now - slot.lastFutFetchAt < FUT_PRICE_REFRESH_MIN_GAP_MS) {
+    return slot.lastFut;
+  }
+  const inst = await ensureFutInstrument(slot);
+  const { ltp } = await getFutureLtp({ symbol: slot.symbol, expiry: inst.expiry });
+  if (!Number.isFinite(ltp) || ltp <= 0) throw new Error(`FUT LTP unavailable for ${slot.symbol}`);
+  slot.lastFut = Number(ltp);
+  slot.lastFutFetchAt = now;
+  return slot.lastFut;
+}
+
+function buildBoard(snapshot, fut, expiry, futExpiry) {
+  const strikes = Array.isArray(snapshot?.strikes) ? snapshot.strikes : [];
+  let maxCall = null;
+  let maxPut = null;
+  let maxTotal = null;
+  let callChgSum = 0;
+  let putChgSum = 0;
+  let sawCallChg = false;
+  let sawPutChg = false;
+  for (const row of strikes) {
+    const c = Number(row.callOi) || 0;
+    const p = Number(row.putOi) || 0;
+    if (!maxCall || c > (Number(maxCall.callOi) || 0)) maxCall = row;
+    if (!maxPut || p > (Number(maxPut.putOi) || 0)) maxPut = row;
+    if (!maxTotal || c + p > ((Number(maxTotal.callOi) || 0) + (Number(maxTotal.putOi) || 0))) {
+      maxTotal = row;
+    }
+    if (Number.isFinite(Number(row.callChgOi))) {
+      callChgSum += Number(row.callChgOi);
+      sawCallChg = true;
+    }
+    if (Number.isFinite(Number(row.putChgOi))) {
+      putChgSum += Number(row.putChgOi);
+      sawPutChg = true;
+    }
+  }
+  const callOi = Number(snapshot?.totals?.callOi);
+  const putOi = Number(snapshot?.totals?.putOi);
+  const pcr = Number(snapshot?.totals?.pcr ?? snapshot?.pcr);
+  const nearPcr = Number(snapshot?.totals?.nearPcr ?? snapshot?.nearPcr);
+  let pcrBias = 'NEUTRAL';
+  if (Number.isFinite(nearPcr)) {
+    if (nearPcr >= 1.1) pcrBias = 'PUT_HEAVY';
+    else if (nearPcr <= 0.9) pcrBias = 'CALL_HEAVY';
+  }
+  return {
+    at: new Date().toISOString(),
+    priceSource: 'FUT',
+    spot: Number.isFinite(fut) ? fut : snapshot?.spot ?? null,
+    fut: Number.isFinite(fut) ? fut : snapshot?.spot ?? null,
+    futExpiry: futExpiry || null,
+    chainSpot: snapshot?.chainSpot ?? snapshot?.spot ?? null,
+    atm: snapshot?.atm ?? null,
+    expiry: expiry || null,
+    strikeStep: snapshot?.strikeStep ?? null,
+    strikes,
+    totals: {
+      callOi: Number.isFinite(callOi) ? callOi : null,
+      putOi: Number.isFinite(putOi) ? putOi : null,
+      callChgOi: sawCallChg ? Math.round(callChgSum) : null,
+      putChgOi: sawPutChg ? Math.round(putChgSum) : null,
+      totalChgOi: (sawCallChg || sawPutChg)
+        ? Math.round((sawCallChg ? callChgSum : 0) + (sawPutChg ? putChgSum : 0))
+        : null,
+      pcr: Number.isFinite(pcr) ? pcr : null,
+      nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
+      pcrBias,
+    },
+    highlight: {
+      maxPutStrike: maxPut?.strike ?? null,
+      maxCallStrike: maxCall?.strike ?? null,
+      maxTotalStrike: maxTotal?.strike ?? null,
+    },
+  };
+}
+
+function isTransientOiError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('429')
+    || msg.includes('rate')
+    || msg.includes('cooldown')
+    || msg.includes('empty')
+    || msg.includes('timeout')
+    || msg.includes('econn')
+    || msg.includes('temporarily')
+    || msg.includes('stale')
+  );
+}
+
+function scoreReady(signal) {
+  if (!signal || signal.status !== 'STRONG_READY') return -1;
+  const ratio = Number(signal.ratio) || 0;
+  const dist = Number(signal.spotDist);
+  const prox = Number(signal.proximityLimit) || 1;
+  const distScore = Number.isFinite(dist) ? Math.max(0, 1 - dist / prox) : 0;
+  return ratio * 10 + distScore * 5;
+}
+
+function publishUniverseSignalNotification(symbol, prev, next) {
+  if (!next || !next.status) return;
+  const slot = ensureSymbolSlot(symbol);
+  const key = [
+    symbol,
+    next.status,
+    next.optionType || '',
+    next.levelStrike || '',
+    next.reason || '',
+  ].join(':');
+  if (key === slot.lastSignalNotifKey) return;
+  slot.lastSignalNotifKey = key;
+
+  const status = String(next.status || '');
+  if (status === 'ERROR' || status === 'CLEARED') {
+    if (prev?.status === status) return;
+  }
+
+  const notable =
+    status === 'STRONG_READY'
+    || status === 'CAUTION'
+    || status === 'WATCHING'
+    || status === 'CLEARED';
+
+  if (!notable) return;
+
+  const wallChanged =
+    prev
+    && (String(prev.optionType) !== String(next.optionType)
+      || Number(prev.levelStrike) !== Number(next.levelStrike));
+  if (status === 'WATCHING' && prev?.status === 'WATCHING' && !wallChanged) return;
+
+  let type = 'OI_SIGNAL';
+  let title = next.label || `${symbol} ${status}`;
+  if (status === 'STRONG_READY') {
+    type = 'SIGNAL_READY';
+    title = next.label || `STRONG ${next.optionType} · ${symbol} ${next.levelStrike}`;
+  } else if (status === 'CAUTION') {
+    type = 'SIGNAL_CAUTION';
+  } else if (status === 'CLEARED') {
+    type = 'SIGNAL_CLEARED';
+    title = next.label || `${symbol} signal cleared`;
+  } else if (wallChanged) {
+    type = 'SIGNAL_CHANGED';
+    title = next.label || `${symbol} → ${next.optionType} · ${next.levelStrike}`;
+  }
+
+  pushNotification({
+    type,
+    strategy: 'OI Universe',
+    title: String(title).slice(0, 160),
+    body: String(next.detail || next.reason || '').slice(0, 400),
+    meta: {
+      symbol,
+      status: next.status,
+      optionType: next.optionType,
+      levelStrike: next.levelStrike,
+      ratio: next.ratio,
+      spotDist: next.spotDist,
+    },
+    dedupeKey: `oi-universe-signal:${symbol}:${key}`,
+  });
+}
+
+function applySignalUpdate(slot, prev, next) {
+  slot.signal = next;
+  publishUniverseSignalNotification(slot.symbol, prev, next);
+}
+
+function recomputeSignalFromFut(slot) {
+  const prev = slot.signal ? { ...slot.signal } : null;
+  const signal = slot.signal;
+  const fut = slot.lastFut;
+  if (!signal || !Number.isFinite(fut) || !Number.isFinite(Number(signal.levelStrike))) return;
+  if (!signal.ratioOk || signal.deltaOk === false) return;
+
+  const dist = Math.abs(fut - Number(signal.levelStrike));
+  const prox = proximityLimit(slot, fut);
+  const proximityOk = dist <= prox;
+  const base = {
+    ...signal,
+    fut,
+    spotDist: Number(dist.toFixed(1)),
+    proximityLimit: prox,
+    proximityOk,
+    at: new Date().toISOString(),
+  };
+
+  if (!proximityOk) {
+    applySignalUpdate(slot, prev, {
+      ...base,
+      status: 'WATCHING',
+      label: `Watch ${signal.optionType} · wall ${signal.levelStrike}`,
+      reason: 'WAIT_PROXIMITY',
+      buyLive: false,
+      detail: `FUT ${dist.toFixed(0)} > ${prox} · waiting proximity`,
+    });
+    return;
+  }
+
+  applySignalUpdate(slot, prev, {
+    ...base,
+    status: 'STRONG_READY',
+    label: `STRONG ${signal.optionType} · ${signal.levelStrike}`,
+    reason: 'STRONG_READY',
+    buyLive: true,
+    detail: `Ratio ${signal.ratio}× · FUT ${dist.toFixed(0)} ≤ ${prox}`,
+  });
+}
+
+async function refreshFutBatch() {
+  const order = engineState.scanOrder;
+  if (!order.length) return;
+  const batch = Math.min(FUT_BATCH_SIZE, order.length);
+  const tasks = [];
+  for (let i = 0; i < batch; i += 1) {
+    const symbol = order[(engineState.futRefreshCursor + i) % order.length];
+    tasks.push((async () => {
+      const slot = ensureSymbolSlot(symbol);
+      try {
+        await refreshFutPrice(slot, { force: true });
+        if (slot.board) {
+          slot.board = {
+            ...slot.board,
+            fut: slot.lastFut,
+            spot: slot.lastFut,
+            at: new Date().toISOString(),
+          };
+        }
+        if (slot.signal?.levelStrike && slot.signal.status !== 'CLEARED') {
+          recomputeSignalFromFut(slot);
+        }
+      } catch (err) {
+        slot.lastError = err.message || 'FUT refresh failed';
+      }
+    })());
+  }
+  engineState.futRefreshCursor = (engineState.futRefreshCursor + batch) % order.length;
+  await Promise.allSettled(tasks);
+}
+
+async function scanOneSymbol(symbol) {
+  const slot = ensureSymbolSlot(symbol);
+  const prevSignal = slot.signal ? { ...slot.signal } : null;
+  try {
+    const fut = await refreshFutPrice(slot, { force: true });
+    const expiry = await getNearestWeeklyExpiry(symbol);
+    if (!expiry) throw new Error(`No option expiry for ${symbol}`);
+    slot.expiry = expiry;
+    const snapshot = await getOptionChainOiSnapshot({
+      symbol,
+      expiry,
+      spotOverride: fut,
+      lookaroundStrikes: OI_BOARD_LOOKAROUND,
+    });
+    if (!Array.isArray(snapshot?.strikes) || snapshot.strikes.length === 0) {
+      throw new Error(`Empty OI chain for ${symbol}`);
+    }
+    slot.board = buildBoard(snapshot, fut, expiry, slot.futExpiry);
+    slot.lastOiAt = Date.now();
+    slot.lastError = null;
+
+    const wall = pickDominantStrike(snapshot, engineState.settings.minOiRatio);
+    if (!wall) {
+      applySignalUpdate(slot, prevSignal, { status: 'CLEARED', label: 'No wall', buyLive: false, symbol });
+      return slot;
+    }
+
+    const dist = Math.abs(fut - wall.levelStrike);
+    const prox = proximityLimit(slot, fut);
+    const proximityOk = dist <= prox;
+    const deltaOk = !isDeltaFighting(wall.optionType, wall.putChgOi, wall.callChgOi);
+    const base = {
+      symbol,
+      kind: slot.kind,
+      optionType: wall.optionType,
+      levelStrike: wall.levelStrike,
+      dominantSide: wall.dominantSide,
+      putOi: wall.putOi,
+      callOi: wall.callOi,
+      putChgOi: wall.putChgOi,
+      callChgOi: wall.callChgOi,
+      ratio: wall.ratio,
+      ratioOk: wall.ratioOk,
+      minOiRatio: engineState.settings.minOiRatio,
+      fut,
+      spotDist: Number(dist.toFixed(1)),
+      proximityLimit: prox,
+      proximityOk,
+      deltaOk,
+      buyLive: false,
+      at: new Date().toISOString(),
+    };
+
+    if (!wall.ratioOk) {
+      applySignalUpdate(slot, prevSignal, {
+        ...base,
+        status: 'CAUTION',
+        label: `Weak wall · ${wall.optionType} ${wall.levelStrike}`,
+        reason: 'WEAK_OI_RATIO',
+        detail: `Ratio ${wall.ratio}× < ${engineState.settings.minOiRatio}×`,
+      });
+      return slot;
+    }
+    if (!deltaOk) {
+      applySignalUpdate(slot, prevSignal, {
+        ...base,
+        status: 'CAUTION',
+        label: `ΔOI fighting · ${wall.optionType} ${wall.levelStrike}`,
+        reason: 'DELTA_OI_FIGHTING',
+      });
+      return slot;
+    }
+    if (!proximityOk) {
+      applySignalUpdate(slot, prevSignal, {
+        ...base,
+        status: 'WATCHING',
+        label: `Watch ${wall.optionType} · wall ${wall.levelStrike}`,
+        reason: 'WAIT_PROXIMITY',
+        detail: `FUT ${dist.toFixed(0)} > ${prox} · waiting proximity`,
+      });
+      return slot;
+    }
+
+    applySignalUpdate(slot, prevSignal, {
+      ...base,
+      status: 'STRONG_READY',
+      label: `STRONG ${wall.optionType} · ${wall.levelStrike}`,
+      reason: 'STRONG_READY',
+      buyLive: true,
+      detail: `Ratio ${wall.ratio}× ≥ ${engineState.settings.minOiRatio} · FUT ${dist.toFixed(0)} ≤ ${prox}`,
+    });
+    return slot;
+  } catch (err) {
+    const msg = err.message || 'Scan failed';
+    // Keep last good board/signal on Dhan rate-limit / empty blips — avoid flashing ERROR.
+    if (isTransientOiError(err) && slot.board) {
+      slot.lastError = msg;
+      if (slot.signal && slot.signal.status !== 'ERROR') {
+        slot.signal = {
+          ...slot.signal,
+          detail: [slot.signal.detail, 'OI refresh delayed'].filter(Boolean).join(' · '),
+        };
+      }
+      return slot;
+    }
+    // Still try to keep FUT on the card even when chain fails hard.
+    try {
+      if (!Number.isFinite(slot.lastFut)) await refreshFutPrice(slot, { force: false });
+    } catch {
+      /* ignore */
+    }
+    slot.lastError = msg;
+    applySignalUpdate(slot, prevSignal, {
+      status: slot.board ? (slot.signal?.status || 'WATCHING') : 'CLEARED',
+      label: slot.board ? (slot.signal?.label || 'OI delayed') : 'Waiting for OI',
+      detail: msg,
+      buyLive: false,
+      symbol,
+      fut: slot.lastFut,
+    });
+    return slot;
+  }
+}
+
+async function ensureWallet() {
+  let wallet = await LiveWallet.findOne({ walletKey: WALLET_KEY });
+  if (!wallet) {
+    wallet = await LiveWallet.create({
+      walletKey: WALLET_KEY,
+      startingBalance: 0,
+      balance: 0,
+      realizedPnl: 0,
+      totalTrades: 0,
+      wins: 0,
+      losses: 0,
+      strategy13EngineSettings: engineState.settings,
+    });
+  }
+  return wallet;
+}
+
+async function syncTradesToday(clock) {
+  if (engineState.tradesTodayDateKey !== clock.dateKey) {
+    engineState.tradesTodayDateKey = clock.dateKey;
+    engineState.tradesTodayCount = 0;
+  }
+  const count = await LivePaperTrade.countDocuments({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+  });
+  engineState.tradesTodayCount = count;
+  const open = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    exitTime: null,
+    status: { $ne: 'CLOSED' },
+  }).sort({ entryTime: -1 });
+  engineState.openTradeId = open ? open._id.toString() : null;
+  if (open) cacheOpenTradeLite(open);
+  else {
+    engineState.openTradeLite = null;
+    engineState.openPositionMark = null;
+  }
+}
+
+function cacheOpenTradeLite(trade) {
+  if (!trade) {
+    engineState.openTradeLite = null;
+    return;
+  }
+  engineState.openTradeLite = {
+    _id: trade._id?.toString?.() || String(trade._id),
+    symbol: trade.symbol,
+    optionType: trade.optionType,
+    strike: trade.strike,
+    expiryDate: trade.expiryDate,
+    entryPremium: trade.entryPremium,
+    qty: trade.qty,
+    lots: trade.lots,
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
+    entryTime: trade.entryTime,
+  };
+}
+
+function clearOpenTrade() {
+  engineState.openTradeId = null;
+  engineState.openTradeLite = null;
+  engineState.openPositionMark = null;
+  engineState.lastOptionTick = null;
+  unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
+}
+
+async function subscribeOpenOption(trade) {
+  try {
+    const inst = await resolveOptionInstrument({
+      symbol: trade.symbol,
+      strike: trade.strike,
+      expiry: trade.expiryDate,
+      optionType: trade.optionType,
+    });
+    await subscribeLiveInstrument({
+      key: OPTION_SUBSCRIPTION_KEY,
+      securityId: inst.securityId,
+      exchangeSegment: inst.exchangeSegment,
+      onTick: onOptionTick,
+    });
+  } catch (err) {
+    engineState.lastError = `Option subscribe: ${err.message}`;
+  }
+}
+
+function optionTickIsFresh() {
+  const ts = engineState.lastOptionTick?.ts;
+  return Number.isFinite(ts) && Date.now() - ts < TICK_FRESH_MAX_AGE_MS;
+}
+
+function getLiveMarkSnapshot() {
+  return {
+    strategyId: 'strategy-11',
+    open: Boolean(engineState.openTradeId),
+    mark: engineState.openPositionMark,
+    openTradeLite: engineState.openTradeLite,
+    lastFut: null,
+    at: new Date().toISOString(),
+  };
+}
+
+function publishLiveMarkSnapshot(extra = {}) {
+  const now = Date.now();
+  if (now - engineState.lastLiveMarkEmitAt < LIVE_MARK_EMIT_MIN_GAP_MS) {
+    if (!engineState.liveMarkEmitTimer) {
+      engineState.liveMarkEmitTimer = setTimeout(() => {
+        engineState.liveMarkEmitTimer = null;
+        broadcast('paper-live:mark', { ...getLiveMarkSnapshot(), ...extra });
+      }, LIVE_MARK_EMIT_MIN_GAP_MS);
+    }
+    return;
+  }
+  engineState.lastLiveMarkEmitAt = now;
+  broadcast('paper-live:mark', { ...getLiveMarkSnapshot(), ...extra });
+}
+
+async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain = true } = {}) {
+  let optionLtp = null;
+  let source = 'none';
+  if (preferTicks && optionTickIsFresh()) {
+    optionLtp = Number(engineState.lastOptionTick.ltp);
+    source = 'websocket';
+  }
+  if ((!Number.isFinite(optionLtp) || optionLtp <= 0) && allowChain) {
+    try {
+      const premiums = await getAtmPremiums({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+      });
+      const leg = String(trade.optionType).toUpperCase() === 'PE' ? premiums?.pe : premiums?.ce;
+      optionLtp = Number(leg?.ltp ?? leg);
+      source = 'chain';
+    } catch {
+      /* keep */
+    }
+  }
+  const qty = Number(trade.qty) || 0;
+  const entry = Number(trade.entryPremium) || 0;
+  const unrealizedPnl =
+    Number.isFinite(optionLtp) && optionLtp > 0
+      ? Number(((optionLtp - entry) * qty - (Number(trade.charges) || 0)).toFixed(2))
+      : null;
+  return {
+    optionLtp: Number.isFinite(optionLtp) ? optionLtp : null,
+    source,
+    isLiveMark: source === 'websocket',
+    unrealizedPnl,
+    at: new Date().toISOString(),
+  };
+}
+
+function publishOpenMark(trade, mark, { persist = false } = {}) {
+  engineState.openPositionMark = {
+    ...mark,
+    tradeId: trade._id.toString(),
+  };
+  publishLiveMarkSnapshot();
+  if (persist) {
+    const now = Date.now();
+    if (now - engineState.lastMarkPersistAt >= MARK_DB_PERSIST_MIN_GAP_MS) {
+      engineState.lastMarkPersistAt = now;
+      LivePaperTrade.updateOne(
+        { _id: trade._id },
+        {
+          $set: {
+            openPositionMark: engineState.openPositionMark,
+            openPositionMarkAt: new Date(),
+          },
+        },
+      ).catch(() => {});
+    }
+  }
+  return engineState.openPositionMark;
+}
+
+function publishTickMarkFast(ltp) {
+  const lite = engineState.openTradeLite;
+  if (!lite || !engineState.openTradeId) return;
+  const qty = Number(lite.qty) || 0;
+  const entry = Number(lite.entryPremium) || 0;
+  const mark = {
+    optionLtp: ltp,
+    source: 'websocket',
+    isLiveMark: true,
+    unrealizedPnl: Number(((ltp - entry) * qty).toFixed(2)),
+    at: new Date().toISOString(),
+    tradeId: engineState.openTradeId,
+  };
+  engineState.openPositionMark = mark;
+  publishLiveMarkSnapshot();
+}
+
+async function onOptionTick({ ltp }) {
+  const n = Number(ltp);
+  engineState.lastOptionTick = { ltp: n, ts: Date.now() };
+  if (engineState.openTradeId && Number.isFinite(n) && n > 0) {
+    publishTickMarkFast(n);
+  }
+  checkOpenTrade({ preferTicks: true }).catch((err) => {
+    engineState.lastError = `Universe tick check: ${err.message}`;
+  });
+}
+
+function premiumFromChain(premiums, optionType) {
+  const leg = optionType === 'PE' ? premiums?.pe : premiums?.ce;
+  const n = Number(leg?.ltp ?? leg);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function placeStrongEntry(slot, signal, clock) {
+  if (engineState.enteringTrade || engineState.openTradeId) return;
+  engineState.enteringTrade = true;
+  try {
+    const symbol = slot.symbol;
+    const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    const fut = await refreshFutPrice(slot, { force: true });
+    const prox = proximityLimit(slot, fut);
+    const dist = Math.abs(fut - Number(signal.levelStrike));
+    if (dist > prox) {
+      logLine('ENTRY_SKIP', { symbol, reason: 'PROXIMITY_LOST', dist, prox });
+      return;
+    }
+
+    const snapshot = await getOptionChainOiSnapshot({
+      symbol,
+      expiry: slot.expiry || (await getNearestWeeklyExpiry(symbol)),
+      spotOverride: fut,
+      lookaroundStrikes: OI_BOARD_LOOKAROUND,
+    });
+    const wall = pickDominantStrike(snapshot, engineState.settings.minOiRatio);
+    if (!wall || wall.optionType !== optionType || !wall.ratioOk) {
+      logLine('ENTRY_SKIP', { symbol, reason: 'WALL_LOST_AT_FILL' });
+      return;
+    }
+    if (isDeltaFighting(optionType, wall.putChgOi, wall.callChgOi)) {
+      logLine('ENTRY_SKIP', { symbol, reason: 'DELTA_AT_FILL' });
+      return;
+    }
+
+    const expiry = slot.expiry || (await getNearestWeeklyExpiry(symbol));
+    const strikeStep = getStrikeStep(symbol);
+    const strike = pickStrike({
+      entrySpot: fut,
+      strikeStep,
+      optionType,
+      strikeMode: 'ATM',
+    });
+    const premiums = await getAtmPremiums({ symbol, strike, expiry });
+    const entryPremium = premiumFromChain(premiums, optionType);
+    if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
+      engineState.lastError = `Missing ${symbol} ${optionType} premium @ ${strike}`;
+      return;
+    }
+
+    const lotSize = slot.lotSize || (await getCurrentLotSize(symbol));
+    slot.lotSize = lotSize;
+    const lots = Math.max(1, Number(engineState.settings.lotCount) || 1);
+    const qty = lotSize * lots;
+    const charges = engineState.settings.perTradeCost;
+    const targetPoints = engineState.settings.targetPoints;
+    const hasSl = engineState.settings.hasStopLoss;
+    const stopLossPoints = engineState.settings.stopLossPoints;
+    const targetPremium = entryPremium + targetPoints;
+    const stopLossPremium = hasSl ? Math.max(0.05, entryPremium - stopLossPoints) : null;
+
+    const tradeDoc = await LivePaperTrade.create({
+      strategyKey: STRATEGY_KEY,
+      symbol,
+      side: 'LONG',
+      optionType,
+      strike,
+      expiryDate: expiry,
+      lotSize,
+      lots,
+      qty,
+      entryPremium: Number(entryPremium.toFixed(2)),
+      entrySpot: Number(fut.toFixed(2)),
+      entryTime: new Date(),
+      entryDateKey: clock.dateKey,
+      status: 'OPEN',
+      investedAmount: Number((entryPremium * qty).toFixed(2)),
+      creditReceived: 0,
+      charges: Number(charges.toFixed(2)),
+      stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
+      targetPremium: Number(targetPremium.toFixed(2)),
+      stopLossMode: hasSl ? 'POINTS' : null,
+      targetMode: 'POINTS',
+      legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
+      entryReason: `Universe STRONG ${optionType} · ${symbol} wall ${wall.levelStrike} · ratio ${wall.ratio}×`,
+      notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
+    });
+
+    engineState.openTradeId = tradeDoc._id.toString();
+    engineState.tradesTodayCount += 1;
+    engineState.tradesTodayDateKey = clock.dateKey;
+    cacheOpenTradeLite(tradeDoc);
+    logLine('ENTRY_SUCCESS', {
+      tradeId: tradeDoc._id.toString(),
+      symbol,
+      optionType,
+      strike,
+      entryPremium,
+      wall: wall.levelStrike,
+      ratio: wall.ratio,
+    });
+    pushNotification({
+      type: 'ENTRY',
+      strategy: 'OI Universe',
+      title: `Entered ${symbol} ${optionType} ${strike}`,
+      body: `Strong wall ${wall.levelStrike} · ${wall.ratio}× · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''}`,
+      meta: { tradeId: tradeDoc._id.toString(), symbol, optionType, strike },
+      dedupeKey: `oi-universe-entry:${tradeDoc._id.toString()}`,
+    });
+    await subscribeOpenOption(tradeDoc);
+    startPositionPoll();
+  } catch (err) {
+    engineState.lastError = err.message;
+    logLine('ENTRY_FAILED', { error: err.message });
+  } finally {
+    engineState.enteringTrade = false;
+  }
+}
+
+async function evaluateEntry(clock) {
+  if (engineState.evaluatingEntry || engineState.openTradeId || engineState.enteringTrade) return;
+  engineState.evaluatingEntry = true;
+  try {
+    if (!isNseCashTradingDay(clock.dateKey)) return;
+    if (clock.minutes < tradeFromMin() || clock.minutes > tradeToMin()) return;
+    if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) return;
+    const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+    if (cooldownMs > 0 && engineState.lastExitAtMs && Date.now() - engineState.lastExitAtMs < cooldownMs) {
+      return;
+    }
+
+    let best = null;
+    let bestScore = -1;
+    for (const symbol of engineState.scanOrder) {
+      const slot = engineState.symbols[symbol];
+      const signal = slot?.signal;
+      const score = scoreReady(signal);
+      if (score > bestScore) {
+        bestScore = score;
+        best = { slot, signal };
+      }
+    }
+    if (!best || bestScore < 0 || !best.signal?.buyLive) return;
+    await placeStrongEntry(best.slot, best.signal, clock);
+  } finally {
+    engineState.evaluatingEntry = false;
+  }
+}
+
+async function finalizeTrade(trade, { exitPremium, mark, reason }) {
+  if (engineState.closingTrade) return;
+  engineState.closingTrade = true;
+  try {
+    const safeExitPremium = Math.max(0.05, Number(exitPremium) || 0);
+    const qty = Number(trade.qty) || 0;
+    const entry = Number(trade.entryPremium) || 0;
+    const charges = Number(trade.charges) || 0;
+    const pnl = Number(((safeExitPremium - entry) * qty - charges).toFixed(2));
+    const pnlPct = entry > 0 ? Number((((safeExitPremium - entry) / entry) * 100).toFixed(2)) : 0;
+    const clock = getIstClock(new Date());
+    trade.exitPremium = Number(safeExitPremium.toFixed(2));
+    trade.exitTime = new Date();
+    trade.exitDateKey = clock.dateKey;
+    trade.status = 'CLOSED';
+    trade.reason = reason;
+    trade.pnl = pnl;
+    trade.pnlPct = pnlPct;
+    trade.openPositionMark = null;
+    trade.openPositionMarkAt = null;
+    trade.notes = [trade.notes, `exitMark=${mark?.source || 'n/a'}; pnl=${pnl}`]
+      .filter(Boolean)
+      .join(' | ')
+      .slice(0, 500);
+    await trade.save();
+
+    const wallet = await ensureWallet();
+    wallet.balance += pnl;
+    wallet.realizedPnl += pnl;
+    wallet.totalTrades += 1;
+    if (pnl > 0) wallet.wins += 1;
+    else if (pnl < 0) wallet.losses += 1;
+    await wallet.save();
+
+    pushNotification({
+      type: 'EXIT',
+      strategy: 'OI Universe',
+      title: `Closed ${trade.symbol} ${trade.optionType} ${trade.strike}`,
+      body: `${reason} · P/L ₹${pnl} · exit ₹${safeExitPremium}`,
+      meta: { tradeId: trade._id.toString(), reason, pnl },
+      dedupeKey: `oi-universe-exit:${trade._id.toString()}`,
+    });
+    engineState.lastExitAtMs = Date.now();
+    clearOpenTrade();
+    publishLiveMarkSnapshot({ open: false });
+  } finally {
+    engineState.closingTrade = false;
+  }
+}
+
+async function checkOpenTrade({ preferTicks = false } = {}) {
+  if (!engineState.running || engineState.closingTrade || !engineState.openTradeId) return;
+  const clock = getIstClock(new Date());
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) {
+    clearOpenTrade();
+    return;
+  }
+  cacheOpenTradeLite(trade);
+
+  if (clock.dateKey !== trade.entryDateKey || clock.minutes >= eodMin()) {
+    const mark = await resolveMarkForOpenTrade(trade, { allowChain: true });
+    await finalizeTrade(trade, { exitPremium: mark.optionLtp, mark, reason: 'EOD_EXIT' });
+    return;
+  }
+
+  const heldMs = Date.now() - new Date(trade.entryTime).getTime();
+  if (heldMs < MIN_HOLD_MS) return;
+
+  const mark = await resolveMarkForOpenTrade(trade, { preferTicks, allowChain: true });
+  publishOpenMark(trade, mark, { persist: true });
+  const ltp = Number(mark.optionLtp);
+  if (!Number.isFinite(ltp) || ltp <= 0) return;
+
+  if (Number.isFinite(Number(trade.targetPremium)) && ltp >= Number(trade.targetPremium)) {
+    await finalizeTrade(trade, { exitPremium: ltp, mark, reason: 'TARGET' });
+    return;
+  }
+  if (
+    trade.stopLossPremium != null
+    && Number.isFinite(Number(trade.stopLossPremium))
+    && ltp <= Number(trade.stopLossPremium)
+  ) {
+    await finalizeTrade(trade, { exitPremium: ltp, mark, reason: 'STOP_LOSS' });
+  }
+}
+
+function startPositionPoll() {
+  if (engineState.positionPollTimer) clearInterval(engineState.positionPollTimer);
+  const tick = () => {
+    checkOpenTrade().catch((err) => {
+      engineState.lastError = `Universe exit poll: ${err.message}`;
+    });
+  };
+  tick();
+  engineState.positionPollTimer = setInterval(tick, POSITION_POLL_MS);
+}
+
+function pickNextScanSymbol() {
+  const order = engineState.scanOrder;
+  if (!order.length) return null;
+  const now = Date.now();
+  let best = order[0];
+  let bestScore = -1;
+  for (const symbol of order) {
+    const slot = ensureSymbolSlot(symbol);
+    const age = now - (Number(slot.lastOiAt) || 0);
+    const weight = slot.kind === 'INDEX' ? INDEX_OI_AGE_WEIGHT : 1;
+    const score = age * weight;
+    if (score > bestScore) {
+      bestScore = score;
+      best = symbol;
+    }
+  }
+  return best;
+}
+
+async function scanTick() {
+  const clock = getIstClock(new Date());
+  await ensureNseHolidaysLoaded();
+  await syncTradesToday(clock);
+
+  if (!engineState.scanOrder.length) {
+    engineState.scanOrder = [...engineState.settings.universe];
+  }
+
+  await refreshFutBatch();
+
+  const now = Date.now();
+  if (now - engineState.lastScanAt >= SYMBOL_SCAN_GAP_MS) {
+    engineState.lastScanAt = now;
+    const symbol = pickNextScanSymbol();
+    if (symbol) {
+      engineState.scanCursor += 1;
+      await scanOneSymbol(symbol);
+    }
+  }
+
+  await evaluateEntry(clock);
+  if (engineState.openTradeId) {
+    await checkOpenTrade();
+  }
+}
+
+function startPoll() {
+  if (engineState.pollTimer) clearInterval(engineState.pollTimer);
+  const tick = () => {
+    scanTick().catch((err) => {
+      engineState.lastError = `Universe scan: ${err.message}`;
+    });
+  };
+  tick();
+  engineState.pollTimer = setInterval(tick, POLL_INTERVAL_MS);
+}
+
+function getEngineSnapshot() {
+  const cards = engineState.scanOrder.map((symbol) => {
+    const slot = engineState.symbols[symbol] || ensureSymbolSlot(symbol);
+    return {
+      symbol,
+      kind: slot.kind,
+      lastFut: slot.lastFut,
+      futExpiry: slot.futExpiry,
+      expiry: slot.expiry,
+      board: slot.board,
+      signal: slot.signal,
+      lastOiAt: slot.lastOiAt,
+      lastError: slot.lastError,
+    };
+  });
+  const ready = cards
+    .filter((c) => c.signal?.status === 'STRONG_READY')
+    .sort((a, b) => scoreReady(b.signal) - scoreReady(a.signal));
+
+  return {
+    running: engineState.running,
+    startedAt: engineState.startedAt,
+    settings: engineState.settings,
+    universe: engineState.scanOrder,
+    cards,
+    readySymbols: ready.map((c) => c.symbol),
+    topReady: ready[0] || null,
+    tradesTodayCount: engineState.tradesTodayCount,
+    maxTradesPerDay: engineState.settings.maxTradesPerDay,
+    openTradeId: engineState.openTradeId,
+    openPositionMark: engineState.openPositionMark,
+    lastError: engineState.lastError,
+    lastEntryDebug: engineState.lastEntryDebug,
+    scenarioLabel: 'OI Universe Scanner',
+  };
+}
+
+async function startEngine({ settings = {} } = {}) {
+  if (engineState.running) {
+    if (settings && Object.keys(settings).length) {
+      engineState.settings = normalizeSettings(migrateUniverseSettings({ ...engineState.settings, ...settings }));
+      engineState.scanOrder = [...engineState.settings.universe];
+      engineState.scanCursor = 0;
+      engineState.futRefreshCursor = 0;
+    }
+    return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  }
+  engineState.settings = normalizeSettings(migrateUniverseSettings({ ...engineState.settings, ...settings }));
+  engineState.scanOrder = [...engineState.settings.universe];
+  engineState.scanCursor = 0;
+  engineState.futRefreshCursor = 0;
+  engineState.running = true;
+  engineState.startedAt = new Date().toISOString();
+  engineState.lastError = null;
+  await ensureWallet();
+  const clock = getIstClock(new Date());
+  await syncTradesToday(clock);
+  if (engineState.openTradeId) {
+    const trade = await LivePaperTrade.findById(engineState.openTradeId);
+    if (trade && !trade.exitTime) {
+      await subscribeOpenOption(trade);
+      startPositionPoll();
+    }
+  }
+  startPoll();
+  logLine('ENGINE_START', { universe: engineState.scanOrder });
+  return { ok: true, state: getEngineSnapshot() };
+}
+
+function stopEngine() {
+  return { ok: true, ignored: true, state: getEngineSnapshot() };
+}
+
+async function updateEngineSettings(settings = {}) {
+  engineState.settings = normalizeSettings(migrateUniverseSettings({ ...engineState.settings, ...settings }));
+  engineState.scanOrder = [...engineState.settings.universe];
+  engineState.scanCursor = 0;
+  engineState.futRefreshCursor = 0;
+  // Drop slots for symbols no longer in universe.
+  for (const key of Object.keys(engineState.symbols)) {
+    if (!engineState.scanOrder.includes(key)) delete engineState.symbols[key];
+  }
+  const wallet = await ensureWallet();
+  wallet.strategy13EngineSettings = engineState.settings;
+  await wallet.save();
+  return { ok: true, state: getEngineSnapshot() };
+}
+
+async function ensureEngineRunning() {
+  if (engineState.running) return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
+  try {
+    const wallet = await ensureWallet();
+    const persisted = wallet.strategy13EngineSettings
+      ? wallet.strategy13EngineSettings.toObject?.() || wallet.strategy13EngineSettings
+      : {};
+    return startEngine({ settings: migrateUniverseSettings(persisted) });
+  } catch (err) {
+    engineState.lastError = `OI Universe boot failed: ${err.message}`;
+    return { ok: false, error: err.message };
+  }
+}
+
+async function recalcWalletFromTrades() {
+  const wallet = await ensureWallet();
+  const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: { $ne: null } }).lean();
+  let realizedPnl = 0;
+  let wins = 0;
+  let losses = 0;
+  for (const t of rows) {
+    const p = Number(t.pnl) || 0;
+    realizedPnl += p;
+    if (p > 0) wins += 1;
+    else if (p < 0) losses += 1;
+  }
+  wallet.realizedPnl = Number(realizedPnl.toFixed(2));
+  wallet.balance = wallet.realizedPnl;
+  wallet.totalTrades = rows.length;
+  wallet.wins = wins;
+  wallet.losses = losses;
+  await wallet.save();
+  return wallet;
+}
+
+async function reconcileOpenTrades() {
+  const clock = getIstClock(new Date());
+  await syncTradesToday(clock);
+  const open = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    exitTime: null,
+    status: { $ne: 'CLOSED' },
+  }).sort({ entryTime: -1 });
+  if (open.length > 1) {
+    for (let i = 1; i < open.length; i += 1) {
+      const dup = open[i];
+      dup.status = 'CLOSED';
+      dup.exitTime = new Date();
+      dup.exitDateKey = clock.dateKey;
+      dup.reason = 'DEDUPE_CLOSE';
+      dup.pnl = 0;
+      await dup.save();
+    }
+  }
+  if (engineState.openTradeId && engineState.running && !engineState.positionPollTimer) {
+    startPositionPoll();
+  }
+  const ids = (
+    await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select('_id').lean()
+  ).map((r) => String(r._id));
+  pruneTradeNotifications({ strategy: 'OI Universe', validTradeIds: ids });
+  return { ok: true };
+}
+
+async function resumeOpenPositionFromDb() {
+  const clock = getIstClock(new Date());
+  await syncTradesToday(clock);
+  if (!engineState.openTradeId) return { ok: true, resumed: false, state: getEngineSnapshot() };
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) {
+    clearOpenTrade();
+    return { ok: true, resumed: false, state: getEngineSnapshot() };
+  }
+  await subscribeOpenOption(trade);
+  if (!engineState.positionPollTimer) startPositionPoll();
+  return { ok: true, resumed: true, state: getEngineSnapshot() };
+}
+
+async function closeOpenPosition() {
+  if (!engineState.openTradeId) return { ok: false, error: 'No open trade' };
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) return { ok: false, error: 'No open trade' };
+  const mark = await resolveMarkForOpenTrade(trade, { allowChain: true });
+  await finalizeTrade(trade, {
+    exitPremium: mark.optionLtp,
+    mark,
+    reason: 'MANUAL_CLOSE',
+  });
+  return { ok: true, state: getEngineSnapshot() };
+}
+
+async function refreshOpenPositionMarkForStatus() {
+  if (!engineState.openTradeId) return null;
+  const current = engineState.openPositionMark;
+  if (current?.at) {
+    const ageMs = Date.now() - new Date(current.at).getTime();
+    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < STATUS_MARK_REFRESH_MIN_GAP_MS) {
+      publishLiveMarkSnapshot();
+      return current;
+    }
+  }
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) return null;
+  cacheOpenTradeLite(trade);
+  const mark = await resolveMarkForOpenTrade(trade, { preferTicks: true, allowChain: true });
+  return publishOpenMark(trade, mark, { persist: true });
+}
+
+async function clearDailySkipState() {
+  return { ok: true };
+}
+
+module.exports = {
+  STRATEGY_KEY,
+  DEFAULT_UNIVERSE,
+  startEngine,
+  stopEngine,
+  updateEngineSettings,
+  ensureEngineRunning,
+  getEngineSnapshot,
+  ensureWallet,
+  recalcWalletFromTrades,
+  reconcileOpenTrades,
+  resumeOpenPositionFromDb,
+  closeOpenPosition,
+  refreshOpenPositionMarkForStatus,
+  clearDailySkipState,
+  getLiveMarkSnapshot,
+};

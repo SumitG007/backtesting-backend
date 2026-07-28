@@ -2,19 +2,25 @@ const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
+const strategySevenPutBuyEngine = require('../services/livePutBuyEngine');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
 const strategyTwelveMultiEngine = require('../services/liveMorningOiMultiEngine');
+const strategyThirteenUniverseEngine = require('../services/liveOiUniverseScannerEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
+  STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
+  STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
+  STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -259,14 +265,52 @@ function morningOiMultiPaperLiveCtx(strategyId) {
   };
 }
 
+function oiUniversePaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategyThirteenUniverseEngine.STRATEGY_KEY,
+    startEngine: strategyThirteenUniverseEngine.startEngine,
+    stopEngine: strategyThirteenUniverseEngine.stopEngine,
+    updateEngineSettings: strategyThirteenUniverseEngine.updateEngineSettings,
+    getEngineSnapshot: strategyThirteenUniverseEngine.getEngineSnapshot,
+    ensureWallet: strategyThirteenUniverseEngine.ensureWallet,
+    recalcWallet: strategyThirteenUniverseEngine.recalcWalletFromTrades,
+    ensureRunning: strategyThirteenUniverseEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategyThirteenUniverseEngine.reconcileOpenTrades,
+    closeOpenPosition: strategyThirteenUniverseEngine.closeOpenPosition,
+    refreshOpenMark: strategyThirteenUniverseEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategyThirteenUniverseEngine.clearDailySkipState,
+  };
+}
+
+function putBuyPaperLiveCtx(strategyId) {
+  return {
+    strategyId,
+    strategyKey: strategySevenPutBuyEngine.STRATEGY_KEY,
+    startEngine: strategySevenPutBuyEngine.startEngine,
+    stopEngine: strategySevenPutBuyEngine.stopEngine,
+    updateEngineSettings: strategySevenPutBuyEngine.updateEngineSettings,
+    getEngineSnapshot: strategySevenPutBuyEngine.getEngineSnapshot,
+    ensureWallet: strategySevenPutBuyEngine.ensureWallet,
+    recalcWallet: strategySevenPutBuyEngine.recalcWalletFromTrades,
+    ensureRunning: strategySevenPutBuyEngine.ensureEngineRunning,
+    reconcileOpenTrades: strategySevenPutBuyEngine.reconcileOpenTrades,
+    closeOpenPosition: strategySevenPutBuyEngine.closeOpenPosition,
+    refreshOpenMark: strategySevenPutBuyEngine.refreshOpenPositionMarkForStatus,
+    clearDailySkip: strategySevenPutBuyEngine.clearDailySkipState,
+  };
+}
+
 function isMorningOiLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-9' || strategyId === 'strategy-10';
+  return strategyId === 'strategy-9' || strategyId === 'strategy-10' || strategyId === 'strategy-11';
 }
 
 const LIVE_STRATEGIES = {
+  'strategy-3': putBuyPaperLiveCtx('strategy-3'),
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-9': morningOiPaperLiveCtx('strategy-9'),
   'strategy-10': morningOiMultiPaperLiveCtx('strategy-10'),
+  'strategy-11': oiUniversePaperLiveCtx('strategy-11'),
 };
 
 function getLiveContext(req) {
@@ -346,7 +390,9 @@ async function getStatus(req, res) {
           ? 'Short straddle'
           : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
-              : ctx.strategyId === 'strategy-10'
+              : ctx.strategyId === 'strategy-11'
+                ? 'OI Universe Scanner'
+                : ctx.strategyId === 'strategy-10'
                 ? 'OI Wall Multi'
                 : isMorningOiLiveStrategyId(ctx.strategyId)
                   ? 'OI Wall Entry'
@@ -417,11 +463,15 @@ function stopLive(req, res) {
 const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct', 'targetVolCrushPct', 'stopVolExpandPct']);
 const OPTIONAL_POINT_KEYS = new Set(['targetPoints', 'stopLossPoints', 'targetProfitPoints']);
 const SIGNAL_LIST_KEYS = new Set(['enabledPeSignals', 'enabledCeSignals']);
+const STRING_LIST_KEYS = new Set(['universe']);
 
 function coerceLiveEngineSetting(key, value) {
-  if (SIGNAL_LIST_KEYS.has(key)) {
+  if (SIGNAL_LIST_KEYS.has(key) || STRING_LIST_KEYS.has(key)) {
     if (value == null) return undefined;
     if (Array.isArray(value)) return value.map((id) => String(id));
+    if (typeof value === 'string') {
+      return value.split(',').map((s) => s.trim()).filter(Boolean);
+    }
     if (typeof value === 'object') {
       return Object.entries(value)
         .filter(([, enabled]) => enabled !== false && enabled !== 'false' && enabled !== 0)

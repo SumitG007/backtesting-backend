@@ -1,4 +1,4 @@
-const { PRESET_SYMBOLS, DEFAULT_LOT_SIZES } = require('../config/constants');
+const { PRESET_SYMBOLS, DEFAULT_LOT_SIZES, DEFAULT_STRIKE_STEPS } = require('../config/constants');
 
 function resolveSymbolConfig(symbol) {
   const resolvedSymbol = String(symbol || 'BANKNIFTY').toUpperCase();
@@ -17,10 +17,9 @@ function getLotSize(symbol) {
 }
 
 function getStrikeStep(symbol) {
-  // All supported symbols use 100-point strike steps so strikes are always
-  // multiples of 100 (e.g. 25200, 25500, 25700) and never fall on 50-mid points.
-  void symbol;
-  return 100;
+  const resolvedSymbol = String(symbol || 'NIFTY').toUpperCase();
+  const step = Number(DEFAULT_STRIKE_STEPS[resolvedSymbol]);
+  return Number.isFinite(step) && step > 0 ? step : 100;
 }
 
 function getOptionPremiumFromSpotMove({
