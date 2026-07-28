@@ -115,6 +115,8 @@ const engineState = {
   lastOiError: null,
   lastFutError: null,
   todayBars1m: [],
+  /** 'FUT' | 'INDEX' | null — confirm must only use FUT. */
+  todayBars1mSource: null,
   lastCandleFetchAt: 0,
   lastCandleError: null,
   /** Confirm-timeframe bars (5m/15m) — FUT + entry option. */
@@ -557,8 +559,8 @@ function readExactClosedConfirmFromAgg(aggBars, {
   }
   if (idx < 0) return null;
   const bar = aggBars[idx];
-  // Need a full bucket of 1m prints (allow 4+ for rare gaps; reject tiny partials).
-  if (bar.oneMinCount < Math.max(3, step - 1)) return null;
+  // Full bucket only — e.g. 5 of 5 one-minute prints for a 5m confirm.
+  if (bar.oneMinCount < step) return null;
   const prev = idx > 0 && aggBars[idx - 1].dateKey === bar.dateKey ? aggBars[idx - 1] : null;
   return candleShapeFromOhlc(bar.open, bar.high, bar.low, bar.close, prev ? prev.close : null, {
     barKey: bar.barKey,
@@ -566,6 +568,7 @@ function readExactClosedConfirmFromAgg(aggBars, {
     closeMs: buildIstWallClockTimestamp(bar.dateKey, bar.bucket + step),
     intervalMinutes: step,
     bucket: bar.bucket,
+    oneMinCount: bar.oneMinCount,
     source: 'FUT_1M_AGG',
   });
 }
@@ -591,7 +594,9 @@ function readExactClosedConfirmFromRows(rows, {
   for (let i = 0; i < rows.length; i += 1) {
     const c = getIstClock(rows[i][0]);
     if (c.dateKey !== clock.dateKey) continue;
-    if (Math.abs(c.minutes - expectedOpen) <= 1) {
+    // Exact IST open minute only (map off-grid stamps to session bucket).
+    const barBucket = istCashSessionBucketStart(c.minutes, step);
+    if (barBucket === expectedOpen) {
       idx = i;
       break;
     }
@@ -1951,11 +1956,12 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
       dateKey: clock.dateKey,
     });
     engineState.todayBars1m = Array.isArray(rows) ? rows : [];
+    engineState.todayBars1mSource = 'FUT';
     engineState.lastCandleFetchAt = now;
     engineState.lastCandleError = null;
     return engineState.todayBars1m;
   } catch (err) {
-    // Fallback to index 1m if FUT candles fail (e.g. holiday instrument glitch).
+    // Index 1m is OK for day O/H/L display only — NEVER for entry confirm.
     try {
       const { rows } = await fetchTradingDayCandles({
         symbol: getEngineSymbol(),
@@ -1963,8 +1969,9 @@ async function refreshOneMinuteCandles(clock, { force = false } = {}) {
         dateKey: clock.dateKey,
       });
       engineState.todayBars1m = Array.isArray(rows) ? rows : [];
+      engineState.todayBars1mSource = 'INDEX';
       engineState.lastCandleFetchAt = now;
-      engineState.lastCandleError = `FUT candles failed (${err.message}); using index 1m`;
+      engineState.lastCandleError = `FUT candles failed (${err.message}); index 1m for display only`;
       return engineState.todayBars1m;
     } catch (err2) {
       engineState.lastCandleError = err.message || err2.message || '1m candle fetch failed';
@@ -2064,9 +2071,9 @@ async function refreshOptionConfirmCandles(clock, signal, spot, { force = false 
 
 /**
  * Favorable confirm on BOTH closed bars (never forming candle):
- * - FUT confirm built from 1m → exact previous 5m/15m IST bucket (09:15 grid)
+ * - FUT confirm built from FUT 1m only → exact previous 5m/15m IST bucket (full bucket)
  * - Option vendor TF bar for the SAME bucket must be green
- * First valid confirm bar opens at/after tradeFrom (skips 09:15 open noise).
+ * Index 1m fallback is never used for confirm.
  */
 async function hasReactionConfirmation(clock, signal, spot, { force = false } = {}) {
   const interval = getConfirmCandleInterval();
@@ -2074,23 +2081,34 @@ async function hasReactionConfirmation(clock, signal, spot, { force = false } = 
   const optionType = signal?.optionType === 'PE' ? 'PE' : 'CE';
   const minBarOpenMinutes = tradeFromMin();
 
-  // Prefer FUT 1m aggregation so "closed" is based on IST clock, not Dhan row quirks.
   const rows1m = await refreshOneMinuteCandles(clock, { force });
-  const agg = aggregateConfirmBarsFrom1m(rows1m, intervalMinutes);
-  let futCandle = readExactClosedConfirmFromAgg(agg, {
-    intervalMinutes,
-    clock,
-    minBarOpenMinutes,
-  });
+  let futCandle = null;
+  let candleError = engineState.lastCandleError || null;
 
-  // Fallback to vendor 5m/15m if 1m aggregate missing (rare).
-  if (!futCandle) {
+  if (engineState.todayBars1mSource === 'FUT' && Array.isArray(rows1m) && rows1m.length > 0) {
+    const agg = aggregateConfirmBarsFrom1m(rows1m, intervalMinutes);
+    futCandle = readExactClosedConfirmFromAgg(agg, {
+      intervalMinutes,
+      clock,
+      minBarOpenMinutes,
+    });
+  } else if (engineState.todayBars1mSource === 'INDEX') {
+    candleError = 'FUT 1m unavailable — refuse confirm on index candles';
+  } else if (!rows1m?.length) {
+    candleError = candleError || 'FUT 1m candles empty';
+  }
+
+  // Vendor FUT TF only if we have no FUT 1m aggregate (never after index fallback).
+  if (!futCandle && engineState.todayBars1mSource !== 'INDEX') {
     const futRows = await refreshFutConfirmCandles(clock, { force });
     futCandle = readExactClosedConfirmFromRows(futRows, {
       intervalMinutes,
       clock,
       minBarOpenMinutes,
     });
+    if (!futCandle && !candleError) {
+      candleError = engineState.lastConfirmCandleError || `${intervalMinutes}m FUT confirm bar missing`;
+    }
   }
 
   const futOk = futCandleConfirms(signal, futCandle);
@@ -2119,7 +2137,7 @@ async function hasReactionConfirmation(clock, signal, spot, { force = false } = 
     optionType: optionPack.optionType || optionType,
     futCandle,
     optionCandle,
-    candleError: engineState.lastConfirmCandleError || engineState.lastCandleError,
+    candleError: candleError || engineState.lastConfirmCandleError || engineState.lastCandleError,
   };
 }
 
@@ -2301,6 +2319,29 @@ async function evaluateEntry() {
     }
 
     const fresh = check.signal;
+
+    // Fresh FUT after OI revalidate — never reuse pre-confirm spot for proximity / strike.
+    let freshSpot = spot;
+    try {
+      freshSpot = await refreshFutPrice({ force: true, clock });
+    } catch (err) {
+      engineState.lastError = `Live FUT after revalidate: ${err.message}`;
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'FUT_FETCH_FAILED',
+        afterRevalidate: true,
+        error: err.message,
+      });
+      return;
+    }
+    if (!Number.isFinite(freshSpot) || freshSpot <= 0) {
+      engineState.lastError = 'Live FUT unavailable after revalidate';
+      return;
+    }
+    spot = freshSpot;
+    engineState.lastFut = spot;
+    engineState.lastSpot = spot;
+
     const freshDist = Math.abs(spot - Number(fresh.levelStrike));
     if (freshDist > engineState.settings.proximityPoints) {
       logEntry('WAIT_PROXIMITY', {
@@ -2335,6 +2376,7 @@ async function evaluateEntry() {
         optionOk: freshConfirmDetail?.optionOk,
         usedSameBar: freshConfirmDetail?.usedSameBar,
         optionStrike: freshConfirmDetail?.strike,
+        candleError: freshConfirmDetail?.candleError,
       });
       return;
     }
@@ -2367,7 +2409,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
     if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) return;
 
     const symbol = getEngineSymbol();
-    const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    let optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
     if (sideAlreadyTradedToday(optionType)) {
       logEntry('ENTRY_SKIP', {
         ist: istClockLabel(clock),
@@ -2377,6 +2419,111 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       });
       return;
     }
+
+    // Fill-time re-check: FUT proximity + wall/ΔOI can drift while premiums load.
+    let fillSpot = Number(spot);
+    try {
+      fillSpot = await refreshFutPrice({ force: true, clock });
+    } catch (err) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'FUT_FETCH_FAILED',
+        atPlace: true,
+        error: err.message,
+      });
+      return;
+    }
+    if (!Number.isFinite(fillSpot) || fillSpot <= 0) {
+      logEntry('ENTRY_SKIP', { ist: istClockLabel(clock), reason: 'FUT_UNAVAILABLE', atPlace: true });
+      return;
+    }
+    spot = fillSpot;
+    engineState.lastFut = spot;
+    engineState.lastSpot = spot;
+
+    const prox = Number(engineState.settings.proximityPoints) || 20;
+    const dist = Math.abs(spot - Number(signal.levelStrike));
+    if (dist > prox) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'PROXIMITY_LOST_AT_FILL',
+        fut: spot,
+        level: signal.levelStrike,
+        dist: Number(dist.toFixed(1)),
+        need: prox,
+      });
+      return;
+    }
+
+    let fillCheck;
+    try {
+      fillCheck = await revalidateWallEntry(clock, signal);
+    } catch (err) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'OI_REVALIDATE_FAILED',
+        atPlace: true,
+        error: err.message,
+      });
+      return;
+    }
+    if (!fillCheck.ok) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: fillCheck.reason,
+        intended: optionType,
+        level: signal.levelStrike,
+        atPlace: true,
+      });
+      return;
+    }
+    signal = fillCheck.signal || signal;
+    const fillType = signal.optionType === 'PE' ? 'PE' : 'CE';
+    if (fillType !== optionType) {
+      logEntry('ENTRY_SKIP_REVALIDATE', {
+        ist: istClockLabel(clock),
+        reason: 'OI_SIDE_FLIPPED',
+        intended: optionType,
+        now: fillType,
+        atPlace: true,
+      });
+      return;
+    }
+    optionType = fillType;
+    if (sideAlreadyTradedToday(optionType)) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'SAME_SIDE_DONE',
+        optionType,
+        atPlace: true,
+      });
+      return;
+    }
+
+    // Confirm must still be the exact previous closed bucket (no stale chase).
+    let fillConfirm = null;
+    try {
+      fillConfirm = await hasReactionConfirmation(clock, signal, spot, { force: true });
+    } catch (err) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'CONFIRM_FAILED_AT_FILL',
+        error: err.message,
+      });
+      return;
+    }
+    if (!fillConfirm?.ok) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'CONFIRM_LOST_AT_FILL',
+        futOk: fillConfirm?.futOk,
+        optionOk: fillConfirm?.optionOk,
+        candleError: fillConfirm?.candleError,
+      });
+      return;
+    }
+    confirmDetail = fillConfirm;
+
     const expiry = signal.expiry || (await getEntryExpiry(symbol, clock.dateKey));
     const strikeStep = getStrikeStep(symbol);
     const strike = Number.isFinite(Number(confirmDetail?.strike))
@@ -2391,6 +2538,30 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
     const entryPremium = premiumFromChain(premiums, optionType);
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
       engineState.lastError = `OI Wall: missing ${optionType} premium for ${strike}`;
+      return;
+    }
+
+    // Last proximity glance after premium fetch (chain call can take seconds).
+    try {
+      const lastSpot = await refreshFutPrice({ force: true, clock });
+      if (Number.isFinite(lastSpot) && lastSpot > 0) {
+        spot = lastSpot;
+        engineState.lastFut = spot;
+        engineState.lastSpot = spot;
+      }
+    } catch {
+      /* keep prior fill spot */
+    }
+    const lastDist = Math.abs(spot - Number(signal.levelStrike));
+    if (lastDist > prox) {
+      logEntry('ENTRY_SKIP', {
+        ist: istClockLabel(clock),
+        reason: 'PROXIMITY_LOST_AFTER_PREMIUM',
+        fut: spot,
+        level: signal.levelStrike,
+        dist: Number(lastDist.toFixed(1)),
+        need: prox,
+      });
       return;
     }
 
