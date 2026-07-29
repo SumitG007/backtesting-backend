@@ -56,14 +56,16 @@ const livePaperTradeSchema = new mongoose.Schema(
 
 livePaperTradeSchema.index({ entryTime: -1 });
 livePaperTradeSchema.index({ strategyKey: 1, exitTime: 1 });
-// At most one open paper trade per auto-strategy; manual console allows multiple opens.
+// OI Universe allows many symbols, but never two OPEN trades for the same symbol.
+// This database constraint closes the race between local/live processes sharing Mongo.
 livePaperTradeSchema.index(
-  { strategyKey: 1 },
+  { strategyKey: 1, symbol: 1 },
   {
     unique: true,
+    name: 'oi_universe_one_open_per_symbol',
     partialFilterExpression: {
-      exitTime: null,
-      strategyKey: { $ne: 'manual_console_live' },
+      strategyKey: 'strategy13_oi_universe_live',
+      status: 'OPEN',
     },
   },
 );

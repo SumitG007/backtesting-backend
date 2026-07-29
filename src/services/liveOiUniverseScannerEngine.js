@@ -35,6 +35,27 @@ const { broadcast } = require('./realtimeSocket');
 const STRATEGY_KEY = STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy13';
 const optionSubKey = (tradeId) => `engine:strategy13:option:${String(tradeId)}`;
+let openSymbolIndexPromise = null;
+
+function ensureOpenSymbolUniqueIndex() {
+  if (!openSymbolIndexPromise) {
+    openSymbolIndexPromise = LivePaperTrade.collection.createIndex(
+      { strategyKey: 1, symbol: 1 },
+      {
+        unique: true,
+        name: 'oi_universe_one_open_per_symbol',
+        partialFilterExpression: {
+          strategyKey: STRATEGY_KEY,
+          status: 'OPEN',
+        },
+      },
+    ).catch((err) => {
+      openSymbolIndexPromise = null;
+      throw err;
+    });
+  }
+  return openSymbolIndexPromise;
+}
 
 const DEFAULT_UNIVERSE = [
   // Weekly indexes first
@@ -152,6 +173,8 @@ const engineState = {
   openPositionMarks: {},
   /** tradeId -> { ltp, ts } */
   lastOptionTicks: {},
+  /** tradeIds with a live WS option feed attached */
+  subscribedOptionIds: new Set(),
   /** @deprecated single-slot aliases kept for older UI/status readers */
   openTradeId: null,
   openTradeLite: null,
@@ -166,6 +189,8 @@ const engineState = {
   positionPollTimer: null,
   /** tradeIds currently finalizing exit */
   closingTradeIds: new Set(),
+  /** symbols currently mid-entry (blocks same-symbol race across awaits) */
+  enteringSymbols: new Set(),
   enteringTrade: false,
   evaluatingEntry: false,
   lastMarkPersistAt: 0,
@@ -999,7 +1024,42 @@ function syncLegacyOpenAliases() {
 
 function hasOpenOnSymbol(symbol) {
   const sym = String(symbol || '').toUpperCase();
-  return Boolean(engineState.openTradeIdBySymbol[sym]);
+  return Boolean(engineState.openTradeIdBySymbol[sym]) || engineState.enteringSymbols.has(sym);
+}
+
+async function findOpenTradeOnSymbol(symbol) {
+  const sym = String(symbol || '').toUpperCase();
+  return LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    symbol: { $regex: `^${sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    exitTime: null,
+    status: { $ne: 'CLOSED' },
+  }).sort({ entryTime: 1 });
+}
+
+/** Shared cooldown across local+live (in-memory cooldown alone is not enough). */
+async function recentlyClosedOnSymbol(symbol) {
+  const sym = String(symbol || '').toUpperCase();
+  const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+  // Always enforce at least 2 minutes per symbol after any exit (stops SL churn).
+  const minGapMs = Math.max(cooldownMs, 2 * 60 * 1000);
+  const since = new Date(Date.now() - minGapMs);
+  const recent = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    symbol: { $regex: `^${sym.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    exitTime: { $gte: since },
+    status: 'CLOSED',
+  })
+    .sort({ exitTime: -1 })
+    .select('_id exitTime reason')
+    .lean();
+  if (!recent) return null;
+  return {
+    tradeId: String(recent._id),
+    exitTime: recent.exitTime,
+    reason: recent.reason,
+    minGapMs,
+  };
 }
 
 function cacheOpenTradeLite(trade) {
@@ -1040,6 +1100,7 @@ function detachOpenTrade(tradeId) {
     delete engineState.openTradeIdBySymbol[sym];
   }
   unsubscribeLiveSymbol(optionSubKey(id));
+  engineState.subscribedOptionIds.delete(id);
   syncLegacyOpenAliases();
   if (engineState.openTradeIds.size === 0 && engineState.positionPollTimer) {
     clearInterval(engineState.positionPollTimer);
@@ -1054,6 +1115,7 @@ function clearOpenTrade() {
   engineState.openTradeLites = {};
   engineState.openPositionMarks = {};
   engineState.lastOptionTicks = {};
+  engineState.subscribedOptionIds = new Set();
   syncLegacyOpenAliases();
 }
 
@@ -1072,8 +1134,33 @@ async function subscribeOpenOption(trade) {
       exchangeSegment: inst.exchangeSegment,
       onTick: (tick) => onOptionTickForTrade(id, tick),
     });
+    engineState.subscribedOptionIds.add(id);
   } catch (err) {
     engineState.lastError = `Option subscribe: ${err.message}`;
+  }
+}
+
+/**
+ * Attach WS option feeds for any open trade that lacks one, so carried-over
+ * positions keep live ticks without needing a restart.
+ */
+async function ensureOptionSubscriptions() {
+  const missing = [...engineState.openTradeIds].filter(
+    (id) => !engineState.subscribedOptionIds.has(id),
+  );
+  if (!missing.length) return;
+  for (const id of missing) {
+    // eslint-disable-next-line no-await-in-loop
+    const trade = await LivePaperTrade.findById(id);
+    if (!trade || trade.exitTime) {
+      detachOpenTrade(id);
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await subscribeOpenOption(trade);
+  }
+  if (engineState.openTradeIds.size > 0 && !engineState.positionPollTimer) {
+    startPositionPoll();
   }
 }
 
@@ -1248,14 +1335,34 @@ function premiumFromChain(premiums, optionType) {
 }
 
 async function placeStrongEntry(slot, signal, clock) {
-  if (engineState.enteringTrade) return;
-  const symbol = slot.symbol;
+  const symbol = String(slot.symbol || '').toUpperCase();
   if (hasOpenOnSymbol(symbol)) {
     logLine('ENTRY_SKIP', { symbol, reason: 'ALREADY_OPEN_ON_SYMBOL' });
     return;
   }
+  // Reserve immediately so parallel scan ticks / local+live races cannot double-enter.
+  engineState.enteringSymbols.add(symbol);
   engineState.enteringTrade = true;
   try {
+    // Atomic DB guard: local and deployed engines may share this Mongo.
+    await ensureOpenSymbolUniqueIndex();
+    const dbOpen = await findOpenTradeOnSymbol(symbol);
+    if (dbOpen) {
+      cacheOpenTradeLite(dbOpen);
+      logLine('ENTRY_SKIP', { symbol, reason: 'DB_ALREADY_OPEN', tradeId: dbOpen._id.toString() });
+      return;
+    }
+    const recentClose = await recentlyClosedOnSymbol(symbol);
+    if (recentClose) {
+      logLine('ENTRY_SKIP', {
+        symbol,
+        reason: 'SYMBOL_COOLDOWN',
+        lastExit: recentClose.exitTime,
+        lastReason: recentClose.reason,
+        minGapMs: recentClose.minGapMs,
+      });
+      return;
+    }
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
     // Seed from signal if slot lost FUT (e.g. brief memory gap) but STRONG still carries fut.
     if (!Number.isFinite(slot.lastFut) && Number.isFinite(Number(signal.fut)) && Number(signal.fut) > 0) {
@@ -1355,6 +1462,14 @@ async function placeStrongEntry(slot, signal, clock) {
     const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = hasSl ? Math.max(0.05, entryPremium - stopLossPoints) : null;
 
+    // Final DB guard (local + live both writing same Mongo).
+    const dbOpenAgain = await findOpenTradeOnSymbol(symbol);
+    if (dbOpenAgain) {
+      cacheOpenTradeLite(dbOpenAgain);
+      logLine('ENTRY_SKIP', { symbol, reason: 'DB_ALREADY_OPEN_PRE_CREATE', tradeId: dbOpenAgain._id.toString() });
+      return;
+    }
+
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
       symbol,
@@ -1420,9 +1535,10 @@ async function placeStrongEntry(slot, signal, clock) {
     startPositionPoll();
   } catch (err) {
     engineState.lastError = err.message;
-    logLine('ENTRY_FAILED', { error: err.message });
+    logLine('ENTRY_FAILED', { error: err.message, symbol });
   } finally {
     engineState.enteringTrade = false;
+    engineState.enteringSymbols.delete(symbol);
   }
 }
 
@@ -1450,6 +1566,9 @@ async function evaluateEntry(clock) {
     for (const c of candidates) {
       if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) break;
       if (hasOpenOnSymbol(c.slot.symbol)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const recentClose = await recentlyClosedOnSymbol(c.slot.symbol);
+      if (recentClose) continue;
       // eslint-disable-next-line no-await-in-loop
       await placeStrongEntry(c.slot, c.signal, clock);
     }
@@ -1636,6 +1755,7 @@ async function scanTick() {
 
   await evaluateEntry(clock);
   if (engineState.openTradeIds.size > 0) {
+    await ensureOptionSubscriptions();
     await checkOpenTrade();
   }
 }
@@ -1714,6 +1834,7 @@ async function startEngine({ settings = {} } = {}) {
   engineState.running = true;
   engineState.startedAt = new Date().toISOString();
   engineState.lastError = null;
+  await ensureOpenSymbolUniqueIndex();
   await ensureWallet();
   const clock = getIstClock(new Date());
   await syncTradesToday(clock);
