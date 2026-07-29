@@ -349,32 +349,54 @@ async function getStatus(req, res) {
         wallet = await ctx.ensureWallet();
       }
     }
-    let openTrade = await LivePaperTrade.findOne({
+    let openTrades = await LivePaperTrade.find({
       ...keyFilter,
       exitTime: null,
       status: { $ne: 'CLOSED' },
     })
-      .sort({ entryTime: -1 })
+      .sort({ entryTime: 1 })
       .lean();
-    if (openTrade && typeof ctx.refreshOpenMark === 'function') {
+    if (openTrades.length && typeof ctx.refreshOpenMark === 'function') {
       try {
         await ctx.refreshOpenMark();
-        openTrade = await LivePaperTrade.findById(openTrade._id).lean();
+        openTrades = await LivePaperTrade.find({
+          ...keyFilter,
+          exitTime: null,
+          status: { $ne: 'CLOSED' },
+        })
+          .sort({ entryTime: 1 })
+          .lean();
       } catch (markErr) {
         // Keep last DB mark on refresh failure
       }
     }
+    let openTrade = openTrades[0] || null;
+    // OI Universe: multi-open (one per symbol). Other strategies keep single openTrade.
+    if (ctx.strategyId !== 'strategy-11' && openTrades.length > 1) {
+      openTrades = openTrade ? [openTrade] : [];
+    }
     const snapshot = ctx.getEngineSnapshot();
-    const snapMark = snapshot.openPositionMark;
-    const dbMark = openTrade?.openPositionMark;
-    const snapLtp = Number(snapMark?.optionLtp);
-    const dbLtp = Number(dbMark?.optionLtp);
-    const openPositionMark =
-      (Number.isFinite(snapLtp) && snapLtp > 0 ? snapMark : null)
-      || (Number.isFinite(dbLtp) && dbLtp > 0 ? dbMark : null)
-      || snapMark
-      || dbMark
-      || null;
+    const snapMarks = snapshot.openPositionMarks || {};
+    const preferMark = (snapMark, dbMark) => {
+      const snapLtp = Number(snapMark?.optionLtp);
+      const dbLtp = Number(dbMark?.optionLtp);
+      return (
+        (Number.isFinite(snapLtp) && snapLtp > 0 ? snapMark : null)
+        || (Number.isFinite(dbLtp) && dbLtp > 0 ? dbMark : null)
+        || snapMark
+        || dbMark
+        || null
+      );
+    };
+    const openPositionMarks = {};
+    for (const t of openTrades) {
+      const id = String(t._id);
+      openPositionMarks[id] = preferMark(snapMarks[id], t.openPositionMark);
+    }
+    const openPositionMark = preferMark(
+      snapshot.openPositionMark || (openTrade ? snapMarks[String(openTrade._id)] : null),
+      openTrade?.openPositionMark,
+    );
     const todayTrades = await LivePaperTrade.find({
       ...keyFilter,
       entryDateKey: clock.dateKey,
@@ -429,6 +451,8 @@ async function getStatus(req, res) {
         lastResetAt: wallet.lastResetAt,
       },
       openTrade: openTrade || null,
+      openTrades,
+      openPositionMarks,
     });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -668,7 +692,8 @@ async function closeLivePosition(req, res) {
     if (typeof ctx.ensureRunning === 'function') {
       await ctx.ensureRunning();
     }
-    const result = await ctx.closeOpenPosition({ reason: 'MANUAL_CLOSE' });
+    const tradeId = req.body?.tradeId || req.query?.tradeId || null;
+    const result = await ctx.closeOpenPosition({ reason: 'MANUAL_CLOSE', tradeId });
     if (typeof ctx.recalcWallet === 'function') {
       await ctx.recalcWallet();
     }

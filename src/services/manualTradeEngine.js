@@ -41,7 +41,9 @@ const POLL_INTERVAL_MS = 1000;
 const EOD_EXIT = 920; // 15:20 IST
 const MIN_HOLD_MS = 5000;
 const WS_FRESH_MS = 12000;
+const LIVE_MARK_EMIT_MIN_GAP_MS = 80;
 const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY']);
+const MANUAL_STRATEGY_ID = 'manual-console';
 
 const engineState = {
   running: false,
@@ -49,13 +51,19 @@ const engineState = {
   lastError: null,
   lastPollAt: null,
   pollTimer: null,
+  lastLiveMarkEmitAt: 0,
+  liveMarkEmitTimer: null,
 };
 
-/** tradeId -> { key, lastTick: { ltp, ts }, instrument } */
+/** tradeId -> { key, lastTick: { ltp, ts }, instrument, tradeLite } */
 const liveSubs = new Map();
 const tickExitInflight = new Set();
 const markPersistAt = new Map();
+/** tradeId -> latest openPositionMark (in-memory for instant UI) */
+const latestMarks = new Map();
 const MARK_PERSIST_MIN_MS = 400;
+
+const { broadcast } = require('./realtimeSocket');
 
 function istLabel(clock) {
   const h = Math.floor(clock.minutes / 60);
@@ -262,6 +270,77 @@ function tradeSubKey(tradeId) {
   return `manual:${String(tradeId)}`;
 }
 
+function cacheTradeLite(trade) {
+  if (!trade?._id) return null;
+  const id = String(trade._id);
+  const lite = {
+    _id: id,
+    symbol: trade.symbol,
+    side: trade.side,
+    product: trade.product,
+    optionType: trade.optionType,
+    strike: trade.strike,
+    expiryDate: trade.expiryDate,
+    entryPremium: trade.entryPremium,
+    qty: trade.qty,
+    lots: trade.lots,
+    investedAmount: trade.investedAmount,
+    stopLossPremium: trade.stopLossPremium,
+    targetPremium: trade.targetPremium,
+    entryDateKey: trade.entryDateKey,
+    entryTime: trade.entryTime,
+  };
+  const prev = liveSubs.get(id) || { key: tradeSubKey(id) };
+  liveSubs.set(id, { ...prev, tradeLite: lite });
+  return lite;
+}
+
+function getLiveMarkSnapshot() {
+  const marks = {};
+  for (const [id, mark] of latestMarks.entries()) {
+    marks[id] = mark;
+  }
+  return {
+    strategyId: MANUAL_STRATEGY_ID,
+    open: latestMarks.size > 0,
+    marks,
+    at: new Date().toISOString(),
+  };
+}
+
+function publishManualMarkSnapshot(extra = {}) {
+  const now = Date.now();
+  const gap = now - engineState.lastLiveMarkEmitAt;
+  const payload = { ...getLiveMarkSnapshot(), ...extra };
+  if (gap >= LIVE_MARK_EMIT_MIN_GAP_MS) {
+    engineState.lastLiveMarkEmitAt = now;
+    if (engineState.liveMarkEmitTimer) {
+      clearTimeout(engineState.liveMarkEmitTimer);
+      engineState.liveMarkEmitTimer = null;
+    }
+    broadcast('paper-live:mark', payload);
+    return;
+  }
+  if (engineState.liveMarkEmitTimer) return;
+  engineState.liveMarkEmitTimer = setTimeout(() => {
+    engineState.liveMarkEmitTimer = null;
+    engineState.lastLiveMarkEmitAt = Date.now();
+    broadcast('paper-live:mark', getLiveMarkSnapshot());
+  }, Math.max(20, LIVE_MARK_EMIT_MIN_GAP_MS - gap));
+}
+
+function publishTradeMark(tradeId, positionMark, extra = {}) {
+  const id = String(tradeId);
+  if (positionMark && Number(positionMark.optionLtp) > 0) {
+    latestMarks.set(id, { ...positionMark, tradeId: id });
+  }
+  publishManualMarkSnapshot({
+    tradeId: id,
+    mark: latestMarks.get(id) || positionMark || null,
+    ...extra,
+  });
+}
+
 function getFreshWsTick(tradeId) {
   const sub = liveSubs.get(String(tradeId));
   const tick = sub?.lastTick;
@@ -342,7 +421,20 @@ async function evaluateExitsFromMark(trade, mark, clock) {
 
 async function onManualOptionTick(tradeId, ltp) {
   const id = String(tradeId);
-  rememberTick(id, ltp);
+  const n = Number(ltp);
+  if (!Number.isFinite(n) || n <= 0) return;
+  rememberTick(id, n);
+
+  // Instant UI path — no DB wait (same idea as OI Wall Entry).
+  const lite = liveSubs.get(id)?.tradeLite;
+  if (lite) {
+    const clock = getIstClock(new Date());
+    const mark = { optionLtp: n, spot: null, source: 'websocket' };
+    const positionMark = buildOpenPositionMark(lite, mark, clock);
+    publishTradeMark(id, positionMark);
+    persistMarkThrottled(lite, positionMark).catch(() => {});
+  }
+
   if (tickExitInflight.has(id)) return;
   tickExitInflight.add(id);
   try {
@@ -353,11 +445,15 @@ async function onManualOptionTick(tradeId, ltp) {
     });
     if (!trade) {
       dropTradeSubscription(id);
+      latestMarks.delete(id);
+      publishManualMarkSnapshot({ tradeId: id, mark: null, open: latestMarks.size > 0 });
       return;
     }
+    cacheTradeLite(trade);
     const clock = getIstClock(new Date());
-    const mark = { optionLtp: Number(ltp), spot: null, source: 'websocket' };
+    const mark = { optionLtp: n, spot: null, source: 'websocket' };
     const positionMark = buildOpenPositionMark(trade, mark, clock);
+    publishTradeMark(id, positionMark);
     await persistMarkThrottled(trade, positionMark);
     await evaluateExitsFromMark(trade, mark, clock);
   } catch (err) {
@@ -374,10 +470,12 @@ function dropTradeSubscription(tradeId) {
   liveSubs.delete(id);
   markPersistAt.delete(id);
   tickExitInflight.delete(id);
+  latestMarks.delete(id);
 }
 
 async function ensureTradeSubscription(trade) {
   const id = String(trade._id);
+  cacheTradeLite(trade);
   if (liveSubs.has(id) && liveSubs.get(id)?.instrument) return;
 
   const key = tradeSubKey(id);
@@ -397,7 +495,8 @@ async function ensureTradeSubscription(trade) {
       });
     }
 
-    liveSubs.set(id, { key, instrument, lastTick: liveSubs.get(id)?.lastTick || null });
+    const prev = liveSubs.get(id) || { key };
+    liveSubs.set(id, { ...prev, key, instrument, lastTick: prev.lastTick || null });
     subscribeLiveInstrument({
       key,
       securityId: instrument.securityId,
@@ -410,7 +509,14 @@ async function ensureTradeSubscription(trade) {
     // Seed an immediate LTP so UI is not blank waiting for the first WS packet.
     try {
       const seeded = await fetchInstrumentLtp(instrument);
-      if (Number.isFinite(seeded) && seeded > 0) rememberTick(id, seeded);
+      if (Number.isFinite(seeded) && seeded > 0) {
+        rememberTick(id, seeded);
+        const clock = getIstClock(new Date());
+        const mark = { optionLtp: seeded, spot: null, source: 'marketfeed' };
+        const positionMark = buildOpenPositionMark(trade, mark, clock);
+        publishTradeMark(id, positionMark);
+        persistMarkThrottled(trade, positionMark).catch(() => {});
+      }
     } catch {
       // WS ticks will populate shortly
     }
@@ -538,6 +644,14 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   // Subscribe immediately so LTP/MTM update via WS without waiting for next poll.
   ensureTradeSubscription(tradeDoc).catch(() => {});
   rememberTick(tradeDoc._id, entryPremium);
+  {
+    const seedMark = buildOpenPositionMark(
+      tradeDoc,
+      { optionLtp: entryPremium, spot, source: 'entry' },
+      clock,
+    );
+    publishTradeMark(tradeDoc._id, seedMark);
+  }
 
   return tradeDoc;
 }
@@ -807,6 +921,13 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   trade.openPositionMarkAt = null;
   await trade.save();
   dropTradeSubscription(trade._id);
+  publishManualMarkSnapshot({
+    tradeId: String(trade._id),
+    mark: null,
+    open: latestMarks.size > 0,
+    closed: true,
+    reason,
+  });
 
   const wallet = await ensureWallet();
   wallet.balance += pnl;
@@ -973,6 +1094,7 @@ async function updatePositionRisk(tradeId, payload = {}) {
     .join(' | ')
     .slice(0, 500);
   await trade.save();
+  cacheTradeLite(trade);
 
   await logAction({
     action: 'POSITION_RISK_UPDATED',
@@ -1057,6 +1179,8 @@ async function checkOpenPositions(clock) {
 
       const mark = await resolveMarkForTrade(trade);
       const positionMark = buildOpenPositionMark(trade, mark, clock);
+      cacheTradeLite(trade);
+      publishTradeMark(trade._id, positionMark);
       await persistMarkThrottled(trade, positionMark);
       await evaluateExitsFromMark(trade, mark, clock);
     } catch (err) {
@@ -1237,17 +1361,23 @@ async function getStatus() {
     .sort({ entryTime: -1 })
     .lean();
 
-  // Overlay fresh WS ticks so /status reflects live LTP even between DB persists.
+  // Overlay freshest in-memory / WS marks so /status is never stale vs Socket ticks.
   let unrealizedPnl = 0;
   for (const t of openTrades) {
-    const wsTick = getFreshWsTick(t._id);
-    if (wsTick) {
+    const id = String(t._id);
+    const mem = latestMarks.get(id);
+    const wsTick = getFreshWsTick(id);
+    if (mem && Number(mem.optionLtp) > 0) {
+      t.openPositionMark = mem;
+      t.openPositionMarkAt = mem.at ? new Date(mem.at) : t.openPositionMarkAt;
+    } else if (wsTick) {
       t.openPositionMark = buildOpenPositionMark(
         t,
         { optionLtp: wsTick.ltp, spot: t.openPositionMark?.spot ?? null, source: 'websocket' },
         clock,
       );
       t.openPositionMarkAt = new Date(wsTick.ts);
+      latestMarks.set(id, t.openPositionMark);
     }
     unrealizedPnl += Number(t.openPositionMark?.unrealizedPnl) || 0;
   }
@@ -1343,4 +1473,5 @@ module.exports = {
   resetWallet,
   recalcWalletFromTrades,
   logAction,
+  getLiveMarkSnapshot,
 };

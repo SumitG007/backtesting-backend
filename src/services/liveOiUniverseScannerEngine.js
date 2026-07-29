@@ -1,7 +1,9 @@
 /**
  * Strategy 13 — OI Universe Scanner paper live.
  * Monitors NIFTY + BANKNIFTY + SENSEX + top liquid OPTSTK names on a priority OI schedule.
- * Stronger entry filters than OI Wall Entry; one open position across the whole universe.
+ * Stronger entry filters than OI Wall Entry.
+ * Multi-position: one open per symbol; stocks carry overnight until SL / target / expiry
+ * (indexes still EOD square-off).
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -32,7 +34,7 @@ const { broadcast } = require('./realtimeSocket');
 
 const STRATEGY_KEY = STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy13';
-const OPTION_SUBSCRIPTION_KEY = 'engine:strategy13:option';
+const optionSubKey = (tradeId) => `engine:strategy13:option:${String(tradeId)}`;
 
 const DEFAULT_UNIVERSE = [
   // Weekly indexes first
@@ -140,6 +142,17 @@ const engineState = {
   scanCursor: 0,
   futRefreshCursor: 0,
   lastScanAt: 0,
+  /** @type {Set<string>} */
+  openTradeIds: new Set(),
+  /** symbol -> tradeId (at most one open per underlying) */
+  openTradeIdBySymbol: {},
+  /** tradeId -> lite */
+  openTradeLites: {},
+  /** tradeId -> mark */
+  openPositionMarks: {},
+  /** tradeId -> { ltp, ts } */
+  lastOptionTicks: {},
+  /** @deprecated single-slot aliases kept for older UI/status readers */
   openTradeId: null,
   openTradeLite: null,
   openPositionMark: null,
@@ -151,7 +164,8 @@ const engineState = {
   lastEntryDebug: null,
   pollTimer: null,
   positionPollTimer: null,
-  closingTrade: false,
+  /** tradeIds currently finalizing exit */
+  closingTradeIds: new Set(),
   enteringTrade: false,
   evaluatingEntry: false,
   lastMarkPersistAt: 0,
@@ -342,47 +356,46 @@ function applyExitPointsFromEntry(trade, exitPts) {
   return true;
 }
 
-/** Re-apply index/stock TG-SL to the current open paper trade (from entry). */
+/** Re-apply index/stock TG-SL to all open paper trades (from each entry). */
 async function reapplyExitPointsToOpenTrade({ reason = 'SETTINGS' } = {}) {
-  if (!engineState.openTradeId) return { ok: true, updated: false };
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.exitTime) return { ok: true, updated: false };
-  const exitPts = resolveExitPointsForSymbol(trade.symbol);
-  const before = {
-    targetPremium: trade.targetPremium,
-    stopLossPremium: trade.stopLossPremium,
-  };
-  if (!applyExitPointsFromEntry(trade, exitPts)) return { ok: false, updated: false, error: 'bad_entry' };
-  const sameTarget = Number(before.targetPremium) === Number(trade.targetPremium);
-  const sameSl =
-    (before.stopLossPremium == null && trade.stopLossPremium == null)
-    || Number(before.stopLossPremium) === Number(trade.stopLossPremium);
-  if (sameTarget && sameSl) {
+  const ids = [...engineState.openTradeIds];
+  if (!ids.length && engineState.openTradeId) ids.push(engineState.openTradeId);
+  if (!ids.length) return { ok: true, updated: 0 };
+  let updated = 0;
+  for (const id of ids) {
+    const trade = await LivePaperTrade.findById(id);
+    if (!trade || trade.exitTime) continue;
+    const exitPts = resolveExitPointsForSymbol(trade.symbol);
+    const before = {
+      targetPremium: trade.targetPremium,
+      stopLossPremium: trade.stopLossPremium,
+    };
+    if (!applyExitPointsFromEntry(trade, exitPts)) continue;
+    const sameTarget = Number(before.targetPremium) === Number(trade.targetPremium);
+    const sameSl =
+      (before.stopLossPremium == null && trade.stopLossPremium == null)
+      || Number(before.stopLossPremium) === Number(trade.stopLossPremium);
+    if (sameTarget && sameSl) {
+      cacheOpenTradeLite(trade);
+      continue;
+    }
+    const noteBit = `exits_reapplied=${reason}; ${exitPts.profile} tg=${exitPts.targetPoints} sl=${exitPts.hasStopLoss ? exitPts.stopLossPoints : 'off'}`;
+    trade.notes = [trade.notes, noteBit].filter(Boolean).join(' | ').slice(0, 500);
+    await trade.save();
     cacheOpenTradeLite(trade);
-    return { ok: true, updated: false, skipped: 'unchanged' };
+    updated += 1;
+    logLine('EXITS_REAPPLIED', {
+      tradeId: trade._id.toString(),
+      symbol: trade.symbol,
+      profile: exitPts.profile,
+      entry: trade.entryPremium,
+      before,
+      targetPremium: trade.targetPremium,
+      stopLossPremium: trade.stopLossPremium,
+      reason,
+    });
   }
-  const noteBit = `exits_reapplied=${reason}; ${exitPts.profile} tg=${exitPts.targetPoints} sl=${exitPts.hasStopLoss ? exitPts.stopLossPoints : 'off'}`;
-  trade.notes = [trade.notes, noteBit].filter(Boolean).join(' | ').slice(0, 500);
-  await trade.save();
-  cacheOpenTradeLite(trade);
-  logLine('EXITS_REAPPLIED', {
-    tradeId: trade._id.toString(),
-    symbol: trade.symbol,
-    profile: exitPts.profile,
-    entry: trade.entryPremium,
-    before,
-    targetPremium: trade.targetPremium,
-    stopLossPremium: trade.stopLossPremium,
-    reason,
-  });
-  return {
-    ok: true,
-    updated: true,
-    tradeId: trade._id.toString(),
-    profile: exitPts.profile,
-    targetPremium: trade.targetPremium,
-    stopLossPremium: trade.stopLossPremium,
-  };
+  return { ok: true, updated };
 }
 
 function tradeFromMin() {
@@ -949,26 +962,52 @@ async function syncTradesToday(clock) {
     entryDateKey: clock.dateKey,
   });
   engineState.tradesTodayCount = count;
-  const open = await LivePaperTrade.findOne({
+  const opens = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     exitTime: null,
     status: { $ne: 'CLOSED' },
-  }).sort({ entryTime: -1 });
-  engineState.openTradeId = open ? open._id.toString() : null;
-  if (open) cacheOpenTradeLite(open);
-  else {
-    engineState.openTradeLite = null;
-    engineState.openPositionMark = null;
+  }).sort({ entryTime: 1 });
+
+  const nextIds = new Set();
+  const nextBySymbol = {};
+  for (const trade of opens) {
+    const id = trade._id.toString();
+    const sym = String(trade.symbol || '').toUpperCase();
+    // Keep earliest open per symbol if duplicates somehow exist.
+    if (nextBySymbol[sym]) continue;
+    nextBySymbol[sym] = id;
+    nextIds.add(id);
+    cacheOpenTradeLite(trade);
   }
+
+  // Drop stale in-memory slots.
+  for (const id of [...engineState.openTradeIds]) {
+    if (!nextIds.has(id)) detachOpenTrade(id);
+  }
+  engineState.openTradeIds = nextIds;
+  engineState.openTradeIdBySymbol = nextBySymbol;
+  syncLegacyOpenAliases();
+}
+
+function syncLegacyOpenAliases() {
+  const firstId = [...engineState.openTradeIds][0] || null;
+  engineState.openTradeId = firstId;
+  engineState.openTradeLite = firstId ? engineState.openTradeLites[firstId] || null : null;
+  engineState.openPositionMark = firstId ? engineState.openPositionMarks[firstId] || null : null;
+  engineState.lastOptionTick = firstId ? engineState.lastOptionTicks[firstId] || null : null;
+}
+
+function hasOpenOnSymbol(symbol) {
+  const sym = String(symbol || '').toUpperCase();
+  return Boolean(engineState.openTradeIdBySymbol[sym]);
 }
 
 function cacheOpenTradeLite(trade) {
-  if (!trade) {
-    engineState.openTradeLite = null;
-    return;
-  }
-  engineState.openTradeLite = {
-    _id: trade._id?.toString?.() || String(trade._id),
+  if (!trade) return;
+  const id = trade._id?.toString?.() || String(trade._id);
+  const sym = String(trade.symbol || '').toUpperCase();
+  engineState.openTradeLites[id] = {
+    _id: id,
     symbol: trade.symbol,
     optionType: trade.optionType,
     strike: trade.strike,
@@ -979,18 +1018,47 @@ function cacheOpenTradeLite(trade) {
     targetPremium: trade.targetPremium,
     stopLossPremium: trade.stopLossPremium,
     entryTime: trade.entryTime,
+    entryDateKey: trade.entryDateKey,
+    kind: isIndexSymbol(sym) ? 'INDEX' : 'STOCK',
   };
+  engineState.openTradeIds.add(id);
+  if (!engineState.openTradeIdBySymbol[sym]) {
+    engineState.openTradeIdBySymbol[sym] = id;
+  }
+  syncLegacyOpenAliases();
+}
+
+function detachOpenTrade(tradeId) {
+  const id = String(tradeId);
+  const lite = engineState.openTradeLites[id];
+  const sym = String(lite?.symbol || '').toUpperCase();
+  engineState.openTradeIds.delete(id);
+  delete engineState.openTradeLites[id];
+  delete engineState.openPositionMarks[id];
+  delete engineState.lastOptionTicks[id];
+  if (sym && engineState.openTradeIdBySymbol[sym] === id) {
+    delete engineState.openTradeIdBySymbol[sym];
+  }
+  unsubscribeLiveSymbol(optionSubKey(id));
+  syncLegacyOpenAliases();
+  if (engineState.openTradeIds.size === 0 && engineState.positionPollTimer) {
+    clearInterval(engineState.positionPollTimer);
+    engineState.positionPollTimer = null;
+  }
 }
 
 function clearOpenTrade() {
-  engineState.openTradeId = null;
-  engineState.openTradeLite = null;
-  engineState.openPositionMark = null;
-  engineState.lastOptionTick = null;
-  unsubscribeLiveSymbol(OPTION_SUBSCRIPTION_KEY);
+  for (const id of [...engineState.openTradeIds]) detachOpenTrade(id);
+  engineState.openTradeIds = new Set();
+  engineState.openTradeIdBySymbol = {};
+  engineState.openTradeLites = {};
+  engineState.openPositionMarks = {};
+  engineState.lastOptionTicks = {};
+  syncLegacyOpenAliases();
 }
 
 async function subscribeOpenOption(trade) {
+  const id = trade._id?.toString?.() || String(trade._id);
   try {
     const inst = await resolveOptionInstrument({
       symbol: trade.symbol,
@@ -999,27 +1067,36 @@ async function subscribeOpenOption(trade) {
       optionType: trade.optionType,
     });
     await subscribeLiveInstrument({
-      key: OPTION_SUBSCRIPTION_KEY,
+      key: optionSubKey(id),
       securityId: inst.securityId,
       exchangeSegment: inst.exchangeSegment,
-      onTick: onOptionTick,
+      onTick: (tick) => onOptionTickForTrade(id, tick),
     });
   } catch (err) {
     engineState.lastError = `Option subscribe: ${err.message}`;
   }
 }
 
-function optionTickIsFresh() {
-  const ts = engineState.lastOptionTick?.ts;
+function optionTickIsFresh(tradeId) {
+  const tick = engineState.lastOptionTicks[String(tradeId)];
+  const ts = tick?.ts;
   return Number.isFinite(ts) && Date.now() - ts < TICK_FRESH_MAX_AGE_MS;
 }
 
 function getLiveMarkSnapshot() {
+  const marks = {};
+  for (const [id, mark] of Object.entries(engineState.openPositionMarks)) {
+    marks[id] = mark;
+  }
   return {
     strategyId: 'strategy-11',
-    open: Boolean(engineState.openTradeId),
+    open: engineState.openTradeIds.size > 0,
+    openCount: engineState.openTradeIds.size,
+    marks,
     mark: engineState.openPositionMark,
     openTradeLite: engineState.openTradeLite,
+    openTradeLites: { ...engineState.openTradeLites },
+    openTradeId: engineState.openTradeId,
     lastFut: null,
     at: new Date().toISOString(),
   };
@@ -1041,10 +1118,11 @@ function publishLiveMarkSnapshot(extra = {}) {
 }
 
 async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain = true } = {}) {
+  const id = trade._id?.toString?.() || String(trade._id);
   let optionLtp = null;
   let source = 'none';
-  if (preferTicks && optionTickIsFresh()) {
-    const tickLtp = Number(engineState.lastOptionTick.ltp);
+  if (preferTicks && optionTickIsFresh(id)) {
+    const tickLtp = Number(engineState.lastOptionTicks[id]?.ltp);
     if (Number.isFinite(tickLtp) && tickLtp > 0) {
       optionLtp = tickLtp;
       source = 'websocket';
@@ -1066,12 +1144,11 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
       /* keep */
     }
   }
-  // Never wipe a good mark with null/0 — keep last known LTP (or entry as provisional).
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) {
-    const prev = Number(engineState.openPositionMark?.optionLtp);
+    const prev = Number(engineState.openPositionMarks[id]?.optionLtp);
     if (Number.isFinite(prev) && prev > 0) {
       optionLtp = prev;
-      source = engineState.openPositionMark?.source || 'last';
+      source = engineState.openPositionMarks[id]?.source || 'last';
     } else {
       const entry = Number(trade.entryPremium);
       if (Number.isFinite(entry) && entry > 0) {
@@ -1092,20 +1169,23 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
     isLiveMark: source === 'websocket',
     unrealizedPnl,
     at: new Date().toISOString(),
+    tradeId: id,
   };
 }
 
 function publishOpenMark(trade, mark, { persist = false } = {}) {
+  const id = trade._id?.toString?.() || String(trade._id);
   const nextLtp = Number(mark?.optionLtp);
-  const prevLtp = Number(engineState.openPositionMark?.optionLtp);
-  // Don't replace a valid live/chain mark with an empty one.
+  const prevLtp = Number(engineState.openPositionMarks[id]?.optionLtp);
   if (!(Number.isFinite(nextLtp) && nextLtp > 0) && Number.isFinite(prevLtp) && prevLtp > 0) {
-    return engineState.openPositionMark;
+    return engineState.openPositionMarks[id];
   }
-  engineState.openPositionMark = {
+  const nextMark = {
     ...mark,
-    tradeId: trade._id.toString(),
+    tradeId: id,
   };
+  engineState.openPositionMarks[id] = nextMark;
+  syncLegacyOpenAliases();
   publishLiveMarkSnapshot();
   if (persist) {
     const now = Date.now();
@@ -1115,21 +1195,22 @@ function publishOpenMark(trade, mark, { persist = false } = {}) {
         { _id: trade._id },
         {
           $set: {
-            openPositionMark: engineState.openPositionMark,
+            openPositionMark: nextMark,
             openPositionMarkAt: new Date(),
           },
         },
       ).catch(() => {});
     }
   }
-  return engineState.openPositionMark;
+  return nextMark;
 }
 
-function publishTickMarkFast(ltp) {
+function publishTickMarkFast(tradeId, ltp) {
+  const id = String(tradeId);
   const n = Number(ltp);
   if (!Number.isFinite(n) || n <= 0) return;
-  const lite = engineState.openTradeLite;
-  if (!lite || !engineState.openTradeId) return;
+  const lite = engineState.openTradeLites[id];
+  if (!lite) return;
   const qty = Number(lite.qty) || 0;
   const entry = Number(lite.entryPremium) || 0;
   const mark = {
@@ -1138,19 +1219,21 @@ function publishTickMarkFast(ltp) {
     isLiveMark: true,
     unrealizedPnl: Number(((n - entry) * qty).toFixed(2)),
     at: new Date().toISOString(),
-    tradeId: engineState.openTradeId,
+    tradeId: id,
   };
-  engineState.openPositionMark = mark;
+  engineState.openPositionMarks[id] = mark;
+  syncLegacyOpenAliases();
   publishLiveMarkSnapshot();
 }
 
-async function onOptionTick({ ltp }) {
+function onOptionTickForTrade(tradeId, { ltp } = {}) {
+  const id = String(tradeId);
   const n = Number(ltp);
-  engineState.lastOptionTick = { ltp: n, ts: Date.now() };
-  if (engineState.openTradeId && Number.isFinite(n) && n > 0) {
-    publishTickMarkFast(n);
+  engineState.lastOptionTicks[id] = { ltp: n, ts: Date.now() };
+  if (Number.isFinite(n) && n > 0) {
+    publishTickMarkFast(id, n);
   }
-  checkOpenTrade({ preferTicks: true }).catch((err) => {
+  checkOpenTradeById(id, { preferTicks: true }).catch((err) => {
     engineState.lastError = `Universe tick check: ${err.message}`;
   });
 }
@@ -1165,10 +1248,14 @@ function premiumFromChain(premiums, optionType) {
 }
 
 async function placeStrongEntry(slot, signal, clock) {
-  if (engineState.enteringTrade || engineState.openTradeId) return;
+  if (engineState.enteringTrade) return;
+  const symbol = slot.symbol;
+  if (hasOpenOnSymbol(symbol)) {
+    logLine('ENTRY_SKIP', { symbol, reason: 'ALREADY_OPEN_ON_SYMBOL' });
+    return;
+  }
   engineState.enteringTrade = true;
   try {
-    const symbol = slot.symbol;
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
     // Seed from signal if slot lost FUT (e.g. brief memory gap) but STRONG still carries fut.
     if (!Number.isFinite(slot.lastFut) && Number.isFinite(Number(signal.fut)) && Number(signal.fut) > 0) {
@@ -1295,7 +1382,8 @@ async function placeStrongEntry(slot, signal, clock) {
       notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; profile=${exitPts.profile}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
     });
 
-    engineState.openTradeId = tradeDoc._id.toString();
+    engineState.openTradeIds.add(tradeDoc._id.toString());
+    engineState.openTradeIdBySymbol[String(symbol).toUpperCase()] = tradeDoc._id.toString();
     engineState.tradesTodayCount += 1;
     engineState.tradesTodayDateKey = clock.dateKey;
     cacheOpenTradeLite(tradeDoc);
@@ -1310,12 +1398,13 @@ async function placeStrongEntry(slot, signal, clock) {
       profile: exitPts.profile,
       targetPoints,
       stopLossPoints: hasSl ? stopLossPoints : null,
+      openCount: engineState.openTradeIds.size,
     });
     pushNotification({
       type: 'ENTRY',
       strategy: 'OI Universe',
       title: `Entered ${symbol} ${optionType} ${strike}`,
-      body: `Strong wall ${wall.levelStrike} · ${wall.ratio}× · ${exitPts.profile} +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''}`,
+      body: `Strong wall ${wall.levelStrike} · ${wall.ratio}× · ${exitPts.profile} +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''}${exitPts.profile === 'STOCK' ? ' · carry overnight' : ' · EOD'}`,
       meta: { tradeId: tradeDoc._id.toString(), symbol, optionType, strike, profile: exitPts.profile },
       dedupeKey: `oi-universe-entry:${tradeDoc._id.toString()}`,
     });
@@ -1338,7 +1427,7 @@ async function placeStrongEntry(slot, signal, clock) {
 }
 
 async function evaluateEntry(clock) {
-  if (engineState.evaluatingEntry || engineState.openTradeId || engineState.enteringTrade) return;
+  if (engineState.evaluatingEntry || engineState.enteringTrade) return;
   engineState.evaluatingEntry = true;
   try {
     if (!isNseCashTradingDay(clock.dateKey)) return;
@@ -1349,27 +1438,30 @@ async function evaluateEntry(clock) {
       return;
     }
 
-    let best = null;
-    let bestScore = -1;
+    const candidates = [];
     for (const symbol of engineState.scanOrder) {
+      if (hasOpenOnSymbol(symbol)) continue; // one open per symbol
       const slot = engineState.symbols[symbol];
       const signal = slot?.signal;
       const score = scoreReady(signal);
-      if (score > bestScore) {
-        bestScore = score;
-        best = { slot, signal };
-      }
+      if (score > 0 && signal?.buyLive) candidates.push({ slot, signal, score });
     }
-    if (!best || bestScore < 0 || !best.signal?.buyLive) return;
-    await placeStrongEntry(best.slot, best.signal, clock);
+    candidates.sort((a, b) => b.score - a.score);
+    for (const c of candidates) {
+      if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) break;
+      if (hasOpenOnSymbol(c.slot.symbol)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      await placeStrongEntry(c.slot, c.signal, clock);
+    }
   } finally {
     engineState.evaluatingEntry = false;
   }
 }
 
 async function finalizeTrade(trade, { exitPremium, mark, reason }) {
-  if (engineState.closingTrade) return;
-  engineState.closingTrade = true;
+  const id = trade._id.toString();
+  if (engineState.closingTradeIds.has(id)) return;
+  engineState.closingTradeIds.add(id);
   try {
     const safeExitPremium = Math.max(0.05, Number(exitPremium) || 0);
     const qty = Number(trade.qty) || 0;
@@ -1406,30 +1498,59 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
       strategy: 'OI Universe',
       title: `Closed ${trade.symbol} ${trade.optionType} ${trade.strike}`,
       body: `${reason} · P/L ₹${pnl} · exit ₹${safeExitPremium}`,
-      meta: { tradeId: trade._id.toString(), reason, pnl },
-      dedupeKey: `oi-universe-exit:${trade._id.toString()}`,
+      meta: { tradeId: id, reason, pnl, symbol: trade.symbol },
+      dedupeKey: `oi-universe-exit:${id}`,
     });
     engineState.lastExitAtMs = Date.now();
-    clearOpenTrade();
-    publishLiveMarkSnapshot({ open: false });
+    detachOpenTrade(id);
+    publishLiveMarkSnapshot({
+      tradeId: id,
+      closed: true,
+      open: engineState.openTradeIds.size > 0,
+    });
   } finally {
-    engineState.closingTrade = false;
+    engineState.closingTradeIds.delete(id);
   }
 }
 
-async function checkOpenTrade({ preferTicks = false } = {}) {
-  if (!engineState.running || engineState.closingTrade || !engineState.openTradeId) return;
+/** Indexes: EOD same day. Stocks: carry overnight until SL / target / expiry day EOD. */
+function shouldForceTimeExit(trade, clock) {
+  const expiry = String(trade.expiryDate || '').slice(0, 10);
+  const isIndex = isIndexSymbol(trade.symbol);
+
+  if (expiry && /^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+    if (clock.dateKey > expiry) return { exit: true, reason: 'EXPIRY' };
+    if (clock.dateKey === expiry && clock.minutes >= eodMin()) {
+      return { exit: true, reason: 'EXPIRY' };
+    }
+  }
+
+  if (isIndex) {
+    if (clock.dateKey !== trade.entryDateKey || clock.minutes >= eodMin()) {
+      return { exit: true, reason: 'EOD_EXIT' };
+    }
+  }
+  // Stocks: no EOD on entry day / carry days — only SL / TG / expiry above.
+  return { exit: false };
+}
+
+async function checkOpenTradeById(tradeId, { preferTicks = false } = {}) {
+  if (!engineState.running) return;
+  const id = String(tradeId);
+  if (engineState.closingTradeIds.has(id)) return;
+  if (!engineState.openTradeIds.has(id)) return;
   const clock = getIstClock(new Date());
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  const trade = await LivePaperTrade.findById(id);
   if (!trade || trade.exitTime) {
-    clearOpenTrade();
+    detachOpenTrade(id);
     return;
   }
   cacheOpenTradeLite(trade);
 
-  if (clock.dateKey !== trade.entryDateKey || clock.minutes >= eodMin()) {
+  const force = shouldForceTimeExit(trade, clock);
+  if (force.exit) {
     const mark = await resolveMarkForOpenTrade(trade, { allowChain: true });
-    await finalizeTrade(trade, { exitPremium: mark.optionLtp, mark, reason: 'EOD_EXIT' });
+    await finalizeTrade(trade, { exitPremium: mark.optionLtp, mark, reason: force.reason });
     return;
   }
 
@@ -1451,6 +1572,14 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
     && ltp <= Number(trade.stopLossPremium)
   ) {
     await finalizeTrade(trade, { exitPremium: ltp, mark, reason: 'STOP_LOSS' });
+  }
+}
+
+async function checkOpenTrade({ preferTicks = false } = {}) {
+  const ids = [...engineState.openTradeIds];
+  for (const id of ids) {
+    // eslint-disable-next-line no-await-in-loop
+    await checkOpenTradeById(id, { preferTicks });
   }
 }
 
@@ -1506,7 +1635,7 @@ async function scanTick() {
   }
 
   await evaluateEntry(clock);
-  if (engineState.openTradeId) {
+  if (engineState.openTradeIds.size > 0) {
     await checkOpenTrade();
   }
 }
@@ -1541,6 +1670,10 @@ function getEngineSnapshot() {
     .filter((c) => c.signal?.status === 'STRONG_READY')
     .sort((a, b) => scoreReady(b.signal) - scoreReady(a.signal));
 
+  const openTrades = [...engineState.openTradeIds]
+    .map((id) => engineState.openTradeLites[id])
+    .filter(Boolean);
+
   return {
     running: engineState.running,
     startedAt: engineState.startedAt,
@@ -1551,6 +1684,10 @@ function getEngineSnapshot() {
     topReady: ready[0] || null,
     tradesTodayCount: engineState.tradesTodayCount,
     maxTradesPerDay: engineState.settings.maxTradesPerDay,
+    openCount: engineState.openTradeIds.size,
+    openTradeIds: [...engineState.openTradeIds],
+    openTrades,
+    openPositionMarks: { ...engineState.openPositionMarks },
     openTradeId: engineState.openTradeId,
     openPositionMark: engineState.openPositionMark,
     lastError: engineState.lastError,
@@ -1581,15 +1718,19 @@ async function startEngine({ settings = {} } = {}) {
   const clock = getIstClock(new Date());
   await syncTradesToday(clock);
   await reapplyExitPointsToOpenTrade({ reason: 'ENGINE_START' });
-  if (engineState.openTradeId) {
-    const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  for (const id of [...engineState.openTradeIds]) {
+    const trade = await LivePaperTrade.findById(id);
     if (trade && !trade.exitTime) {
+      // eslint-disable-next-line no-await-in-loop
       await subscribeOpenOption(trade);
-      startPositionPoll();
     }
   }
+  if (engineState.openTradeIds.size > 0) startPositionPoll();
   startPoll();
-  logLine('ENGINE_START', { universe: engineState.scanOrder });
+  logLine('ENGINE_START', {
+    universe: engineState.scanOrder,
+    openCount: engineState.openTradeIds.size,
+  });
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -1655,19 +1796,27 @@ async function reconcileOpenTrades() {
     strategyKey: STRATEGY_KEY,
     exitTime: null,
     status: { $ne: 'CLOSED' },
-  }).sort({ entryTime: -1 });
-  if (open.length > 1) {
-    for (let i = 1; i < open.length; i += 1) {
-      const dup = open[i];
-      dup.status = 'CLOSED';
-      dup.exitTime = new Date();
-      dup.exitDateKey = clock.dateKey;
-      dup.reason = 'DEDUPE_CLOSE';
-      dup.pnl = 0;
-      await dup.save();
+  }).sort({ entryTime: 1 });
+
+  // Dedupe per symbol only (keep earliest open).
+  const seen = new Set();
+  for (const trade of open) {
+    const sym = String(trade.symbol || '').toUpperCase();
+    if (seen.has(sym)) {
+      trade.status = 'CLOSED';
+      trade.exitTime = new Date();
+      trade.exitDateKey = clock.dateKey;
+      trade.reason = 'DEDUPE_CLOSE';
+      trade.pnl = 0;
+      // eslint-disable-next-line no-await-in-loop
+      await trade.save();
+      continue;
     }
+    seen.add(sym);
   }
-  if (engineState.openTradeId && engineState.running && !engineState.positionPollTimer) {
+
+  await syncTradesToday(clock);
+  if (engineState.openTradeIds.size > 0 && engineState.running && !engineState.positionPollTimer) {
     startPositionPoll();
   }
   await reapplyExitPointsToOpenTrade({ reason: 'RECONCILE' });
@@ -1681,20 +1830,33 @@ async function reconcileOpenTrades() {
 async function resumeOpenPositionFromDb() {
   const clock = getIstClock(new Date());
   await syncTradesToday(clock);
-  if (!engineState.openTradeId) return { ok: true, resumed: false, state: getEngineSnapshot() };
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.exitTime) {
-    clearOpenTrade();
+  if (!engineState.openTradeIds.size) {
     return { ok: true, resumed: false, state: getEngineSnapshot() };
   }
-  await subscribeOpenOption(trade);
-  if (!engineState.positionPollTimer) startPositionPoll();
-  return { ok: true, resumed: true, state: getEngineSnapshot() };
+  for (const id of [...engineState.openTradeIds]) {
+    const trade = await LivePaperTrade.findById(id);
+    if (!trade || trade.exitTime) {
+      detachOpenTrade(id);
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await subscribeOpenOption(trade);
+  }
+  if (!engineState.positionPollTimer && engineState.openTradeIds.size > 0) startPositionPoll();
+  return { ok: true, resumed: engineState.openTradeIds.size > 0, state: getEngineSnapshot() };
 }
 
-async function closeOpenPosition() {
-  if (!engineState.openTradeId) return { ok: false, error: 'No open trade' };
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+async function closeOpenPosition({ tradeId = null } = {}) {
+  let trade = null;
+  if (tradeId) {
+    trade = await LivePaperTrade.findOne({
+      _id: tradeId,
+      strategyKey: STRATEGY_KEY,
+      exitTime: null,
+    });
+  } else if (engineState.openTradeId) {
+    trade = await LivePaperTrade.findById(engineState.openTradeId);
+  }
   if (!trade || trade.exitTime) return { ok: false, error: 'No open trade' };
   const mark = await resolveMarkForOpenTrade(trade, { allowChain: true });
   await finalizeTrade(trade, {
@@ -1702,24 +1864,33 @@ async function closeOpenPosition() {
     mark,
     reason: 'MANUAL_CLOSE',
   });
-  return { ok: true, state: getEngineSnapshot() };
+  return { ok: true, trade, state: getEngineSnapshot() };
 }
 
 async function refreshOpenPositionMarkForStatus() {
-  if (!engineState.openTradeId) return null;
-  const current = engineState.openPositionMark;
-  if (current?.at) {
-    const ageMs = Date.now() - new Date(current.at).getTime();
-    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < STATUS_MARK_REFRESH_MIN_GAP_MS) {
-      publishLiveMarkSnapshot();
-      return current;
+  if (!engineState.openTradeIds.size) return null;
+  let last = null;
+  for (const id of [...engineState.openTradeIds]) {
+    const current = engineState.openPositionMarks[id];
+    if (current?.at) {
+      const ageMs = Date.now() - new Date(current.at).getTime();
+      if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < STATUS_MARK_REFRESH_MIN_GAP_MS) {
+        last = current;
+        continue;
+      }
     }
+    const trade = await LivePaperTrade.findById(id);
+    if (!trade || trade.exitTime) {
+      detachOpenTrade(id);
+      continue;
+    }
+    cacheOpenTradeLite(trade);
+    // eslint-disable-next-line no-await-in-loop
+    const mark = await resolveMarkForOpenTrade(trade, { preferTicks: true, allowChain: true });
+    last = publishOpenMark(trade, mark, { persist: true });
   }
-  const trade = await LivePaperTrade.findById(engineState.openTradeId);
-  if (!trade || trade.exitTime) return null;
-  cacheOpenTradeLite(trade);
-  const mark = await resolveMarkForOpenTrade(trade, { preferTicks: true, allowChain: true });
-  return publishOpenMark(trade, mark, { persist: true });
+  publishLiveMarkSnapshot();
+  return last;
 }
 
 async function clearDailySkipState() {
