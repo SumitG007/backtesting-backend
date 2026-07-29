@@ -193,7 +193,12 @@ const engineState = {
   enteringSymbols: new Set(),
   enteringTrade: false,
   evaluatingEntry: false,
+  /** poll overlap guards */
+  scanning: false,
+  checkingOpenTrades: false,
   lastMarkPersistAt: 0,
+  /** tradeId -> last DB mark write ms */
+  lastMarkPersistAtById: {},
   lastLiveMarkEmitAt: 0,
   liveMarkEmitTimer: null,
 };
@@ -244,18 +249,22 @@ function normalizeUniverse(raw) {
   return out.length ? out : [...DEFAULT_UNIVERSE];
 }
 
-/** Prefer indexes + merge any newly added default names into older saved settings. */
+/**
+ * Repair legacy saves only. `universeExplicit` means the list came from the
+ * Settings checkboxes, so an index-only selection must be kept as-is.
+ */
 function migrateUniverseSettings(settings = {}) {
   const next = { ...settings };
   if (next.universe != null) {
     let normalized = normalizeUniverse(next.universe);
-    // If saved list is only the old tiny index set, expand to full liquid default.
-    const onlyIndexes =
-      normalized.length > 0
-      && normalized.length <= 3
-      && normalized.every((s) => PRESET_SYMBOLS[s]?.instrument === 'INDEX');
-    if (onlyIndexes) {
-      normalized = [...DEFAULT_UNIVERSE];
+    if (!next.universeExplicit) {
+      const onlyIndexes =
+        normalized.length > 0
+        && normalized.length <= 3
+        && normalized.every((s) => PRESET_SYMBOLS[s]?.instrument === 'INDEX');
+      if (onlyIndexes) {
+        normalized = [...DEFAULT_UNIVERSE];
+      }
     }
     next.universe = normalized;
   }
@@ -332,12 +341,17 @@ function normalizeSettings(settings = {}) {
       Math.min(2, Number(settings.proximityPctStock) || DEFAULT_PROXIMITY_PCT_STOCK),
     ),
     maxTradesPerDay: Math.max(1, Math.min(50, Math.floor(Number(settings.maxTradesPerDay) || 8))),
-    cooldownMinutes: Math.max(0, Math.min(60, Number(settings.cooldownMinutes) || 3)),
+    cooldownMinutes: Math.max(
+      0,
+      Math.min(60, Number.isFinite(Number(settings.cooldownMinutes)) ? Number(settings.cooldownMinutes) : 3),
+    ),
     perTradeCost:
       Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
         ? Number(settings.perTradeCost)
         : 100,
     universe: normalizeUniverse(settings.universe),
+    // Preserve "came from checkboxes" so an index-only list is never auto-expanded.
+    universeExplicit: Boolean(settings.universeExplicit),
   };
 }
 
@@ -1037,12 +1051,14 @@ async function findOpenTradeOnSymbol(symbol) {
   }).sort({ entryTime: 1 });
 }
 
-/** Shared cooldown across local+live (in-memory cooldown alone is not enough). */
+/**
+ * Per-symbol cooldown, read from DB so it survives restarts and is shared by any
+ * other engine instance on the same book. Other symbols are never blocked.
+ */
 async function recentlyClosedOnSymbol(symbol) {
   const sym = String(symbol || '').toUpperCase();
-  const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
-  // Always enforce at least 2 minutes per symbol after any exit (stops SL churn).
-  const minGapMs = Math.max(cooldownMs, 2 * 60 * 1000);
+  const minGapMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
+  if (minGapMs <= 0) return null;
   const since = new Date(Date.now() - minGapMs);
   const recent = await LivePaperTrade.findOne({
     strategyKey: STRATEGY_KEY,
@@ -1075,6 +1091,7 @@ function cacheOpenTradeLite(trade) {
     entryPremium: trade.entryPremium,
     qty: trade.qty,
     lots: trade.lots,
+    charges: trade.charges,
     targetPremium: trade.targetPremium,
     stopLossPremium: trade.stopLossPremium,
     entryTime: trade.entryTime,
@@ -1096,6 +1113,7 @@ function detachOpenTrade(tradeId) {
   delete engineState.openTradeLites[id];
   delete engineState.openPositionMarks[id];
   delete engineState.lastOptionTicks[id];
+  delete engineState.lastMarkPersistAtById[id];
   if (sym && engineState.openTradeIdBySymbol[sym] === id) {
     delete engineState.openTradeIdBySymbol[sym];
   }
@@ -1276,7 +1294,9 @@ function publishOpenMark(trade, mark, { persist = false } = {}) {
   publishLiveMarkSnapshot();
   if (persist) {
     const now = Date.now();
-    if (now - engineState.lastMarkPersistAt >= MARK_DB_PERSIST_MIN_GAP_MS) {
+    // Throttle per trade, otherwise one open starves the rest of the book.
+    if (now - (engineState.lastMarkPersistAtById[id] || 0) >= MARK_DB_PERSIST_MIN_GAP_MS) {
+      engineState.lastMarkPersistAtById[id] = now;
       engineState.lastMarkPersistAt = now;
       LivePaperTrade.updateOne(
         { _id: trade._id },
@@ -1300,11 +1320,12 @@ function publishTickMarkFast(tradeId, ltp) {
   if (!lite) return;
   const qty = Number(lite.qty) || 0;
   const entry = Number(lite.entryPremium) || 0;
+  const charges = Number(lite.charges) || 0;
   const mark = {
     optionLtp: n,
     source: 'websocket',
     isLiveMark: true,
-    unrealizedPnl: Number(((n - entry) * qty).toFixed(2)),
+    unrealizedPnl: Number(((n - entry) * qty - charges).toFixed(2)),
     at: new Date().toISOString(),
     tradeId: id,
   };
@@ -1534,8 +1555,13 @@ async function placeStrongEntry(slot, signal, clock) {
     }, { persist: true });
     startPositionPoll();
   } catch (err) {
-    engineState.lastError = err.message;
-    logLine('ENTRY_FAILED', { error: err.message, symbol });
+    // Code 11000 = the unique index rejected a second open on this symbol.
+    const duplicate = err?.code === 11000;
+    engineState.lastError = duplicate ? `${symbol}: already has an open position` : err.message;
+    logLine(duplicate ? 'ENTRY_SKIPPED_DUPLICATE' : 'ENTRY_FAILED', {
+      error: err.message,
+      symbol,
+    });
   } finally {
     engineState.enteringTrade = false;
     engineState.enteringSymbols.delete(symbol);
@@ -1549,10 +1575,8 @@ async function evaluateEntry(clock) {
     if (!isNseCashTradingDay(clock.dateKey)) return;
     if (clock.minutes < tradeFromMin() || clock.minutes > tradeToMin()) return;
     if (engineState.tradesTodayCount >= engineState.settings.maxTradesPerDay) return;
-    const cooldownMs = (Number(engineState.settings.cooldownMinutes) || 0) * 60 * 1000;
-    if (cooldownMs > 0 && engineState.lastExitAtMs && Date.now() - engineState.lastExitAtMs < cooldownMs) {
-      return;
-    }
+    // Cooldown is per symbol only (see recentlyClosedOnSymbol); closing one name
+    // must never block entries on other underlyings.
 
     const candidates = [];
     for (const symbol of engineState.scanOrder) {
@@ -1705,9 +1729,16 @@ async function checkOpenTrade({ preferTicks = false } = {}) {
 function startPositionPoll() {
   if (engineState.positionPollTimer) clearInterval(engineState.positionPollTimer);
   const tick = () => {
-    checkOpenTrade().catch((err) => {
-      engineState.lastError = `Universe exit poll: ${err.message}`;
-    });
+    // Skip if the previous sweep is still running (chain calls can outlast the interval).
+    if (engineState.checkingOpenTrades) return;
+    engineState.checkingOpenTrades = true;
+    checkOpenTrade()
+      .catch((err) => {
+        engineState.lastError = `Universe exit poll: ${err.message}`;
+      })
+      .finally(() => {
+        engineState.checkingOpenTrades = false;
+      });
   };
   tick();
   engineState.positionPollTimer = setInterval(tick, POSITION_POLL_MS);
@@ -1763,9 +1794,15 @@ async function scanTick() {
 function startPoll() {
   if (engineState.pollTimer) clearInterval(engineState.pollTimer);
   const tick = () => {
-    scanTick().catch((err) => {
-      engineState.lastError = `Universe scan: ${err.message}`;
-    });
+    if (engineState.scanning) return;
+    engineState.scanning = true;
+    scanTick()
+      .catch((err) => {
+        engineState.lastError = `Universe scan: ${err.message}`;
+      })
+      .finally(() => {
+        engineState.scanning = false;
+      });
   };
   tick();
   engineState.pollTimer = setInterval(tick, POLL_INTERVAL_MS);
@@ -1975,8 +2012,14 @@ async function closeOpenPosition({ tradeId = null } = {}) {
       strategyKey: STRATEGY_KEY,
       exitTime: null,
     });
-  } else if (engineState.openTradeId) {
-    trade = await LivePaperTrade.findById(engineState.openTradeId);
+    if (!trade) return { ok: false, error: 'Trade is not open' };
+  } else {
+    // Multi-open book: refuse to guess which position to square off.
+    if (engineState.openTradeIds.size > 1) {
+      return { ok: false, error: 'Multiple open positions — pick one to square off' };
+    }
+    const onlyId = [...engineState.openTradeIds][0] || null;
+    if (onlyId) trade = await LivePaperTrade.findById(onlyId);
   }
   if (!trade || trade.exitTime) return { ok: false, error: 'No open trade' };
   const mark = await resolveMarkForOpenTrade(trade, { allowChain: true });

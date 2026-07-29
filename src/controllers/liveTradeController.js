@@ -475,12 +475,12 @@ function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    // OI Wall Entry is always-on — ignore stop requests.
+    // OI Wall / OI Universe engines are always-on — ignore stop requests.
     if (isMorningOiLiveStrategyId(ctx.strategyId)) {
       return res.json({
         ok: true,
         ignored: true,
-        message: 'OI Wall engine always runs — stop is disabled',
+        message: 'This OI engine always runs — stop is disabled',
         state: ctx.getEngineSnapshot(),
       });
     }
@@ -694,6 +694,9 @@ async function closeLivePosition(req, res) {
     }
     const tradeId = req.body?.tradeId || req.query?.tradeId || null;
     const result = await ctx.closeOpenPosition({ reason: 'MANUAL_CLOSE', tradeId });
+    if (result?.ok === false) {
+      return res.status(400).json({ ok: false, error: result.error || 'Close failed' });
+    }
     if (typeof ctx.recalcWallet === 'function') {
       await ctx.recalcWallet();
     }
