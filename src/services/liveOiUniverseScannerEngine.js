@@ -485,6 +485,12 @@ function publishUniverseSignalNotification(symbol, prev, next) {
   const status = String(next.status || '');
   if (status === 'ERROR' || status === 'CLEARED') {
     if (prev?.status === status) return;
+    // Never alert on infra / cold-start clears (FUT miss, scan fail).
+    const reason = String(next.reason || '');
+    if (reason === 'FUT_UNAVAILABLE' || reason === 'SCAN_FAILED') return;
+    // Only clear-notify when a real setup disappears.
+    const prevWasLive = ['STRONG_READY', 'WATCHING', 'CAUTION'].includes(String(prev?.status || ''));
+    if (!prevWasLive) return;
   }
 
   const notable =
@@ -614,26 +620,63 @@ async function scanOneSymbol(symbol) {
   const slot = ensureSymbolSlot(symbol);
   const prevSignal = slot.signal ? { ...slot.signal } : null;
   try {
-    const fut = await refreshFutPrice(slot, { force: true });
+    let fut = null;
+    let priceSource = 'FUT';
+    try {
+      fut = await refreshFutPrice(slot, { force: true });
+    } catch (futErr) {
+      // Cold start / FUT blip with no cache — fall through to option-chain last_price.
+      slot.lastError = futErr.message || 'FUT unavailable';
+    }
+
     const expiry = await getNearestWeeklyExpiry(symbol);
     if (!expiry) throw new Error(`No option expiry for ${symbol}`);
     slot.expiry = expiry;
     const snapshot = await getOptionChainOiSnapshot({
       symbol,
       expiry,
-      spotOverride: fut,
+      spotOverride: Number.isFinite(fut) ? fut : null,
       lookaroundStrikes: OI_BOARD_LOOKAROUND,
     });
     if (!Array.isArray(snapshot?.strikes) || snapshot.strikes.length === 0) {
       throw new Error(`Empty OI chain for ${symbol}`);
     }
+
+    if (!Number.isFinite(fut) || fut <= 0) {
+      const chainSpot = Number(snapshot?.spot ?? snapshot?.chainSpot ?? snapshot?.atm);
+      if (!Number.isFinite(chainSpot) || chainSpot <= 0) {
+        throw new Error('Future LTP unavailable (no REST or WS data yet)');
+      }
+      fut = chainSpot;
+      priceSource = 'CHAIN';
+      // Seed FUT cache so later entry/proximity can reuse without another hard fail.
+      slot.lastFut = chainSpot;
+      slot.lastFutFetchAt = Date.now();
+      logLine('FUT_CHAIN_SPOT_FALLBACK', { symbol, spot: chainSpot });
+    }
+
     slot.board = buildBoard(snapshot, fut, expiry, slot.futExpiry);
+    if (slot.board) slot.board.priceSource = priceSource;
     slot.lastOiAt = Date.now();
     slot.lastError = null;
 
     const wall = pickDominantStrike(snapshot, engineState.settings.minOiRatio);
     if (!wall) {
-      applySignalUpdate(slot, prevSignal, { status: 'CLEARED', label: 'No wall', buyLive: false, symbol });
+      // Only notify clear when a prior live signal actually goes away.
+      const hadLive =
+        prevSignal
+        && ['STRONG_READY', 'WATCHING', 'CAUTION'].includes(String(prevSignal.status || ''));
+      if (hadLive) {
+        applySignalUpdate(slot, prevSignal, {
+          status: 'CLEARED',
+          label: 'No wall',
+          reason: 'NO_WALL',
+          buyLive: false,
+          symbol,
+        });
+      } else {
+        slot.signal = { status: 'CLEARED', label: 'No wall', buyLive: false, symbol };
+      }
       return slot;
     }
 
@@ -641,6 +684,7 @@ async function scanOneSymbol(symbol) {
     const prox = proximityLimit(slot, fut);
     const proximityOk = dist <= prox;
     const deltaOk = !isDeltaFighting(wall.optionType, wall.putChgOi, wall.callChgOi);
+    const pxLabel = priceSource === 'CHAIN' ? 'SPOT' : 'FUT';
     const base = {
       symbol,
       kind: slot.kind,
@@ -655,6 +699,7 @@ async function scanOneSymbol(symbol) {
       ratioOk: wall.ratioOk,
       minOiRatio: engineState.settings.minOiRatio,
       fut,
+      priceSource,
       spotDist: Number(dist.toFixed(1)),
       proximityLimit: prox,
       proximityOk,
@@ -679,6 +724,7 @@ async function scanOneSymbol(symbol) {
         status: 'CAUTION',
         label: `ΔOI fighting · ${wall.optionType} ${wall.levelStrike}`,
         reason: 'DELTA_OI_FIGHTING',
+        detail: 'DELTA_OI_FIGHTING',
       });
       return slot;
     }
@@ -688,7 +734,7 @@ async function scanOneSymbol(symbol) {
         status: 'WATCHING',
         label: `Watch ${wall.optionType} · wall ${wall.levelStrike}`,
         reason: 'WAIT_PROXIMITY',
-        detail: `FUT ${dist.toFixed(0)} > ${prox} · waiting proximity`,
+        detail: `${pxLabel} ${dist.toFixed(0)} > ${prox} · waiting proximity`,
       });
       return slot;
     }
@@ -699,7 +745,7 @@ async function scanOneSymbol(symbol) {
       label: `STRONG ${wall.optionType} · ${wall.levelStrike}`,
       reason: 'STRONG_READY',
       buyLive: true,
-      detail: `Ratio ${wall.ratio}× ≥ ${engineState.settings.minOiRatio} · FUT ${dist.toFixed(0)} ≤ ${prox}`,
+      detail: `Ratio ${wall.ratio}× ≥ ${engineState.settings.minOiRatio} · ${pxLabel} ${dist.toFixed(0)} ≤ ${prox}`,
     });
     return slot;
   } catch (err) {
@@ -724,10 +770,23 @@ async function scanOneSymbol(symbol) {
       }
       return slot;
     }
+    // Cold infra failures: quiet state only — do not spam SIGNAL_CLEARED with FUT errors.
+    if (isFutLtpUnavailableError(err) || isTransientOiError(err)) {
+      slot.signal = {
+        status: 'CLEARED',
+        label: 'Waiting for OI',
+        reason: isFutLtpUnavailableError(err) ? 'FUT_UNAVAILABLE' : 'SCAN_FAILED',
+        detail: msg,
+        buyLive: false,
+        symbol,
+        fut: slot.lastFut,
+      };
+      return slot;
+    }
     applySignalUpdate(slot, prevSignal, {
       status: 'CLEARED',
       label: 'Waiting for OI',
-      reason: isFutLtpUnavailableError(err) ? 'FUT_UNAVAILABLE' : 'SCAN_FAILED',
+      reason: 'SCAN_FAILED',
       detail: msg,
       buyLive: false,
       symbol,
