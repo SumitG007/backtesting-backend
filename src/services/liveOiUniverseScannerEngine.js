@@ -918,8 +918,11 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
   let optionLtp = null;
   let source = 'none';
   if (preferTicks && optionTickIsFresh()) {
-    optionLtp = Number(engineState.lastOptionTick.ltp);
-    source = 'websocket';
+    const tickLtp = Number(engineState.lastOptionTick.ltp);
+    if (Number.isFinite(tickLtp) && tickLtp > 0) {
+      optionLtp = tickLtp;
+      source = 'websocket';
+    }
   }
   if ((!Number.isFinite(optionLtp) || optionLtp <= 0) && allowChain) {
     try {
@@ -928,11 +931,27 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
         strike: trade.strike,
         expiry: trade.expiryDate,
       });
-      const leg = String(trade.optionType).toUpperCase() === 'PE' ? premiums?.pe : premiums?.ce;
-      optionLtp = Number(leg?.ltp ?? leg);
-      source = 'chain';
+      const chainLtp = premiumFromChain(premiums, trade.optionType);
+      if (Number.isFinite(chainLtp) && chainLtp > 0) {
+        optionLtp = chainLtp;
+        source = 'chain';
+      }
     } catch {
       /* keep */
+    }
+  }
+  // Never wipe a good mark with null/0 — keep last known LTP (or entry as provisional).
+  if (!Number.isFinite(optionLtp) || optionLtp <= 0) {
+    const prev = Number(engineState.openPositionMark?.optionLtp);
+    if (Number.isFinite(prev) && prev > 0) {
+      optionLtp = prev;
+      source = engineState.openPositionMark?.source || 'last';
+    } else {
+      const entry = Number(trade.entryPremium);
+      if (Number.isFinite(entry) && entry > 0) {
+        optionLtp = entry;
+        source = 'entry';
+      }
     }
   }
   const qty = Number(trade.qty) || 0;
@@ -942,7 +961,7 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
       ? Number(((optionLtp - entry) * qty - (Number(trade.charges) || 0)).toFixed(2))
       : null;
   return {
-    optionLtp: Number.isFinite(optionLtp) ? optionLtp : null,
+    optionLtp: Number.isFinite(optionLtp) && optionLtp > 0 ? optionLtp : null,
     source,
     isLiveMark: source === 'websocket',
     unrealizedPnl,
@@ -951,6 +970,12 @@ async function resolveMarkForOpenTrade(trade, { preferTicks = true, allowChain =
 }
 
 function publishOpenMark(trade, mark, { persist = false } = {}) {
+  const nextLtp = Number(mark?.optionLtp);
+  const prevLtp = Number(engineState.openPositionMark?.optionLtp);
+  // Don't replace a valid live/chain mark with an empty one.
+  if (!(Number.isFinite(nextLtp) && nextLtp > 0) && Number.isFinite(prevLtp) && prevLtp > 0) {
+    return engineState.openPositionMark;
+  }
   engineState.openPositionMark = {
     ...mark,
     tradeId: trade._id.toString(),
@@ -975,15 +1000,17 @@ function publishOpenMark(trade, mark, { persist = false } = {}) {
 }
 
 function publishTickMarkFast(ltp) {
+  const n = Number(ltp);
+  if (!Number.isFinite(n) || n <= 0) return;
   const lite = engineState.openTradeLite;
   if (!lite || !engineState.openTradeId) return;
   const qty = Number(lite.qty) || 0;
   const entry = Number(lite.entryPremium) || 0;
   const mark = {
-    optionLtp: ltp,
+    optionLtp: n,
     source: 'websocket',
     isLiveMark: true,
-    unrealizedPnl: Number(((ltp - entry) * qty).toFixed(2)),
+    unrealizedPnl: Number(((n - entry) * qty).toFixed(2)),
     at: new Date().toISOString(),
     tradeId: engineState.openTradeId,
   };
@@ -1003,8 +1030,11 @@ async function onOptionTick({ ltp }) {
 }
 
 function premiumFromChain(premiums, optionType) {
-  const leg = optionType === 'PE' ? premiums?.pe : premiums?.ce;
-  const n = Number(leg?.ltp ?? leg);
+  // getAtmPremiums returns { ceLtp, peLtp } (same as Morning OI engines).
+  const type = String(optionType || 'CE').toUpperCase();
+  const n = type === 'PE'
+    ? Number(premiums?.peLtp ?? premiums?.pe?.ltp ?? premiums?.pe)
+    : Number(premiums?.ceLtp ?? premiums?.ce?.ltp ?? premiums?.ce);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
@@ -1059,17 +1089,44 @@ async function placeStrongEntry(slot, signal, clock) {
     }
 
     const expiry = slot.expiry || (await getNearestWeeklyExpiry(symbol));
-    const strikeStep = getStrikeStep(symbol);
+    const strikeStep = Number(snapshot?.strikeStep) || getStrikeStep(symbol);
     const strike = pickStrike({
       entrySpot: fut,
       strikeStep,
       optionType,
       strikeMode: 'ATM',
     });
-    const premiums = await getAtmPremiums({ symbol, strike, expiry });
-    const entryPremium = premiumFromChain(premiums, optionType);
+    let entryPremium = null;
+    try {
+      const premiums = await getAtmPremiums({ symbol, strike, expiry });
+      entryPremium = premiumFromChain(premiums, optionType);
+    } catch (premErr) {
+      logLine('ENTRY_SKIP', {
+        symbol,
+        reason: 'PREMIUM_FETCH_FAILED',
+        strike,
+        error: premErr.message || String(premErr),
+      });
+    }
+    // Fallback: LTP already on the OI snapshot row for this strike.
+    if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
+      const row = (snapshot?.strikes || []).find((r) => Number(r.strike) === Number(strike));
+      const fromSnap = optionType === 'PE' ? Number(row?.peLtp) : Number(row?.ceLtp);
+      if (Number.isFinite(fromSnap) && fromSnap > 0) {
+        entryPremium = fromSnap;
+        logLine('ENTRY_PREMIUM_FROM_SNAPSHOT', { symbol, strike, optionType, entryPremium });
+      }
+    }
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
       engineState.lastError = `Missing ${symbol} ${optionType} premium @ ${strike}`;
+      logLine('ENTRY_SKIP', {
+        symbol,
+        reason: 'MISSING_PREMIUM',
+        strike,
+        optionType,
+        fut,
+        expiry,
+      });
       return;
     }
 
@@ -1133,6 +1190,14 @@ async function placeStrongEntry(slot, signal, clock) {
       dedupeKey: `oi-universe-entry:${tradeDoc._id.toString()}`,
     });
     await subscribeOpenOption(tradeDoc);
+    // Seed mark immediately so UI does not show ₹0 while waiting for WS/chain.
+    publishOpenMark(tradeDoc, {
+      optionLtp: Number(entryPremium),
+      source: 'entry',
+      isLiveMark: false,
+      unrealizedPnl: Number((0 - (Number(charges) || 0)).toFixed(2)),
+      at: new Date().toISOString(),
+    }, { persist: true });
     startPositionPoll();
   } catch (err) {
     engineState.lastError = err.message;

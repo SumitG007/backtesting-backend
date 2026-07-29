@@ -365,9 +365,15 @@ async function getStatus(req, res) {
       }
     }
     const snapshot = ctx.getEngineSnapshot();
+    const snapMark = snapshot.openPositionMark;
+    const dbMark = openTrade?.openPositionMark;
+    const snapLtp = Number(snapMark?.optionLtp);
+    const dbLtp = Number(dbMark?.optionLtp);
     const openPositionMark =
-      snapshot.openPositionMark
-      || openTrade?.openPositionMark
+      (Number.isFinite(snapLtp) && snapLtp > 0 ? snapMark : null)
+      || (Number.isFinite(dbLtp) && dbLtp > 0 ? dbMark : null)
+      || snapMark
+      || dbMark
       || null;
     const todayTrades = await LivePaperTrade.find({
       ...keyFilter,
