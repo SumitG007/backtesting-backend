@@ -80,6 +80,10 @@ const POSITION_POLL_MS = 1000;
 /** Near Dhan's ~4s option-chain floor — shared across paper engines. */
 const SYMBOL_SCAN_GAP_MS = 4200;
 const FUT_PRICE_REFRESH_MIN_GAP_MS = 1200;
+/** Reuse last good FUT when Dhan REST/WS blips (scan / recompute). */
+const FUT_STALE_MAX_AGE_MS = 90_000;
+/** Slightly longer window at fill so STRONG entries are not dropped on a single miss. */
+const FUT_STALE_ENTRY_MAX_AGE_MS = 120_000;
 const FUT_BATCH_SIZE = 3;
 /** Indexes stay fresher — their OI age is weighted higher when picking next scan. */
 const INDEX_OI_AGE_WEIGHT = 2.8;
@@ -334,17 +338,45 @@ async function ensureFutInstrument(slot) {
   return inst;
 }
 
-async function refreshFutPrice(slot, { force = false } = {}) {
+function isFutLtpUnavailableError(err) {
+  const msg = String(err?.message || err || '').toLowerCase();
+  return (
+    msg.includes('future ltp unavailable')
+    || msg.includes('fut ltp unavailable')
+    || msg.includes('no rest or ws')
+  );
+}
+
+async function refreshFutPrice(slot, { force = false, allowStale = true, staleMaxAgeMs = FUT_STALE_MAX_AGE_MS } = {}) {
   const now = Date.now();
   if (!force && Number.isFinite(slot.lastFut) && now - slot.lastFutFetchAt < FUT_PRICE_REFRESH_MIN_GAP_MS) {
     return slot.lastFut;
   }
-  const inst = await ensureFutInstrument(slot);
-  const { ltp } = await getFutureLtp({ symbol: slot.symbol, expiry: inst.expiry });
-  if (!Number.isFinite(ltp) || ltp <= 0) throw new Error(`FUT LTP unavailable for ${slot.symbol}`);
-  slot.lastFut = Number(ltp);
-  slot.lastFutFetchAt = now;
-  return slot.lastFut;
+  try {
+    const inst = await ensureFutInstrument(slot);
+    const { ltp } = await getFutureLtp({ symbol: slot.symbol, expiry: inst.expiry });
+    if (!Number.isFinite(ltp) || ltp <= 0) throw new Error(`FUT LTP unavailable for ${slot.symbol}`);
+    slot.lastFut = Number(ltp);
+    slot.lastFutFetchAt = now;
+    return slot.lastFut;
+  } catch (err) {
+    const ageMs = now - (Number(slot.lastFutFetchAt) || 0);
+    const canReuse =
+      allowStale
+      && Number.isFinite(slot.lastFut)
+      && slot.lastFut > 0
+      && ageMs <= staleMaxAgeMs;
+    if (canReuse) {
+      logLine('FUT_STALE_REUSE', {
+        symbol: slot.symbol,
+        lastFut: slot.lastFut,
+        ageMs,
+        err: err.message || String(err),
+      });
+      return slot.lastFut;
+    }
+    throw err;
+  }
 }
 
 function buildBoard(snapshot, fut, expiry, futExpiry) {
@@ -424,6 +456,7 @@ function isTransientOiError(err) {
     || msg.includes('econn')
     || msg.includes('temporarily')
     || msg.includes('stale')
+    || isFutLtpUnavailableError(err)
   );
 }
 
@@ -671,15 +704,10 @@ async function scanOneSymbol(symbol) {
     return slot;
   } catch (err) {
     const msg = err.message || 'Scan failed';
-    // Keep last good board/signal on Dhan rate-limit / empty blips — avoid flashing ERROR.
-    if (isTransientOiError(err) && slot.board) {
+    // Keep last good board/signal on Dhan rate-limit / FUT blips — never re-notify
+    // as STRONG/WATCH with an error body (that was spamming "Future LTP unavailable").
+    if (isTransientOiError(err) && (slot.board || Number.isFinite(slot.lastFut))) {
       slot.lastError = msg;
-      if (slot.signal && slot.signal.status !== 'ERROR') {
-        slot.signal = {
-          ...slot.signal,
-          detail: [slot.signal.detail, 'OI refresh delayed'].filter(Boolean).join(' · '),
-        };
-      }
       return slot;
     }
     // Still try to keep FUT on the card even when chain fails hard.
@@ -689,9 +717,17 @@ async function scanOneSymbol(symbol) {
       /* ignore */
     }
     slot.lastError = msg;
+    // If we already have a board, keep the prior signal as-is (no fake STRONG+error alert).
+    if (slot.board && slot.signal && slot.signal.status !== 'ERROR') {
+      if (slot.signal.buyLive && !Number.isFinite(slot.lastFut)) {
+        slot.signal = { ...slot.signal, buyLive: false };
+      }
+      return slot;
+    }
     applySignalUpdate(slot, prevSignal, {
-      status: slot.board ? (slot.signal?.status || 'WATCHING') : 'CLEARED',
-      label: slot.board ? (slot.signal?.label || 'OI delayed') : 'Waiting for OI',
+      status: 'CLEARED',
+      label: 'Waiting for OI',
+      reason: isFutLtpUnavailableError(err) ? 'FUT_UNAVAILABLE' : 'SCAN_FAILED',
       detail: msg,
       buyLive: false,
       symbol,
@@ -919,7 +955,27 @@ async function placeStrongEntry(slot, signal, clock) {
   try {
     const symbol = slot.symbol;
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
-    const fut = await refreshFutPrice(slot, { force: true });
+    // Seed from signal if slot lost FUT (e.g. brief memory gap) but STRONG still carries fut.
+    if (!Number.isFinite(slot.lastFut) && Number.isFinite(Number(signal.fut)) && Number(signal.fut) > 0) {
+      slot.lastFut = Number(signal.fut);
+      const signalAt = signal.at ? Date.parse(signal.at) : NaN;
+      slot.lastFutFetchAt = Number.isFinite(signalAt) ? signalAt : Date.now();
+    }
+    let fut;
+    try {
+      fut = await refreshFutPrice(slot, {
+        force: true,
+        allowStale: true,
+        staleMaxAgeMs: FUT_STALE_ENTRY_MAX_AGE_MS,
+      });
+    } catch (err) {
+      logLine('ENTRY_SKIP', {
+        symbol,
+        reason: 'FUT_UNAVAILABLE',
+        error: err.message || String(err),
+      });
+      return;
+    }
     const prox = proximityLimit(slot, fut);
     const dist = Math.abs(fut - Number(signal.levelStrike));
     if (dist > prox) {
