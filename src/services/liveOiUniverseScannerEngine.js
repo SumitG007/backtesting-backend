@@ -95,8 +95,15 @@ const MIN_HOLD_MS = 2000;
 const DEFAULT_TRADE_FROM = 560;
 const DEFAULT_TRADE_TO = 910;
 const DEFAULT_EOD = 920;
-const DEFAULT_TARGET_POINTS = 8;
-const DEFAULT_STOP_POINTS = 10;
+/** Index option premium exits (NIFTY / BANKNIFTY / SENSEX). */
+const DEFAULT_TARGET_POINTS_INDEX = 8;
+const DEFAULT_STOP_POINTS_INDEX = 10;
+/** Stock option premium exits — tighter absolute pts (slower premium). */
+const DEFAULT_TARGET_POINTS_STOCK = 3;
+const DEFAULT_STOP_POINTS_STOCK = 5;
+/** @deprecated aliases kept for older saved wallets / UI payloads */
+const DEFAULT_TARGET_POINTS = DEFAULT_TARGET_POINTS_INDEX;
+const DEFAULT_STOP_POINTS = DEFAULT_STOP_POINTS_INDEX;
 const DEFAULT_MIN_OI_RATIO = 1.5;
 const DEFAULT_PROXIMITY_POINTS_INDEX = 15;
 const DEFAULT_PROXIMITY_PCT_STOCK = 0.35;
@@ -110,8 +117,15 @@ const engineState = {
     tradeFromTime: '09:20',
     tradeToTime: '15:10',
     eodExitTime: '15:20',
-    targetPoints: DEFAULT_TARGET_POINTS,
-    stopLossPoints: DEFAULT_STOP_POINTS,
+    targetPointsIndex: DEFAULT_TARGET_POINTS_INDEX,
+    stopLossPointsIndex: DEFAULT_STOP_POINTS_INDEX,
+    hasStopLossIndex: true,
+    targetPointsStock: DEFAULT_TARGET_POINTS_STOCK,
+    stopLossPointsStock: DEFAULT_STOP_POINTS_STOCK,
+    hasStopLossStock: true,
+    // Legacy mirrors (index) for older clients
+    targetPoints: DEFAULT_TARGET_POINTS_INDEX,
+    stopLossPoints: DEFAULT_STOP_POINTS_INDEX,
     hasStopLoss: true,
     minOiRatio: DEFAULT_MIN_OI_RATIO,
     proximityPointsIndex: DEFAULT_PROXIMITY_POINTS_INDEX,
@@ -209,37 +223,66 @@ function migrateUniverseSettings(settings = {}) {
   return next;
 }
 
-function normalizeSettings(settings = {}) {
-  const targetRaw = Number(settings.targetPoints ?? settings.targetPct);
-  const targetPoints =
-    Number.isFinite(targetRaw) && targetRaw > 0 ? Math.min(500, targetRaw) : DEFAULT_TARGET_POINTS;
-
-  let hasStopLoss = true;
-  let stopLossPoints = DEFAULT_STOP_POINTS;
-  if (Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')) {
-    const slRaw = settings.stopLossPoints;
-    if (slRaw === '' || slRaw === null || slRaw === undefined) {
-      hasStopLoss = false;
-      stopLossPoints = null;
-    } else {
-      const n = Number(slRaw);
-      if (!Number.isFinite(n) || n <= 0) {
-        hasStopLoss = false;
-        stopLossPoints = null;
-      } else {
-        stopLossPoints = Math.min(500, n);
-      }
-    }
+function parseExitPointsField(raw, defaultPts) {
+  if (raw === '' || raw === null || raw === undefined) {
+    return { hasStopLoss: false, points: null };
   }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    return { hasStopLoss: false, points: null };
+  }
+  return { hasStopLoss: true, points: Math.min(500, n) };
+}
+
+function parseTargetPointsField(raw, defaultPts) {
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return Math.min(500, n);
+  return defaultPts;
+}
+
+function normalizeSettings(settings = {}) {
+  // Legacy single pair → index (stocks get dedicated defaults, not the old shared 8/10).
+  const legacyTarget = parseTargetPointsField(
+    settings.targetPoints ?? settings.targetPct,
+    DEFAULT_TARGET_POINTS_INDEX,
+  );
+  const legacySl = Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')
+    ? parseExitPointsField(settings.stopLossPoints, DEFAULT_STOP_POINTS_INDEX)
+    : { hasStopLoss: true, points: DEFAULT_STOP_POINTS_INDEX };
+
+  const targetPointsIndex = parseTargetPointsField(
+    settings.targetPointsIndex ?? legacyTarget,
+    DEFAULT_TARGET_POINTS_INDEX,
+  );
+  const slIndex = Object.prototype.hasOwnProperty.call(settings, 'stopLossPointsIndex')
+    ? parseExitPointsField(settings.stopLossPointsIndex, DEFAULT_STOP_POINTS_INDEX)
+    : Object.prototype.hasOwnProperty.call(settings, 'stopLossPoints')
+      ? legacySl
+      : { hasStopLoss: true, points: DEFAULT_STOP_POINTS_INDEX };
+
+  const targetPointsStock = parseTargetPointsField(
+    settings.targetPointsStock,
+    DEFAULT_TARGET_POINTS_STOCK,
+  );
+  const slStock = Object.prototype.hasOwnProperty.call(settings, 'stopLossPointsStock')
+    ? parseExitPointsField(settings.stopLossPointsStock, DEFAULT_STOP_POINTS_STOCK)
+    : { hasStopLoss: true, points: DEFAULT_STOP_POINTS_STOCK };
 
   return {
     lotCount: Math.max(1, Number(settings.lotCount) || 1),
     tradeFromTime: String(settings.tradeFromTime || '09:20'),
     tradeToTime: String(settings.tradeToTime || '15:10'),
     eodExitTime: String(settings.eodExitTime || '15:20'),
-    targetPoints,
-    stopLossPoints,
-    hasStopLoss,
+    targetPointsIndex,
+    stopLossPointsIndex: slIndex.points,
+    hasStopLossIndex: slIndex.hasStopLoss,
+    targetPointsStock,
+    stopLossPointsStock: slStock.points,
+    hasStopLossStock: slStock.hasStopLoss,
+    // Legacy mirrors (index)
+    targetPoints: targetPointsIndex,
+    stopLossPoints: slIndex.points,
+    hasStopLoss: slIndex.hasStopLoss,
     minOiRatio: Math.max(1.2, Math.min(3, Number(settings.minOiRatio) || DEFAULT_MIN_OI_RATIO)),
     proximityPointsIndex: Math.max(
       5,
@@ -256,6 +299,89 @@ function normalizeSettings(settings = {}) {
         ? Number(settings.perTradeCost)
         : 100,
     universe: normalizeUniverse(settings.universe),
+  };
+}
+
+function isIndexSymbol(symbol) {
+  return PRESET_SYMBOLS[String(symbol || '').toUpperCase()]?.instrument === 'INDEX';
+}
+
+/** Resolve TG/SL points for a symbol from current settings. */
+function resolveExitPointsForSymbol(symbol) {
+  const s = engineState.settings;
+  if (isIndexSymbol(symbol)) {
+    return {
+      profile: 'INDEX',
+      targetPoints: s.targetPointsIndex,
+      hasStopLoss: s.hasStopLossIndex,
+      stopLossPoints: s.stopLossPointsIndex,
+    };
+  }
+  return {
+    profile: 'STOCK',
+    targetPoints: s.targetPointsStock,
+    hasStopLoss: s.hasStopLossStock,
+    stopLossPoints: s.stopLossPointsStock,
+  };
+}
+
+/** Hard-set target/SL premiums from entry using current profile settings. */
+function applyExitPointsFromEntry(trade, exitPts) {
+  const entry = Number(trade.entryPremium);
+  if (!Number.isFinite(entry) || entry <= 0) return false;
+  const targetPoints = Number(exitPts.targetPoints);
+  trade.targetPremium = Number((entry + targetPoints).toFixed(2));
+  trade.targetMode = 'POINTS';
+  if (exitPts.hasStopLoss && Number.isFinite(Number(exitPts.stopLossPoints)) && Number(exitPts.stopLossPoints) > 0) {
+    trade.stopLossPremium = Number(Math.max(0.05, entry - Number(exitPts.stopLossPoints)).toFixed(2));
+    trade.stopLossMode = 'POINTS';
+  } else {
+    trade.stopLossPremium = null;
+    trade.stopLossMode = null;
+  }
+  return true;
+}
+
+/** Re-apply index/stock TG-SL to the current open paper trade (from entry). */
+async function reapplyExitPointsToOpenTrade({ reason = 'SETTINGS' } = {}) {
+  if (!engineState.openTradeId) return { ok: true, updated: false };
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) return { ok: true, updated: false };
+  const exitPts = resolveExitPointsForSymbol(trade.symbol);
+  const before = {
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
+  };
+  if (!applyExitPointsFromEntry(trade, exitPts)) return { ok: false, updated: false, error: 'bad_entry' };
+  const sameTarget = Number(before.targetPremium) === Number(trade.targetPremium);
+  const sameSl =
+    (before.stopLossPremium == null && trade.stopLossPremium == null)
+    || Number(before.stopLossPremium) === Number(trade.stopLossPremium);
+  if (sameTarget && sameSl) {
+    cacheOpenTradeLite(trade);
+    return { ok: true, updated: false, skipped: 'unchanged' };
+  }
+  const noteBit = `exits_reapplied=${reason}; ${exitPts.profile} tg=${exitPts.targetPoints} sl=${exitPts.hasStopLoss ? exitPts.stopLossPoints : 'off'}`;
+  trade.notes = [trade.notes, noteBit].filter(Boolean).join(' | ').slice(0, 500);
+  await trade.save();
+  cacheOpenTradeLite(trade);
+  logLine('EXITS_REAPPLIED', {
+    tradeId: trade._id.toString(),
+    symbol: trade.symbol,
+    profile: exitPts.profile,
+    entry: trade.entryPremium,
+    before,
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
+    reason,
+  });
+  return {
+    ok: true,
+    updated: true,
+    tradeId: trade._id.toString(),
+    profile: exitPts.profile,
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
   };
 }
 
@@ -1135,9 +1261,10 @@ async function placeStrongEntry(slot, signal, clock) {
     const lots = Math.max(1, Number(engineState.settings.lotCount) || 1);
     const qty = lotSize * lots;
     const charges = engineState.settings.perTradeCost;
-    const targetPoints = engineState.settings.targetPoints;
-    const hasSl = engineState.settings.hasStopLoss;
-    const stopLossPoints = engineState.settings.stopLossPoints;
+    const exitPts = resolveExitPointsForSymbol(symbol);
+    const targetPoints = exitPts.targetPoints;
+    const hasSl = exitPts.hasStopLoss;
+    const stopLossPoints = exitPts.stopLossPoints;
     const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = hasSl ? Math.max(0.05, entryPremium - stopLossPoints) : null;
 
@@ -1165,7 +1292,7 @@ async function placeStrongEntry(slot, signal, clock) {
       targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Universe STRONG ${optionType} · ${symbol} wall ${wall.levelStrike} · ratio ${wall.ratio}×`,
-      notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
+      notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; profile=${exitPts.profile}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -1180,13 +1307,16 @@ async function placeStrongEntry(slot, signal, clock) {
       entryPremium,
       wall: wall.levelStrike,
       ratio: wall.ratio,
+      profile: exitPts.profile,
+      targetPoints,
+      stopLossPoints: hasSl ? stopLossPoints : null,
     });
     pushNotification({
       type: 'ENTRY',
       strategy: 'OI Universe',
       title: `Entered ${symbol} ${optionType} ${strike}`,
-      body: `Strong wall ${wall.levelStrike} · ${wall.ratio}× · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''}`,
-      meta: { tradeId: tradeDoc._id.toString(), symbol, optionType, strike },
+      body: `Strong wall ${wall.levelStrike} · ${wall.ratio}× · ${exitPts.profile} +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''}`,
+      meta: { tradeId: tradeDoc._id.toString(), symbol, optionType, strike, profile: exitPts.profile },
       dedupeKey: `oi-universe-entry:${tradeDoc._id.toString()}`,
     });
     await subscribeOpenOption(tradeDoc);
@@ -1436,6 +1566,7 @@ async function startEngine({ settings = {} } = {}) {
       engineState.scanOrder = [...engineState.settings.universe];
       engineState.scanCursor = 0;
       engineState.futRefreshCursor = 0;
+      await reapplyExitPointsToOpenTrade({ reason: 'SETTINGS_WHILE_RUNNING' });
     }
     return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
   }
@@ -1449,6 +1580,7 @@ async function startEngine({ settings = {} } = {}) {
   await ensureWallet();
   const clock = getIstClock(new Date());
   await syncTradesToday(clock);
+  await reapplyExitPointsToOpenTrade({ reason: 'ENGINE_START' });
   if (engineState.openTradeId) {
     const trade = await LivePaperTrade.findById(engineState.openTradeId);
     if (trade && !trade.exitTime) {
@@ -1477,6 +1609,7 @@ async function updateEngineSettings(settings = {}) {
   const wallet = await ensureWallet();
   wallet.strategy13EngineSettings = engineState.settings;
   await wallet.save();
+  await reapplyExitPointsToOpenTrade({ reason: 'SETTINGS_SAVE' });
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -1537,6 +1670,7 @@ async function reconcileOpenTrades() {
   if (engineState.openTradeId && engineState.running && !engineState.positionPollTimer) {
     startPositionPoll();
   }
+  await reapplyExitPointsToOpenTrade({ reason: 'RECONCILE' });
   const ids = (
     await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select('_id').lean()
   ).map((r) => String(r._id));
