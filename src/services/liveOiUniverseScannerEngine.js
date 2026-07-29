@@ -1,6 +1,6 @@
 /**
  * Strategy 13 — OI Universe Scanner paper live.
- * Monitors NIFTY + BANKNIFTY + SENSEX + top liquid OPTSTK names on a priority OI schedule.
+ * Monitors NIFTY + BANKNIFTY + SENSEX + FINNIFTY + top liquid OPTSTK names on a priority OI schedule.
  * Stronger entry filters than OI Wall Entry.
  * Multi-position: one open per symbol; stocks carry overnight until SL / target / expiry
  * (indexes still EOD square-off).
@@ -31,6 +31,7 @@ const {
 const { STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY } = require('../strategies/keys');
 const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
 const { broadcast } = require('./realtimeSocket');
+const { hasReactionConfirmation } = require('./oiCandleConfirm');
 
 const STRATEGY_KEY = STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY;
 const WALLET_KEY = 'paper_live_strategy13';
@@ -58,10 +59,11 @@ function ensureOpenSymbolUniqueIndex() {
 }
 
 const DEFAULT_UNIVERSE = [
-  // Weekly indexes first
+  // Indexes first (priority OI scan)
   'NIFTY',
   'BANKNIFTY',
   'SENSEX',
+  'FINNIFTY',
   // Top liquid OPTSTK — daily intraday OI (monthly expiry, high premium turnover)
   'RELIANCE',
   'HDFCBANK',
@@ -118,7 +120,7 @@ const MIN_HOLD_MS = 2000;
 const DEFAULT_TRADE_FROM = 560;
 const DEFAULT_TRADE_TO = 910;
 const DEFAULT_EOD = 920;
-/** Index option premium exits (NIFTY / BANKNIFTY / SENSEX). */
+/** Index option premium exits (NIFTY / BANKNIFTY / SENSEX / FINNIFTY). */
 const DEFAULT_TARGET_POINTS_INDEX = 8;
 const DEFAULT_STOP_POINTS_INDEX = 10;
 /** Stock option premium exits — tighter absolute pts (slower premium). */
@@ -131,6 +133,12 @@ const DEFAULT_MIN_OI_RATIO = 1.5;
 const DEFAULT_PROXIMITY_POINTS_INDEX = 15;
 const DEFAULT_PROXIMITY_PCT_STOCK = 0.35;
 const OI_BOARD_LOOKAROUND = 10;
+/** Favorable closed candle confirm (same idea as OI Wall Entry). */
+const DEFAULT_CONFIRM_CANDLE_INTERVAL = '5';
+const DEFAULT_CONFIRM_ENTRY_WINDOW_MIN = 2;
+/** Indexes: confirm ON by default. Stocks: OFF (thin option bars). */
+const DEFAULT_CONFIRM_CANDLE_INDEX = true;
+const DEFAULT_CONFIRM_CANDLE_STOCK = false;
 
 const engineState = {
   running: false,
@@ -156,6 +164,10 @@ const engineState = {
     maxTradesPerDay: 8,
     cooldownMinutes: 3,
     perTradeCost: 100,
+    confirmCandleIndex: DEFAULT_CONFIRM_CANDLE_INDEX,
+    confirmCandleStock: DEFAULT_CONFIRM_CANDLE_STOCK,
+    confirmCandleInterval: DEFAULT_CONFIRM_CANDLE_INTERVAL,
+    confirmEntryWindowMinutes: DEFAULT_CONFIRM_ENTRY_WINDOW_MIN,
     universe: [...DEFAULT_UNIVERSE],
   },
   symbols: {},
@@ -163,6 +175,8 @@ const engineState = {
   scanCursor: 0,
   futRefreshCursor: 0,
   lastScanAt: 0,
+  /** Prevent re-entry on the same closed confirm candle per symbol+side. */
+  usedConfirmBarKeys: new Set(),
   /** @type {Set<string>} */
   openTradeIds: new Set(),
   /** symbol -> tradeId (at most one open per underlying) */
@@ -226,9 +240,57 @@ function ensureSymbolSlot(symbol) {
       lastError: null,
       lotSize: null,
       lastSignalNotifKey: null,
+      /** Per-symbol candle confirm cache (1m FUT / TF / option). */
+      candleCache: {},
     };
   }
+  if (!engineState.symbols[key].candleCache) {
+    engineState.symbols[key].candleCache = {};
+  }
   return engineState.symbols[key];
+}
+
+function parseBoolSetting(raw, defaultVal) {
+  if (raw === true || raw === 'true' || raw === 1 || raw === '1') return true;
+  if (raw === false || raw === 'false' || raw === 0 || raw === '0') return false;
+  return Boolean(defaultVal);
+}
+
+function getConfirmCandleInterval() {
+  return String(engineState.settings.confirmCandleInterval || DEFAULT_CONFIRM_CANDLE_INTERVAL) === '15'
+    ? '15'
+    : '5';
+}
+
+function getConfirmEntryWindowMinutes() {
+  const n = Number(engineState.settings.confirmEntryWindowMinutes);
+  if (Number.isFinite(n) && n >= 1) return Math.min(15, Math.floor(n));
+  return DEFAULT_CONFIRM_ENTRY_WINDOW_MIN;
+}
+
+function confirmCandleEnabledForSymbol(symbol) {
+  if (isIndexSymbol(symbol)) return Boolean(engineState.settings.confirmCandleIndex);
+  return Boolean(engineState.settings.confirmCandleStock);
+}
+
+function confirmBarKey(symbol, optionType, futBarKey, dateKey) {
+  if (!futBarKey) return null;
+  return `${dateKey || ''}:${String(symbol || '').toUpperCase()}:${optionType}:${futBarKey}`;
+}
+
+function confirmBarAlreadyUsed(symbol, optionType, futBarKey, dateKey) {
+  const key = confirmBarKey(symbol, optionType, futBarKey, dateKey);
+  if (!key) return false;
+  return engineState.usedConfirmBarKeys?.has(key);
+}
+
+function markConfirmBarUsed(symbol, optionType, futBarKey, dateKey) {
+  const key = confirmBarKey(symbol, optionType, futBarKey, dateKey);
+  if (!key) return;
+  if (!(engineState.usedConfirmBarKeys instanceof Set)) {
+    engineState.usedConfirmBarKeys = new Set();
+  }
+  engineState.usedConfirmBarKeys.add(key);
 }
 
 /** Only drop symbols that are gone / renamed in the master (not liquid names). */
@@ -258,12 +320,20 @@ function migrateUniverseSettings(settings = {}) {
   if (next.universe != null) {
     let normalized = normalizeUniverse(next.universe);
     if (!next.universeExplicit) {
+      const indexPresetCount = Object.values(PRESET_SYMBOLS).filter(
+        (p) => p?.instrument === 'INDEX',
+      ).length;
       const onlyIndexes =
         normalized.length > 0
-        && normalized.length <= 3
+        && normalized.length <= indexPresetCount
         && normalized.every((s) => PRESET_SYMBOLS[s]?.instrument === 'INDEX');
       if (onlyIndexes) {
         normalized = [...DEFAULT_UNIVERSE];
+      } else if (!normalized.includes('FINNIFTY') && normalized.includes('NIFTY')) {
+        // Soft-add FINNIFTY for older non-explicit universes that already scan indexes.
+        const sensexAt = normalized.indexOf('SENSEX');
+        if (sensexAt >= 0) normalized.splice(sensexAt + 1, 0, 'FINNIFTY');
+        else normalized.unshift('FINNIFTY');
       }
     }
     next.universe = normalized;
@@ -349,6 +419,19 @@ function normalizeSettings(settings = {}) {
       Number.isFinite(Number(settings.perTradeCost)) && Number(settings.perTradeCost) >= 0
         ? Number(settings.perTradeCost)
         : 100,
+    confirmCandleIndex: parseBoolSetting(settings.confirmCandleIndex, DEFAULT_CONFIRM_CANDLE_INDEX),
+    confirmCandleStock: parseBoolSetting(settings.confirmCandleStock, DEFAULT_CONFIRM_CANDLE_STOCK),
+    confirmCandleInterval:
+      String(settings.confirmCandleInterval || DEFAULT_CONFIRM_CANDLE_INTERVAL) === '15' ? '15' : '5',
+    confirmEntryWindowMinutes: Math.max(
+      1,
+      Math.min(
+        15,
+        Number.isFinite(Number(settings.confirmEntryWindowMinutes))
+          ? Math.floor(Number(settings.confirmEntryWindowMinutes))
+          : DEFAULT_CONFIRM_ENTRY_WINDOW_MIN,
+      ),
+    ),
     universe: normalizeUniverse(settings.universe),
     // Preserve "came from checkboxes" so an index-only list is never auto-expanded.
     universeExplicit: Boolean(settings.universeExplicit),
@@ -995,6 +1078,7 @@ async function syncTradesToday(clock) {
   if (engineState.tradesTodayDateKey !== clock.dateKey) {
     engineState.tradesTodayDateKey = clock.dateKey;
     engineState.tradesTodayCount = 0;
+    engineState.usedConfirmBarKeys = new Set();
   }
   const count = await LivePaperTrade.countDocuments({
     strategyKey: STRATEGY_KEY,
@@ -1437,6 +1521,131 @@ async function placeStrongEntry(slot, signal, clock) {
       optionType,
       strikeMode: 'ATM',
     });
+
+    // Optional FUT + option closed-candle confirm (OI Wall Entry style).
+    if (confirmCandleEnabledForSymbol(symbol)) {
+      const confirmInterval = getConfirmCandleInterval();
+      const confirmWindow = getConfirmEntryWindowMinutes();
+      let confirmDetail = null;
+      try {
+        const futInst = await ensureFutInstrument(slot);
+        confirmDetail = await hasReactionConfirmation({
+          clock,
+          signal: { optionType, levelStrike: wall.levelStrike },
+          spot: fut,
+          strike,
+          expiry,
+          symbol,
+          futInstrument: futInst,
+          proximityPoints: prox,
+          intervalMinutes: Number(confirmInterval),
+          confirmEntryWindowMinutes: confirmWindow,
+          tradeFromMinutes: tradeFromMin(),
+          usedSameBar: false, // checked after we know futCandle.barKey
+          cache: slot.candleCache,
+          force: true,
+        });
+        // Re-check used bar with the actual closed FUT bar key.
+        if (confirmDetail?.futCandle?.barKey) {
+          const used = confirmBarAlreadyUsed(
+            symbol,
+            optionType,
+            confirmDetail.futCandle.barKey,
+            clock.dateKey,
+          );
+          if (used) {
+            confirmDetail = { ...confirmDetail, ok: false, usedSameBar: true };
+          }
+        }
+      } catch (err) {
+        logLine('ENTRY_SKIP', {
+          symbol,
+          reason: 'CONFIRM_CANDLE_ERROR',
+          error: err.message || String(err),
+        });
+        // Keep STRONG_READY + buyLive so evaluateEntry keeps retrying in the confirm window.
+        if (slot.signal) {
+          slot.signal = {
+            ...slot.signal,
+            status: 'STRONG_READY',
+            buyLive: true,
+            label: `STRONG · wait ${confirmInterval}m candle`,
+            reason: 'WAIT_CANDLE',
+            detail: err.message || 'confirm candle error',
+            candleOk: false,
+            confirmCandleInterval: confirmInterval,
+          };
+        }
+        return;
+      }
+      if (!confirmDetail?.ok) {
+        const parts = [];
+        if (!confirmDetail?.futOk) parts.push(`FUT ${confirmInterval}m`);
+        if (!confirmDetail?.optionOk) parts.push(`opt ${confirmInterval}m`);
+        if (confirmDetail?.futOk && confirmDetail?.optionOk && confirmDetail?.confirmFresh === false) {
+          parts.push('stale window');
+        }
+        if (confirmDetail?.usedSameBar) parts.push('bar used');
+        logLine('WAIT_REACTION', {
+          symbol,
+          optionType,
+          level: wall.levelStrike,
+          fut,
+          confirmInterval,
+          futOk: confirmDetail?.futOk,
+          optionOk: confirmDetail?.optionOk,
+          confirmFresh: confirmDetail?.confirmFresh,
+          usedSameBar: confirmDetail?.usedSameBar,
+          candleError: confirmDetail?.candleError || null,
+          futCandle: confirmDetail?.futCandle
+            ? {
+              barKey: confirmDetail.futCandle.barKey,
+              o: confirmDetail.futCandle.open,
+              h: confirmDetail.futCandle.high,
+              l: confirmDetail.futCandle.low,
+              c: confirmDetail.futCandle.close,
+              green: confirmDetail.futCandle.green,
+              red: confirmDetail.futCandle.red,
+            }
+            : null,
+          optionCandle: confirmDetail?.optionCandle
+            ? {
+              barKey: confirmDetail.optionCandle.barKey,
+              o: confirmDetail.optionCandle.open,
+              h: confirmDetail.optionCandle.high,
+              l: confirmDetail.optionCandle.low,
+              c: confirmDetail.optionCandle.close,
+              green: confirmDetail.optionCandle.green,
+            }
+            : null,
+        });
+        // Keep STRONG_READY + buyLive — do not demote to WATCHING (that blocked retries
+        // until the next OI scan and caused STRONG↔WATCH notification flip-flops).
+        if (slot.signal) {
+          slot.signal = {
+            ...slot.signal,
+            status: 'STRONG_READY',
+            buyLive: true,
+            label: parts.length
+              ? `STRONG · wait candle (${parts.join(' + ')})`
+              : `STRONG · wait ${confirmInterval}m FUT+opt`,
+            reason: 'WAIT_CANDLE',
+            detail: parts.join(' · ') || 'Waiting favorable closed candle',
+            candleOk: false,
+            futCandleOk: Boolean(confirmDetail?.futOk),
+            optionCandleOk: Boolean(confirmDetail?.optionOk),
+            confirmFresh: confirmDetail?.confirmFresh,
+            confirmCandleInterval: confirmInterval,
+          };
+        }
+        return;
+      }
+      // Stash for mark-used after successful create.
+      slot._pendingConfirmBarKey = confirmDetail.futCandle?.barKey || null;
+    } else {
+      slot._pendingConfirmBarKey = null;
+    }
+
     let entryPremium = null;
     try {
       const premiums = await getAtmPremiums({ symbol, strike, expiry });
@@ -1515,13 +1724,17 @@ async function placeStrongEntry(slot, signal, clock) {
       targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Universe STRONG ${optionType} · ${symbol} wall ${wall.levelStrike} · ratio ${wall.ratio}×`,
-      notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; profile=${exitPts.profile}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
+      notes: `oi_universe; symbol=${symbol}; wall=${wall.levelStrike}; ratio=${wall.ratio}; profile=${exitPts.profile}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}; confirm=${confirmCandleEnabledForSymbol(symbol) ? `${getConfirmCandleInterval()}m` : 'off'}`,
     });
 
     engineState.openTradeIds.add(tradeDoc._id.toString());
     engineState.openTradeIdBySymbol[String(symbol).toUpperCase()] = tradeDoc._id.toString();
     engineState.tradesTodayCount += 1;
     engineState.tradesTodayDateKey = clock.dateKey;
+    if (slot._pendingConfirmBarKey) {
+      markConfirmBarUsed(symbol, optionType, slot._pendingConfirmBarKey, clock.dateKey);
+      slot._pendingConfirmBarKey = null;
+    }
     cacheOpenTradeLite(tradeDoc);
     logLine('ENTRY_SUCCESS', {
       tradeId: tradeDoc._id.toString(),

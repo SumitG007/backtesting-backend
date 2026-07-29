@@ -87,6 +87,8 @@ async function getCurrentLotSize(underlying) {
   if (upper === 'NIFTY') return 65;
   if (upper === 'BANKNIFTY') return 30;
   if (upper === 'SENSEX') return 20;
+  if (upper === 'FINNIFTY') return 60;
+  if (upper === 'MIDCPNIFTY') return 120;
   return 1;
 }
 

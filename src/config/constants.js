@@ -10,10 +10,11 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
  * Equity security IDs from Dhan instrument master (UNDERLYING_SECURITY_ID).
  */
 const PRESET_SYMBOLS = {
-  // Weekly index options
+  // Index options (NIFTY/SENSEX weekly; BANKNIFTY/FINNIFTY monthly)
   NIFTY: { securityId: '13', exchangeSegment: 'IDX_I', instrument: 'INDEX' },
   BANKNIFTY: { securityId: '25', exchangeSegment: 'IDX_I', instrument: 'INDEX' },
   SENSEX: { securityId: '51', exchangeSegment: 'IDX_I', instrument: 'INDEX' },
+  FINNIFTY: { securityId: '27', exchangeSegment: 'IDX_I', instrument: 'INDEX' },
 
   // Banking / finance — highest stock-option OI / premium turnover
   HDFCBANK: { securityId: '1333', exchangeSegment: 'NSE_EQ', instrument: 'EQUITY' },
@@ -73,6 +74,7 @@ const DEFAULT_LOT_SIZES = {
   NIFTY: 65,
   BANKNIFTY: 30,
   SENSEX: 20,
+  FINNIFTY: 60,
 };
 
 /** Default strike spacing (refined from live chain when available). */
@@ -80,6 +82,7 @@ const DEFAULT_STRIKE_STEPS = {
   NIFTY: 50,
   BANKNIFTY: 100,
   SENSEX: 100,
+  FINNIFTY: 50,
   RELIANCE: 10,
   HDFCBANK: 20,
   ICICIBANK: 20,
