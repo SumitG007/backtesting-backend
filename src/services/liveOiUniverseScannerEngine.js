@@ -1792,30 +1792,30 @@ async function recalcWalletFromTrades() {
 async function reconcileOpenTrades() {
   const clock = getIstClock(new Date());
   await syncTradesToday(clock);
+
+  // Multi-open is allowed (one per symbol). Never auto-close valid opens.
+  // Only log accidental same-symbol duplicates — entry path already blocks re-entry.
   const open = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     exitTime: null,
     status: { $ne: 'CLOSED' },
-  }).sort({ entryTime: 1 });
-
-  // Dedupe per symbol only (keep earliest open).
-  const seen = new Set();
+  })
+    .sort({ entryTime: 1 })
+    .lean();
+  const seen = {};
   for (const trade of open) {
     const sym = String(trade.symbol || '').toUpperCase();
-    if (seen.has(sym)) {
-      trade.status = 'CLOSED';
-      trade.exitTime = new Date();
-      trade.exitDateKey = clock.dateKey;
-      trade.reason = 'DEDUPE_CLOSE';
-      trade.pnl = 0;
-      // eslint-disable-next-line no-await-in-loop
-      await trade.save();
+    if (seen[sym]) {
+      logLine('DUPLICATE_OPEN_WARN', {
+        symbol: sym,
+        keepId: seen[sym],
+        extraId: String(trade._id),
+      });
       continue;
     }
-    seen.add(sym);
+    seen[sym] = String(trade._id);
   }
 
-  await syncTradesToday(clock);
   if (engineState.openTradeIds.size > 0 && engineState.running && !engineState.positionPollTimer) {
     startPositionPoll();
   }
@@ -1824,7 +1824,7 @@ async function reconcileOpenTrades() {
     await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select('_id').lean()
   ).map((r) => String(r._id));
   pruneTradeNotifications({ strategy: 'OI Universe', validTradeIds: ids });
-  return { ok: true };
+  return { ok: true, openCount: open.length };
 }
 
 async function resumeOpenPositionFromDb() {
