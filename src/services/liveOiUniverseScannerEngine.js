@@ -112,6 +112,8 @@ const FUT_STALE_ENTRY_MAX_AGE_MS = 120_000;
 const FUT_BATCH_SIZE = 3;
 /** Indexes stay fresher — their OI age is weighted higher when picking next scan. */
 const INDEX_OI_AGE_WEIGHT = 2.8;
+/** Symbols whose FUT LTP refreshes every tick (indexes + open positions + selected card). */
+const FUT_PRIORITY_MAX = 6;
 const STATUS_MARK_REFRESH_MIN_GAP_MS = 750;
 const MARK_DB_PERSIST_MIN_GAP_MS = 2000;
 const LIVE_MARK_EMIT_MIN_GAP_MS = 100;
@@ -847,35 +849,55 @@ function recomputeSignalFromFut(slot) {
   });
 }
 
+async function refreshOneFut(symbol) {
+  const slot = ensureSymbolSlot(symbol);
+  try {
+    await refreshFutPrice(slot, { force: true });
+    if (slot.board) {
+      slot.board = {
+        ...slot.board,
+        fut: slot.lastFut,
+        spot: slot.lastFut,
+        at: new Date().toISOString(),
+      };
+    }
+    if (slot.signal?.levelStrike && slot.signal.status !== 'CLEARED') {
+      recomputeSignalFromFut(slot);
+    }
+  } catch (err) {
+    slot.lastError = err.message || 'FUT refresh failed';
+  }
+}
+
+/**
+ * FUT LTP refresh. Indexes and symbols with an open position refresh every tick
+ * (same feel as OI Wall Entry); the rest rotate round-robin to respect Dhan limits.
+ */
 async function refreshFutBatch() {
   const order = engineState.scanOrder;
   if (!order.length) return;
-  const batch = Math.min(FUT_BATCH_SIZE, order.length);
-  const tasks = [];
-  for (let i = 0; i < batch; i += 1) {
-    const symbol = order[(engineState.futRefreshCursor + i) % order.length];
-    tasks.push((async () => {
-      const slot = ensureSymbolSlot(symbol);
-      try {
-        await refreshFutPrice(slot, { force: true });
-        if (slot.board) {
-          slot.board = {
-            ...slot.board,
-            fut: slot.lastFut,
-            spot: slot.lastFut,
-            at: new Date().toISOString(),
-          };
-        }
-        if (slot.signal?.levelStrike && slot.signal.status !== 'CLEARED') {
-          recomputeSignalFromFut(slot);
-        }
-      } catch (err) {
-        slot.lastError = err.message || 'FUT refresh failed';
-      }
-    })());
+
+  const priority = [];
+  const seen = new Set();
+  for (const symbol of order) {
+    if (priority.length >= FUT_PRIORITY_MAX) break;
+    const isOpen = Boolean(engineState.openTradeIdBySymbol[symbol]);
+    if (!isIndexSymbol(symbol) && !isOpen) continue;
+    priority.push(symbol);
+    seen.add(symbol);
   }
-  engineState.futRefreshCursor = (engineState.futRefreshCursor + batch) % order.length;
-  await Promise.allSettled(tasks);
+
+  const rotating = [];
+  const pool = order.filter((s) => !seen.has(s));
+  const batch = Math.min(FUT_BATCH_SIZE, pool.length);
+  for (let i = 0; i < batch; i += 1) {
+    rotating.push(pool[(engineState.futRefreshCursor + i) % pool.length]);
+  }
+  if (pool.length) {
+    engineState.futRefreshCursor = (engineState.futRefreshCursor + batch) % pool.length;
+  }
+
+  await Promise.allSettled([...priority, ...rotating].map((symbol) => refreshOneFut(symbol)));
 }
 
 async function scanOneSymbol(symbol) {
@@ -2026,7 +2048,9 @@ function getEngineSnapshot() {
       symbol,
       kind: slot.kind,
       lastFut: slot.lastFut,
+      priceSource: 'FUT',
       futExpiry: slot.futExpiry,
+      futAt: slot.lastFutFetchAt || null,
       expiry: slot.expiry,
       board: slot.board,
       signal: slot.signal,

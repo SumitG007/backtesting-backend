@@ -1,8 +1,7 @@
 /**
- * Strategy 7 Multi — NIFTY OI ATM Multi Entry paper live.
- * ATM-only Put/Call dominance (no top-wall check) · separate Mongo trade book.
- * Put ≥ Call → Buy CE · Call ≥ Put → Buy PE · clear ratio + ΔOI not fighting.
- * Multi trades allowed (no same-side day lock) · default +5 / -10 pts · EOD square-off.
+ * Strategy 7 Multi — NIFTY OI neighbor-wall Multi Entry paper live.
+ * ATM± neighbors (skip fighting ATM) · Put wall below → CE · Call wall above → PE.
+ * Separate Mongo trade book · multi trades · default +5 / −15 pts · 5m FUT+option confirm.
  */
 
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -56,7 +55,7 @@ const DEFAULT_TRADE_FROM = 560; // 09:20
 const DEFAULT_TRADE_TO = 910; // 15:10
 const DEFAULT_EOD = 920; // 15:20
 const DEFAULT_TARGET_POINTS = 5;
-const DEFAULT_STOP_POINTS = 10;
+const DEFAULT_STOP_POINTS = 15;
 /** After OI side flip, wait before arming a new entry setup. */
 const OI_FLIP_COOLDOWN_MS = 60_000;
 /** Board shows enough strikes around FUT to catch the real high-OI wall (e.g. 24000). */
@@ -65,6 +64,8 @@ const OI_BOARD_LOOKAROUND = 12;
 const DEFAULT_MIN_OI_RATIO = 1.2;
 /** Enter only within this many minutes after the confirm candle closes. */
 const DEFAULT_CONFIRM_ENTRY_WINDOW_MIN = 2;
+/** Multi scalp: scan ATM ± this many strikes for neighbor Put/Call walls. */
+const MULTI_NEIGHBOR_STEPS = 2;
 
 const engineState = {
   running: false,
@@ -385,7 +386,7 @@ function isStrongBuildupFighting(optionType, marketStructure = engineState.marke
 }
 
 /**
- * Level helpers for Multi ATM signal.
+ * Level helpers for Multi neighbor-wall scalp.
  * Bias: Put OI ≥ Call OI → Buy CE, else Buy PE.
  * Clear dominance (ratio ≥ minOiRatio, default 1.2) is enforced at signal/entry time.
  */
@@ -454,20 +455,102 @@ function pickAtmStrikeBias(snapshot) {
 }
 
 /**
- * Multi-only: ATM strike Put/Call dominance (ignores top wall).
- * Put OI ≥ Call → Buy CE · Call ≥ Put → Buy PE.
- * Needs clear ratio (≥ minOiRatio) and ΔOI not fighting.
+ * ATM is "fighting" when ratio is weak, ΔOI fights the side, or both sides
+ * are building hard together (crowded ATM — skip for Multi scalp).
+ */
+function isAtmFighting(bias) {
+  if (!bias) return true;
+  if (!isOiDominanceClear(bias.ratio)) return true;
+  if (isDeltaOiFighting(bias.optionType, bias.putChgOi, bias.callChgOi)) return true;
+  const putChg = Number(bias.putChgOi);
+  const callChg = Number(bias.callChgOi);
+  if (Number.isFinite(putChg) && Number.isFinite(callChg) && putChg > 0 && callChg > 0) {
+    const hi = Math.max(putChg, callChg);
+    const lo = Math.min(putChg, callChg);
+    if (hi > 0 && lo / hi >= 0.7) return true;
+  }
+  return false;
+}
+
+function rankNeighborCandidate(a, b, proxPts) {
+  const aIn = a.dist <= proxPts ? 0 : 1;
+  const bIn = b.dist <= proxPts ? 0 : 1;
+  if (aIn !== bIn) return aIn - bIn;
+  if (a.dist !== b.dist) return a.dist - b.dist;
+  return (b.oiMass || 0) - (a.oiMass || 0);
+}
+
+/**
+ * Multi scalp level:
+ * - Scan ATM ± MULTI_NEIGHBOR_STEPS strikes (default ±2).
+ * - Skip fighting ATM (crowded Put+Call).
+ * - Clear Put wall at/below FUT → Buy CE (support bounce).
+ * - Clear Call wall at/above FUT → Buy PE (resistance reject).
+ * - Prefer nearest level (in proximity first), then highest OI mass.
+ * Entry still needs 5m FUT + option confirm + proximity.
  */
 function resolveMultiOiLevel(snapshot) {
-  const atm = pickAtmStrikeBias(snapshot);
-  if (
-    atm
-    && isOiDominanceClear(atm.ratio)
-    && !isDeltaOiFighting(atm.optionType, atm.putChgOi, atm.callChgOi)
-  ) {
-    return { ...atm, signalSource: 'ATM', score: atm.oiMass };
+  const strikes = Array.isArray(snapshot?.strikes) ? snapshot.strikes : [];
+  const atm = Number(snapshot?.atm);
+  const step = Math.max(1, Number(snapshot?.strikeStep) || 50);
+  const futRaw = Number(snapshot?.spot ?? snapshot?.atm);
+  const fut = Number.isFinite(futRaw) && futRaw > 0 ? futRaw : atm;
+  if (!Number.isFinite(atm) || !Number.isFinite(fut)) return null;
+
+  const proxPts = Math.max(5, Number(engineState.settings.proximityPoints) || 20);
+  const band = MULTI_NEIGHBOR_STEPS * step;
+  const candidates = [];
+
+  for (const row of strikes) {
+    const strike = Number(row.strike);
+    if (!Number.isFinite(strike)) continue;
+    if (Math.abs(strike - atm) > band + 0.001) continue;
+
+    const bias = biasFromOiRow(row);
+    if (!bias) continue;
+
+    const isAtm = Math.abs(strike - atm) < step * 0.25;
+    if (isAtm && isAtmFighting(bias)) continue;
+    if (!isOiDominanceClear(bias.ratio)) continue;
+
+    const dist = Math.abs(fut - strike);
+    const putWall = bias.dominantSide === 'PUT';
+    const callWall = bias.dominantSide === 'CALL';
+
+    // Support below/at FUT → CE; resistance above/at FUT → PE.
+    if (
+      putWall
+      && strike <= fut + step * 0.1
+      && !isDeltaOiFighting('CE', bias.putChgOi, bias.callChgOi)
+    ) {
+      candidates.push({
+        ...bias,
+        optionType: 'CE',
+        dominantSide: 'PUT',
+        dist,
+        signalSource: isAtm ? 'ATM' : 'NEIGHBOR_PUT',
+        score: bias.oiMass,
+      });
+    }
+    if (
+      callWall
+      && strike >= fut - step * 0.1
+      && !isDeltaOiFighting('PE', bias.putChgOi, bias.callChgOi)
+    ) {
+      candidates.push({
+        ...bias,
+        optionType: 'PE',
+        dominantSide: 'CALL',
+        dist,
+        signalSource: isAtm ? 'ATM' : 'NEIGHBOR_CALL',
+        score: bias.oiMass,
+      });
+    }
   }
-  return null;
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => rankNeighborCandidate(a, b, proxPts));
+  return candidates[0];
 }
 
 /** ΔOI fights CE if calls are building faster; fights PE if puts build faster. */
@@ -1142,13 +1225,13 @@ async function refreshLiveSignalStatus(clock) {
   if (!signal || signal.skip) {
     publishLiveSignal({
       status: maxTradesHit ? 'MAX_TRADES' : 'CLEARED',
-      label: maxTradesHit ? 'Max trades · no ATM yet' : 'No ATM signal',
+      label: maxTradesHit ? 'Max trades · no neighbor yet' : 'No neighbor wall signal',
       detail: maxTradesHit
-        ? `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} done · waiting for next ATM signal (info only)`
-        : (signal?.skipReason === 'no_clear_wall_or_atm' || signal?.skipReason === 'no_clear_atm'
-          ? 'ATM Put/Call ratio weak or ΔOI fighting'
-          : (signal?.skipReason || 'Waiting for clear ATM Put/Call dominance')),
-      reason: maxTradesHit ? 'MAX_TRADES' : (signal?.skipReason || 'NO_ATM'),
+        ? `${engineState.tradesTodayCount}/${engineState.settings.maxTradesPerDay} done · waiting for next neighbor wall (info only)`
+        : (signal?.skipReason === 'no_clear_atm' || signal?.skipReason === 'no_neighbor_wall'
+          ? 'ATM fighting / no clear Put wall below or Call wall above'
+          : (signal?.skipReason || 'Waiting for clear ATM± neighbor Put/Call wall')),
+      reason: maxTradesHit ? 'MAX_TRADES' : (signal?.skipReason || 'NO_NEIGHBOR'),
       optionType: null,
       levelStrike: null,
       buyLive: false,
@@ -1227,7 +1310,7 @@ async function refreshLiveSignalStatus(clock) {
     ratio: signal.ratio,
     ratioOk,
     minOiRatio,
-    signalSource: signal.signalSource || 'ATM',
+    signalSource: signal.signalSource || 'NEIGHBOR_PUT',
     priceSource: 'FUT',
     futExpiry: engineState.futExpiry,
     spot: Number.isFinite(spot) ? spot : null,
@@ -1253,8 +1336,12 @@ async function refreshLiveSignalStatus(clock) {
     maxTradesPerDay: engineState.settings.maxTradesPerDay,
   };
 
-  const levelKind = 'ATM';
-  const levelTag = 'ATM';
+  const levelKind = signal.signalSource?.startsWith('NEIGHBOR')
+    ? (signal.optionType === 'CE' ? 'support' : 'resist')
+    : 'ATM';
+  const levelTag = signal.signalSource?.startsWith('NEIGHBOR')
+    ? (signal.optionType === 'CE' ? 'Put wall' : 'Call wall')
+    : 'ATM';
 
   if (flipCooling) {
     publishLiveSignal({
@@ -2050,10 +2137,11 @@ async function captureMorningOiSignal(clock) {
       engineState.morningSignal = {
         dateKey: clock.dateKey,
         skip: true,
-        skipReason: weakAtm ? 'no_clear_atm' : 'no_dominant_oi',
+        skipReason: 'no_neighbor_wall',
         spot: snapshot.spot,
         atm: snapshot.atm,
         atmRatio: weakAtm?.ratio ?? null,
+        atmFighting: weakAtm ? isAtmFighting(weakAtm) : null,
         scanned: snapshot.strikes.length,
         withOi: withOi.length,
         withChangeOi: withChg.length,
@@ -2085,7 +2173,7 @@ async function captureMorningOiSignal(clock) {
       hasChangeOi: Boolean(dominant.hasChangeOi),
       ratio: dominant.ratio,
       oiMass: dominant.oiMass,
-      signalSource: dominant.signalSource || 'ATM',
+      signalSource: dominant.signalSource || 'NEIGHBOR_PUT',
       spotAtScan: snapshot.spot,
       atm: snapshot.atm,
       expiry,
@@ -2840,8 +2928,8 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       stopLossMode: hasSl ? 'POINTS' : null,
       targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
-      entryReason: `Buy ${optionType} · ATM ${signal.levelStrike} · ${signal.dominantSide} · FUT+opt ${confirmInterval}m confirm`,
-      notes: `oi_wall_multi; priceSource=FUT; signalSource=${signal.signalSource || 'ATM'}; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
+      entryReason: `Buy ${optionType} · ${signal.signalSource || 'neighbor'} ${signal.levelStrike} · ${signal.dominantSide} · FUT+opt ${confirmInterval}m confirm`,
+      notes: `oi_wall_multi; priceSource=FUT; signalSource=${signal.signalSource || 'NEIGHBOR'}; level=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; confirm=${confirmInterval}m; futBar=${futBarKey}; tg=${targetPoints}pts; sl=${hasSl ? `${stopLossPoints}pts` : 'off'}`,
     });
 
     engineState.openTradeId = tradeDoc._id.toString();
@@ -2858,7 +2946,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       optionType,
       strike,
       levelStrike: signal.levelStrike,
-      signalSource: signal.signalSource || 'ATM',
+      signalSource: signal.signalSource || 'NEIGHBOR',
       confirmInterval,
       futOk: confirmDetail?.futOk,
       optionOk: confirmDetail?.optionOk,
@@ -2893,7 +2981,7 @@ async function placeLongOption(clock, signal, spot, confirmDetail = null) {
       strategy: 'OI Wall Multi',
       title: `Entered ${optionType} ${strike}`,
       body: [
-        `ATM ${signal.levelStrike} · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
+        `${signal.signalSource || 'Level'} ${signal.levelStrike} · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
         engineState.marketStructure?.label && engineState.marketStructure.key !== 'UNAVAILABLE'
           ? `Overall: ${engineState.marketStructure.label}`
           : null,
@@ -3198,9 +3286,9 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
           ? DEFAULT_TARGET_POINTS
           : migrated.targetPct;
     }
-    if (migrated.stopLossPoints == null || migrated.stopLossPoints === '') {
+    if (migrated.stopLossPoints == null || migrated.stopLossPoints === '' || Number(migrated.stopLossPoints) === 10) {
       migrated.stopLossPoints =
-        migrated.stopLossPct == null || migrated.stopLossPct === ''
+        migrated.stopLossPct == null || migrated.stopLossPct === '' || Number(migrated.stopLossPct) === 10
           ? DEFAULT_STOP_POINTS
           : migrated.stopLossPct;
     }
