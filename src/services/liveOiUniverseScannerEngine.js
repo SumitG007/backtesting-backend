@@ -678,8 +678,9 @@ function buildBoard(snapshot, fut, expiry, futExpiry) {
   return {
     at: new Date().toISOString(),
     priceSource: 'FUT',
-    spot: Number.isFinite(fut) ? fut : snapshot?.spot ?? null,
-    fut: Number.isFinite(fut) ? fut : snapshot?.spot ?? null,
+    // Master price line = FUT only (same as OI Wall Entry). Chain cash/index stays in chainSpot.
+    spot: Number.isFinite(fut) ? fut : null,
+    fut: Number.isFinite(fut) ? fut : null,
     futExpiry: futExpiry || null,
     chainSpot: snapshot?.chainSpot ?? snapshot?.spot ?? null,
     atm: snapshot?.atm ?? null,
@@ -882,12 +883,15 @@ async function scanOneSymbol(symbol) {
   const prevSignal = slot.signal ? { ...slot.signal } : null;
   try {
     let fut = null;
-    let priceSource = 'FUT';
     try {
       fut = await refreshFutPrice(slot, { force: true });
     } catch (futErr) {
-      // Cold start / FUT blip with no cache — fall through to option-chain last_price.
+      // Same as OI Wall Entry: never seed FUT from option-chain cash/index last_price.
       slot.lastError = futErr.message || 'FUT unavailable';
+      throw futErr;
+    }
+    if (!Number.isFinite(fut) || fut <= 0) {
+      throw new Error(`Future LTP unavailable for ${symbol}`);
     }
 
     const expiry = await getNearestWeeklyExpiry(symbol);
@@ -896,28 +900,15 @@ async function scanOneSymbol(symbol) {
     const snapshot = await getOptionChainOiSnapshot({
       symbol,
       expiry,
-      spotOverride: Number.isFinite(fut) ? fut : null,
+      spotOverride: fut,
       lookaroundStrikes: OI_BOARD_LOOKAROUND,
     });
     if (!Array.isArray(snapshot?.strikes) || snapshot.strikes.length === 0) {
       throw new Error(`Empty OI chain for ${symbol}`);
     }
 
-    if (!Number.isFinite(fut) || fut <= 0) {
-      const chainSpot = Number(snapshot?.spot ?? snapshot?.chainSpot ?? snapshot?.atm);
-      if (!Number.isFinite(chainSpot) || chainSpot <= 0) {
-        throw new Error('Future LTP unavailable (no REST or WS data yet)');
-      }
-      fut = chainSpot;
-      priceSource = 'CHAIN';
-      // Seed FUT cache so later entry/proximity can reuse without another hard fail.
-      slot.lastFut = chainSpot;
-      slot.lastFutFetchAt = Date.now();
-      logLine('FUT_CHAIN_SPOT_FALLBACK', { symbol, spot: chainSpot });
-    }
-
     slot.board = buildBoard(snapshot, fut, expiry, slot.futExpiry);
-    if (slot.board) slot.board.priceSource = priceSource;
+    if (slot.board) slot.board.priceSource = 'FUT';
     slot.lastOiAt = Date.now();
     slot.lastError = null;
 
@@ -945,7 +936,7 @@ async function scanOneSymbol(symbol) {
     const prox = proximityLimit(slot, fut);
     const proximityOk = dist <= prox;
     const deltaOk = !isDeltaFighting(wall.optionType, wall.putChgOi, wall.callChgOi);
-    const pxLabel = priceSource === 'CHAIN' ? 'SPOT' : 'FUT';
+    const pxLabel = 'FUT';
     const base = {
       symbol,
       kind: slot.kind,
@@ -960,7 +951,7 @@ async function scanOneSymbol(symbol) {
       ratioOk: wall.ratioOk,
       minOiRatio: engineState.settings.minOiRatio,
       fut,
-      priceSource,
+      priceSource: 'FUT',
       spotDist: Number(dist.toFixed(1)),
       proximityLimit: prox,
       proximityOk,
@@ -1471,8 +1462,13 @@ async function placeStrongEntry(slot, signal, clock) {
       return;
     }
     const optionType = signal.optionType === 'PE' ? 'PE' : 'CE';
-    // Seed from signal if slot lost FUT (e.g. brief memory gap) but STRONG still carries fut.
-    if (!Number.isFinite(slot.lastFut) && Number.isFinite(Number(signal.fut)) && Number(signal.fut) > 0) {
+    // Seed from signal only when it carried a real FUT print (never chain/spot).
+    if (
+      !Number.isFinite(slot.lastFut)
+      && Number.isFinite(Number(signal.fut))
+      && Number(signal.fut) > 0
+      && String(signal.priceSource || 'FUT') === 'FUT'
+    ) {
       slot.lastFut = Number(signal.fut);
       const signalAt = signal.at ? Date.parse(signal.at) : NaN;
       slot.lastFutFetchAt = Number.isFinite(signalAt) ? signalAt : Date.now();
