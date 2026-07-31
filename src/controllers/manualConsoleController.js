@@ -5,7 +5,7 @@ function parsePage(raw, fallback = 1) {
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
 }
 
-function parsePageSize(raw, fallback = 25, max = 100) {
+function parsePageSize(raw, fallback = 25, max = 500) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(1, Math.min(max, Math.floor(n)));
@@ -177,9 +177,22 @@ async function getManualActions(req, res) {
 async function postManualWalletReset(req, res) {
   try {
     const wallet = await manualEngine.resetWallet();
-    return res.json({ ok: true, wallet, message: 'Manual console history cleared' });
+    return res.json({ ok: true, wallet, message: 'Manual console history cleared — capital kept' });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function postManualWalletTopup(req, res) {
+  try {
+    const wallet = await manualEngine.topUpWallet(req.body?.amount);
+    return res.json({
+      ok: true,
+      wallet,
+      message: `Added ₹${Number(req.body?.amount).toLocaleString('en-IN')} to paper balance`,
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
   }
 }
 
@@ -197,4 +210,5 @@ module.exports = {
   getManualTrades,
   getManualActions,
   postManualWalletReset,
+  postManualWalletTopup,
 };

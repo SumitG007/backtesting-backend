@@ -37,6 +37,8 @@ const livePaperTradeSchema = new mongoose.Schema(
     /** Short human reason for why the entry was taken (scalp / signals). */
     entryReason: { type: String, default: null },
     investedAmount: { type: Number, required: true },
+    /** Cash reserved from paper wallet at fill (options: premium×qty+charges; futures: margin+charges). */
+    capitalLocked: { type: Number, default: null },
     creditReceived: { type: Number, default: null },
     finalValue: { type: Number, default: null },
     charges: { type: Number, default: 100 },

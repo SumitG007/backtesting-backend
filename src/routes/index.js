@@ -49,6 +49,7 @@ const {
   getManualTrades,
   getManualActions,
   postManualWalletReset,
+  postManualWalletTopup,
 } = require('../controllers/manualConsoleController');
 const {
   getPatternResearch,
@@ -114,5 +115,6 @@ router.patch('/manual-console/positions/:tradeId/risk', patchManualPositionRisk)
 router.get('/manual-console/trades', getManualTrades);
 router.get('/manual-console/actions', getManualActions);
 router.post('/manual-console/wallet/reset', postManualWalletReset);
+router.post('/manual-console/wallet/topup', postManualWalletTopup);
 
 module.exports = router;

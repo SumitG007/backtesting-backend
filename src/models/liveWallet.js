@@ -6,10 +6,27 @@ const liveWalletSchema = new mongoose.Schema(
     startingBalance: { type: Number, required: true, default: 0 },
     balance: { type: Number, required: true, default: 0 },
     realizedPnl: { type: Number, default: 0 },
+    /** Sum of winning closed trade P/L (manual console cash wallet). */
+    grossProfit: { type: Number, default: 0 },
+    /** Sum of |losing| closed trade P/L (manual console cash wallet). */
+    grossLoss: { type: Number, default: 0 },
     totalTrades: { type: Number, default: 0 },
     wins: { type: Number, default: 0 },
     losses: { type: Number, default: 0 },
     lastResetAt: { type: Date, default: null },
+    /** Manual console: true once cash top-ups / ledger mode is active. */
+    cashLedger: { type: Boolean, default: false },
+    /** Manual console paper deposit ledger (amount + time). Newest first. */
+    depositHistory: {
+      type: [
+        {
+          amount: { type: Number, required: true },
+          at: { type: Date, default: Date.now },
+          source: { type: String, enum: ['preset', 'custom'], default: 'preset' },
+        },
+      ],
+      default: [],
+    },
     strategy3EngineSettings: {
       symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 1 },

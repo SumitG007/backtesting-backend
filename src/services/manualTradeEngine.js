@@ -41,9 +41,19 @@ const POLL_INTERVAL_MS = 1000;
 const EOD_EXIT = 920; // 15:20 IST
 const MIN_HOLD_MS = 5000;
 const WS_FRESH_MS = 12000;
+const CLOSED_STATS_SYNC_MS = 5 * 60 * 1000;
+let lastClosedStatsSyncAt = 0;
 const LIVE_MARK_EMIT_MIN_GAP_MS = 80;
 const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY']);
 const MANUAL_STRATEGY_ID = 'manual-console';
+/** Virtual top-up presets (paper only — not real money). */
+const TOPUP_AMOUNTS = Object.freeze([5000, 10000, 50000]);
+/** Custom top-up must be greater than this (presets may equal min). */
+const MIN_CUSTOM_TOPUP = 5000;
+const MAX_TOPUP = 1000000;
+const MAX_DEPOSIT_HISTORY = 100;
+/** Futures: lock ~12% of notional so ₹5k/10k/50k top-ups remain usable. */
+const FUTURE_MARGIN_PCT = 0.12;
 
 const engineState = {
   running: false,
@@ -185,12 +195,184 @@ async function logAction({ action, tradeId = null, orderId = null, symbol = null
 
 async function ensureWallet() {
   let wallet = await LiveWallet.findOne({ walletKey: WALLET_KEY });
-  if (!wallet) wallet = await LiveWallet.create({ walletKey: WALLET_KEY });
-  if (wallet.startingBalance !== 0 || wallet.balance !== wallet.realizedPnl) {
-    wallet.startingBalance = 0;
-    wallet.balance = Number(wallet.realizedPnl || 0);
+  if (!wallet) {
+    wallet = await LiveWallet.create({
+      walletKey: WALLET_KEY,
+      startingBalance: 0,
+      balance: 0,
+      realizedPnl: 0,
+      grossProfit: 0,
+      grossLoss: 0,
+      cashLedger: true,
+    });
+  }
+  // One-time migrate off the old "balance === realizedPnl" PnL-only wallet.
+  if (!wallet.cashLedger) {
+    wallet.cashLedger = true;
+    wallet.startingBalance = Math.max(0, Number(wallet.startingBalance) || 0);
+    // Preserve any positive realized PnL as available cash seed; never invent capital.
+    const realized = Number(wallet.realizedPnl) || 0;
+    if (!(Number(wallet.startingBalance) > 0) && !(Number(wallet.balance) > 0)) {
+      wallet.balance = Math.max(0, realized);
+    }
+    if (wallet.grossProfit == null) wallet.grossProfit = 0;
+    if (wallet.grossLoss == null) wallet.grossLoss = 0;
     await wallet.save();
   }
+  return wallet;
+}
+
+/** Capital required to open a paper position (options: full premium; futures: margin). */
+function estimateCapitalRequired({ product, premium, qty, charges = 100 }) {
+  const px = Number(premium);
+  const q = Math.max(0, Number(qty) || 0);
+  const fee = Math.max(0, Number(charges) || 0);
+  if (!Number.isFinite(px) || px <= 0 || q <= 0) return null;
+  const notional = px * q;
+  const capital =
+    String(product || 'OPTION').toUpperCase() === 'FUTURE'
+      ? notional * FUTURE_MARGIN_PCT
+      : notional;
+  return Number((capital + fee).toFixed(2));
+}
+
+function formatInsufficientFunds(need, have) {
+  const n = Number(need) || 0;
+  const h = Number(have) || 0;
+  return `Insufficient balance — need ₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })} · available ₹${h.toLocaleString('en-IN', { maximumFractionDigits: 2 })}. Top up ₹5,000 / ₹10,000 / ₹50,000.`;
+}
+
+async function assertSufficientBalance(need) {
+  const wallet = await ensureWallet();
+  const have = Number(wallet.balance) || 0;
+  const required = Number(need) || 0;
+  if (!(required > 0)) throw new Error('Cannot estimate order cost');
+  if (have + 1e-9 < required) {
+    throw new Error(formatInsufficientFunds(required, have));
+  }
+  return wallet;
+}
+
+async function debitWallet(amount, { reason = 'DEBIT' } = {}) {
+  const need = Number(amount) || 0;
+  if (!(need > 0)) return ensureWallet();
+  const wallet = await assertSufficientBalance(need);
+  wallet.balance = Number((Number(wallet.balance) - need).toFixed(2));
+  await wallet.save();
+  return wallet;
+}
+
+async function creditWallet(amount) {
+  const add = Number(amount) || 0;
+  if (!(add > 0)) return ensureWallet();
+  const wallet = await ensureWallet();
+  wallet.balance = Number((Number(wallet.balance) + add).toFixed(2));
+  await wallet.save();
+  return wallet;
+}
+
+function serializeWallet(wallet, extras = {}) {
+  const balance = Number(wallet.balance) || 0;
+  const startingBalance = Number(wallet.startingBalance) || 0;
+  const realizedPnl = Number(wallet.realizedPnl) || 0;
+  const grossProfit = Number(wallet.grossProfit) || 0;
+  const grossLoss = Number(wallet.grossLoss) || 0;
+  const rawHistory = Array.isArray(wallet.depositHistory) ? wallet.depositHistory : [];
+  const depositHistory = rawHistory
+    .map((row) => ({
+      amount: Number(row.amount) || 0,
+      at: row.at ? new Date(row.at).toISOString() : null,
+      source: row.source === 'custom' ? 'custom' : 'preset',
+    }))
+    .filter((row) => row.amount > 0 && row.at)
+    .slice(0, MAX_DEPOSIT_HISTORY);
+  return {
+    balance,
+    available: balance,
+    startingBalance,
+    realizedPnl,
+    grossProfit,
+    grossLoss,
+    totalTrades: wallet.totalTrades || 0,
+    wins: wallet.wins || 0,
+    losses: wallet.losses || 0,
+    cashLedger: Boolean(wallet.cashLedger),
+    topupOptions: [...TOPUP_AMOUNTS],
+    minCustomTopup: MIN_CUSTOM_TOPUP,
+    maxTopup: MAX_TOPUP,
+    depositHistory,
+    ...extras,
+  };
+}
+
+function normalizeTopupAmount(rawAmount) {
+  const amount = Math.round(Number(rawAmount));
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Enter a valid deposit amount');
+  }
+  if (TOPUP_AMOUNTS.includes(amount)) {
+    return { amount, source: 'preset' };
+  }
+  // Custom: must be more than ₹5,000
+  if (amount <= MIN_CUSTOM_TOPUP) {
+    throw new Error(`Custom amount must be more than ₹${MIN_CUSTOM_TOPUP.toLocaleString('en-IN')}`);
+  }
+  if (amount > MAX_TOPUP) {
+    throw new Error(`Max deposit is ₹${MAX_TOPUP.toLocaleString('en-IN')}`);
+  }
+  return { amount, source: 'custom' };
+}
+
+async function topUpWallet(rawAmount) {
+  const { amount, source } = normalizeTopupAmount(rawAmount);
+  const wallet = await ensureWallet();
+  wallet.startingBalance = Number((Number(wallet.startingBalance || 0) + amount).toFixed(2));
+  wallet.balance = Number((Number(wallet.balance || 0) + amount).toFixed(2));
+  wallet.cashLedger = true;
+  const entry = { amount, at: new Date(), source };
+  const prev = Array.isArray(wallet.depositHistory) ? wallet.depositHistory : [];
+  wallet.depositHistory = [entry, ...prev].slice(0, MAX_DEPOSIT_HISTORY);
+  wallet.markModified('depositHistory');
+  await wallet.save();
+  await logAction({
+    action: 'WALLET_TOPUP',
+    message: `Top-up ₹${amount.toLocaleString('en-IN')}`,
+    details: {
+      amount,
+      source,
+      balance: wallet.balance,
+      startingBalance: wallet.startingBalance,
+      at: entry.at.toISOString(),
+    },
+  });
+  return serializeWallet(wallet);
+}
+
+/** If depositHistory is empty but action logs exist, seed once from WALLET_TOPUP actions. */
+async function ensureDepositHistoryBackfill(wallet) {
+  if (Array.isArray(wallet.depositHistory) && wallet.depositHistory.length > 0) return wallet;
+  const actions = await ManualTradeAction.find({
+    strategyKey: STRATEGY_KEY,
+    action: 'WALLET_TOPUP',
+  })
+    .sort({ createdAt: -1 })
+    .limit(MAX_DEPOSIT_HISTORY)
+    .lean();
+  if (!actions.length) return wallet;
+  wallet.depositHistory = actions
+    .map((a) => {
+      const amount = Number(a.details?.amount);
+      if (!(amount > 0)) return null;
+      return {
+        amount,
+        at: a.createdAt || new Date(),
+        source: TOPUP_AMOUNTS.includes(amount) ? 'preset' : 'custom',
+      };
+    })
+    .filter(Boolean);
+  if (!wallet.depositHistory.length) return wallet;
+  wallet.markModified('depositHistory');
+  await wallet.save();
   return wallet;
 }
 
@@ -200,21 +382,58 @@ async function recalcWalletFromTrades() {
     strategyKey: STRATEGY_KEY,
     $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
   }).lean();
+  const open = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    exitTime: null,
+    status: { $ne: 'CLOSED' },
+  }).lean();
+  const pending = await ManualPendingOrder.find({
+    strategyKey: STRATEGY_KEY,
+    status: 'PENDING',
+    heldAmount: { $gt: 0 },
+  }).lean();
+
   let realizedPnl = 0;
   let wins = 0;
   let losses = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
   for (const t of closed) {
     const pnl = Number(t.pnl);
     if (!Number.isFinite(pnl)) continue;
     realizedPnl += pnl;
-    if (pnl > 0) wins += 1;
-    else if (pnl < 0) losses += 1;
+    if (pnl > 0) {
+      wins += 1;
+      grossProfit += pnl;
+    } else if (pnl < 0) {
+      losses += 1;
+      grossLoss += Math.abs(pnl);
+    }
   }
+
+  let lockedOpen = 0;
+  for (const t of open) {
+    const locked = Number(t.capitalLocked);
+    if (Number.isFinite(locked) && locked > 0) lockedOpen += locked;
+    else {
+      const fallback = (Number(t.investedAmount) || 0) + Math.max(0, Number(t.charges) || 0);
+      lockedOpen += fallback;
+    }
+  }
+  let heldPending = 0;
+  for (const o of pending) {
+    heldPending += Number(o.heldAmount) || 0;
+  }
+
+  const starting = Number(wallet.startingBalance) || 0;
   wallet.realizedPnl = Number(realizedPnl.toFixed(2));
-  wallet.balance = wallet.realizedPnl;
+  wallet.grossProfit = Number(grossProfit.toFixed(2));
+  wallet.grossLoss = Number(grossLoss.toFixed(2));
   wallet.totalTrades = closed.length;
   wallet.wins = wins;
   wallet.losses = losses;
+  wallet.balance = Number(Math.max(0, starting + realizedPnl - lockedOpen - heldPending).toFixed(2));
+  wallet.cashLedger = true;
   await wallet.save();
   return wallet;
 }
@@ -574,6 +793,29 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   const product = normalizeProduct(order.product);
   const side = product === 'FUTURE' ? normalizeSide(order.side) : 'LONG';
   const dir = side === 'SHORT' ? -1 : 1;
+  const charges = Number(order.perTradeCost || 100);
+  const capitalNeeded = estimateCapitalRequired({
+    product,
+    premium: entryPremium,
+    qty,
+    charges,
+  });
+  if (capitalNeeded == null) throw new Error('Cannot estimate capital for fill');
+
+  const held = Number(order.heldAmount) || 0;
+  if (held > 0) {
+    // LIMIT hold already debited — settle difference vs actual capital.
+    const delta = Number((capitalNeeded - held).toFixed(2));
+    if (delta > 0) {
+      await debitWallet(delta, { reason: 'FILL_TOPUP' });
+    } else if (delta < 0) {
+      await creditWallet(-delta);
+    }
+    order.heldAmount = 0;
+  } else {
+    await debitWallet(capitalNeeded, { reason: 'FILL' });
+  }
+
   const slConfigured = order.stopLossMode != null || order.stopLossPoints != null || order.stopLossPct != null;
   const tgConfigured = order.targetMode != null || order.targetProfitPoints != null || order.targetPct != null;
   // PCT = % offset from entry; POINTS = exact absolute premium/price level.
@@ -594,32 +836,39 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
     dir,
   });
 
-  const tradeDoc = await LivePaperTrade.create({
-    strategyKey: STRATEGY_KEY,
-    symbol: order.symbol,
-    side,
-    optionType: product === 'FUTURE' ? 'FUT' : order.optionType,
-    product,
-    strike: order.strike,
-    expiryDate: order.expiryDate,
-    lotSize: order.lotSize,
-    lots: order.lots,
-    qty,
-    entryPremium: Number(entryPremium.toFixed(2)),
-    entrySpot: Number(spot.toFixed(2)),
-    entryTime: new Date(),
-    entryDateKey: clock.dateKey,
-    status: 'OPEN',
-    investedAmount: Number(invested.toFixed(2)),
-    creditReceived: 0,
-    charges: Number(order.perTradeCost || 100),
-    stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
-    targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
-    stopLossMode: stopLossPremium != null && slConfigured ? normalizeRiskMode(order.stopLossMode) : null,
-    targetMode: targetPremium != null && tgConfigured ? normalizeRiskMode(order.targetMode) : null,
-    legs: [{ optionType: product === 'FUTURE' ? 'FUT' : order.optionType, side, entryPremium: Number(entryPremium.toFixed(2)) }],
-    notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}`,
-  });
+  let tradeDoc;
+  try {
+    tradeDoc = await LivePaperTrade.create({
+      strategyKey: STRATEGY_KEY,
+      symbol: order.symbol,
+      side,
+      optionType: product === 'FUTURE' ? 'FUT' : order.optionType,
+      product,
+      strike: order.strike,
+      expiryDate: order.expiryDate,
+      lotSize: order.lotSize,
+      lots: order.lots,
+      qty,
+      entryPremium: Number(entryPremium.toFixed(2)),
+      entrySpot: Number(spot.toFixed(2)),
+      entryTime: new Date(),
+      entryDateKey: clock.dateKey,
+      status: 'OPEN',
+      investedAmount: Number(invested.toFixed(2)),
+      capitalLocked: capitalNeeded,
+      creditReceived: 0,
+      charges: Number(charges.toFixed(2)),
+      stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
+      targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
+      stopLossMode: stopLossPremium != null && slConfigured ? normalizeRiskMode(order.stopLossMode) : null,
+      targetMode: targetPremium != null && tgConfigured ? normalizeRiskMode(order.targetMode) : null,
+      legs: [{ optionType: product === 'FUTURE' ? 'FUT' : order.optionType, side, entryPremium: Number(entryPremium.toFixed(2)) }],
+      notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; capital=${capitalNeeded}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}`,
+    });
+  } catch (err) {
+    await creditWallet(capitalNeeded);
+    throw err;
+  }
 
   order.status = 'FILLED';
   order.tradeId = tradeDoc._id;
@@ -631,11 +880,12 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
     orderId: order._id,
     tradeId: tradeDoc._id,
     symbol: order.symbol,
-    message: `${order.optionType} ${order.strike} filled @ ${entryPremium.toFixed(2)}`,
+    message: `${order.optionType} ${order.strike} filled @ ${entryPremium.toFixed(2)} · locked ₹${capitalNeeded.toFixed(2)}`,
     details: {
       orderType: order.orderType,
       entryPremium,
       spot,
+      capitalLocked: capitalNeeded,
       stopLossPremium,
       targetPremium,
     },
@@ -680,6 +930,29 @@ async function createMarketFill(order, clock) {
   return fillOrderToTrade(order, { entryPremium, spot, clock });
 }
 
+async function holdFundsForLimitOrder(order, premium) {
+  const qty = order.lotSize * order.lots;
+  const charges = Number(order.perTradeCost || 100);
+  const need = estimateCapitalRequired({
+    product: order.product,
+    premium,
+    qty,
+    charges,
+  });
+  if (need == null) throw new Error('Cannot estimate capital for limit order');
+  await debitWallet(need, { reason: 'LIMIT_HOLD' });
+  order.heldAmount = need;
+  await order.save();
+  return need;
+}
+
+async function releaseHeldFunds(order) {
+  const held = Number(order.heldAmount) || 0;
+  if (!(held > 0)) return;
+  await creditWallet(held);
+  order.heldAmount = 0;
+}
+
 async function createFutureOrder(payload, clock) {
   const symbol = await normalizeFutureSymbol(payload.symbol);
   const side = normalizeSide(payload.side);
@@ -713,6 +986,22 @@ async function createFutureOrder(payload, clock) {
   if (orderType === 'LIMIT') {
     limitPremium = parsePremiumPoints(payload.limitPremium);
     if (limitPremium == null) throw new Error('Limit price is required for LIMIT orders');
+  }
+
+  // Pre-check cash (market uses live LTP; limit uses limit price).
+  {
+    let px = limitPremium;
+    if (orderType === 'MARKET') {
+      const { ltp } = await getFutureLtp({ symbol, expiry: expiryDate });
+      px = ltp;
+    }
+    const need = estimateCapitalRequired({
+      product: 'FUTURE',
+      premium: px,
+      qty: lotSize * lots,
+      charges: perTradeCost,
+    });
+    await assertSufficientBalance(need);
   }
 
   const order = await ManualPendingOrder.create({
@@ -753,6 +1042,17 @@ async function createFutureOrder(payload, clock) {
       target: tgConfigured ? { mode: targetMode, pct: targetPct, points: targetProfitPoints } : 'eod',
     },
   });
+
+  if (orderType === 'LIMIT') {
+    try {
+      await holdFundsForLimitOrder(order, limitPremium);
+    } catch (err) {
+      order.status = 'CANCELLED';
+      order.cancelReason = err.message;
+      await order.save();
+      throw err;
+    }
+  }
 
   if (orderType === 'MARKET') {
     try {
@@ -823,6 +1123,22 @@ async function createOrder(payload) {
     if (limitPremium == null) throw new Error('Limit premium is required for LIMIT orders');
   }
 
+  // Pre-check cash before creating the order row.
+  {
+    let px = limitPremium;
+    if (orderType === 'MARKET') {
+      const chain = await getAtmPremiums({ symbol, strike, expiry: expiryDate });
+      px = premiumFromChain(chain, optionType);
+    }
+    const need = estimateCapitalRequired({
+      product: 'OPTION',
+      premium: px,
+      qty: lotSize * lots,
+      charges: perTradeCost,
+    });
+    await assertSufficientBalance(need);
+  }
+
   const order = await ManualPendingOrder.create({
     strategyKey: STRATEGY_KEY,
     symbol,
@@ -840,7 +1156,7 @@ async function createOrder(payload) {
     targetMode: tgConfigured ? targetMode : null,
     stopLossPct,
     targetPct,
-    status: orderType === 'MARKET' ? 'PENDING' : 'PENDING',
+    status: 'PENDING',
     sessionDateKey: clock.dateKey,
   });
 
@@ -857,6 +1173,17 @@ async function createOrder(payload) {
       expiryDate,
     },
   });
+
+  if (orderType === 'LIMIT') {
+    try {
+      await holdFundsForLimitOrder(order, limitPremium);
+    } catch (err) {
+      order.status = 'CANCELLED';
+      order.cancelReason = err.message;
+      await order.save();
+      throw err;
+    }
+  }
 
   if (orderType === 'MARKET') {
     try {
@@ -886,6 +1213,7 @@ async function cancelOrder(orderId, reason = 'USER_CANCEL') {
     status: 'PENDING',
   });
   if (!order) throw new Error('Pending order not found');
+  await releaseHeldFunds(order);
   order.status = 'CANCELLED';
   order.cancelReason = reason;
   await order.save();
@@ -907,6 +1235,10 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   const dir = directionSign(trade);
   const pnl = (safeExit - entryPremium) * trade.qty * dir - charges;
   const clock = getIstClock(new Date());
+  const locked =
+    Number(trade.capitalLocked) > 0
+      ? Number(trade.capitalLocked)
+      : Number((invested + charges).toFixed(2));
 
   trade.status = 'CLOSED';
   trade.exitPremium = Number(safeExit.toFixed(2));
@@ -930,19 +1262,26 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   });
 
   const wallet = await ensureWallet();
-  wallet.balance += pnl;
-  wallet.realizedPnl += pnl;
+  // Release locked capital and apply net P/L.
+  wallet.balance = Number((Number(wallet.balance) + locked + pnl).toFixed(2));
+  wallet.realizedPnl = Number((Number(wallet.realizedPnl) + pnl).toFixed(2));
   wallet.totalTrades += 1;
-  if (pnl > 0) wallet.wins += 1;
-  else if (pnl < 0) wallet.losses += 1;
+  if (pnl > 0) {
+    wallet.wins += 1;
+    wallet.grossProfit = Number((Number(wallet.grossProfit || 0) + pnl).toFixed(2));
+  } else if (pnl < 0) {
+    wallet.losses += 1;
+    wallet.grossLoss = Number((Number(wallet.grossLoss || 0) + Math.abs(pnl)).toFixed(2));
+  }
   await wallet.save();
+  lastClosedStatsSyncAt = Date.now();
 
   await logAction({
     action: reason === 'MANUAL_CLOSE' ? 'POSITION_CLOSED_MANUAL' : `POSITION_CLOSED_${reason}`,
     tradeId: trade._id,
     symbol: trade.symbol,
     message: `Exit @ ${safeExit.toFixed(2)} P/L ₹${pnl.toFixed(2)}`,
-    details: { reason, exitPremium: safeExit, pnl },
+    details: { reason, exitPremium: safeExit, pnl, capitalReleased: locked },
   });
 
   return trade;
@@ -1116,6 +1455,7 @@ async function checkPendingOrders(clock) {
 
   for (const order of pending) {
     if (order.sessionDateKey && order.sessionDateKey !== clock.dateKey) {
+      await releaseHeldFunds(order);
       order.status = 'EXPIRED';
       order.cancelReason = 'SESSION_ENDED';
       await order.save();
@@ -1323,6 +1663,7 @@ async function getChainAroundAtm({ symbol, expiry }) {
   const spot = Number(chain.last_price);
   const step = getStrikeStep(sym);
   const atm = atmStrikeFromSpot(spot, sym);
+  const lotSize = Math.max(1, Number(await getCurrentLotSize(sym)) || 1);
   const strikes = chain.oc || {};
   const rows = [];
   for (let i = -5; i <= 5; i += 1) {
@@ -1335,13 +1676,56 @@ async function getChainAroundAtm({ symbol, expiry }) {
       peLtp: pickLegLtp(row.pe),
     });
   }
-  return { symbol: sym, expiry: exp, spot, atmStrike: atm, strikes: rows };
+  return { symbol: sym, expiry: exp, spot, atmStrike: atm, lotSize, strikes: rows };
+}
+
+async function syncClosedTradeStats(wallet) {
+  const closed = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
+  })
+    .select({ pnl: 1 })
+    .lean();
+
+  let realizedPnl = 0;
+  let wins = 0;
+  let losses = 0;
+  let grossProfit = 0;
+  let grossLoss = 0;
+  for (const t of closed) {
+    const pnl = Number(t.pnl);
+    if (!Number.isFinite(pnl)) continue;
+    realizedPnl += pnl;
+    if (pnl > 0) {
+      wins += 1;
+      grossProfit += pnl;
+    } else if (pnl < 0) {
+      losses += 1;
+      grossLoss += Math.abs(pnl);
+    }
+  }
+
+  wallet.realizedPnl = Number(realizedPnl.toFixed(2));
+  wallet.grossProfit = Number(grossProfit.toFixed(2));
+  wallet.grossLoss = Number(grossLoss.toFixed(2));
+  wallet.totalTrades = closed.length;
+  wallet.wins = wins;
+  wallet.losses = losses;
+  await wallet.save();
+  return wallet;
 }
 
 async function getStatus() {
   await ensureEngineRunning();
   const clock = getIstClock(new Date());
-  const wallet = await ensureWallet();
+  let wallet = await ensureWallet();
+  // Repair wallet profit/loss from closed book occasionally (not every poll).
+  const now = Date.now();
+  if (!lastClosedStatsSyncAt || now - lastClosedStatsSyncAt > CLOSED_STATS_SYNC_MS) {
+    wallet = await syncClosedTradeStats(wallet);
+    lastClosedStatsSyncAt = now;
+  }
+  wallet = await ensureDepositHistoryBackfill(wallet);
   const openTrades = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     exitTime: null,
@@ -1353,12 +1737,6 @@ async function getStatus() {
     status: 'PENDING',
   })
     .sort({ createdAt: -1 })
-    .lean();
-  const todayTrades = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
-    entryDateKey: clock.dateKey,
-  })
-    .sort({ entryTime: -1 })
     .lean();
 
   // Overlay freshest in-memory / WS marks so /status is never stale vs Socket ticks.
@@ -1385,16 +1763,16 @@ async function getStatus() {
   return {
     engine: getEngineSnapshot(),
     istDateKey: clock.dateKey,
-    wallet: {
-      balance: wallet.balance,
-      realizedPnl: wallet.realizedPnl,
-      totalTrades: wallet.totalTrades,
-      wins: wallet.wins,
-      losses: wallet.losses,
-    },
+    wallet: serializeWallet(wallet, {
+      openCapitalLocked: openTrades.reduce((sum, t) => {
+        const locked = Number(t.capitalLocked);
+        if (Number.isFinite(locked) && locked > 0) return sum + locked;
+        return sum + (Number(t.investedAmount) || 0) + Math.max(0, Number(t.charges) || 0);
+      }, 0),
+      pendingHeld: pendingOrders.reduce((sum, o) => sum + (Number(o.heldAmount) || 0), 0),
+    }),
     openTrades,
     pendingOrders,
-    todayTrades,
     openUnrealizedPnl: Number(unrealizedPnl.toFixed(2)),
     liveFeed: {
       subscribed: liveSubs.size,
@@ -1440,22 +1818,37 @@ async function listActions({ page = 1, pageSize = 50 }) {
 
 async function resetWallet() {
   for (const id of [...liveSubs.keys()]) dropTradeSubscription(id);
+  // Refund any pending limit holds before wiping orders.
+  const pending = await ManualPendingOrder.find({
+    strategyKey: STRATEGY_KEY,
+    status: 'PENDING',
+    heldAmount: { $gt: 0 },
+  });
+  for (const order of pending) {
+    await releaseHeldFunds(order);
+    await order.save();
+  }
   await LivePaperTrade.deleteMany({ strategyKey: STRATEGY_KEY });
   await ManualPendingOrder.deleteMany({ strategyKey: STRATEGY_KEY });
   const wallet = await ensureWallet();
-  wallet.balance = 0;
+  // Keep topped-up capital; clear P/L and free all cash back to deposits.
+  wallet.balance = Number(wallet.startingBalance || 0);
   wallet.realizedPnl = 0;
+  wallet.grossProfit = 0;
+  wallet.grossLoss = 0;
   wallet.totalTrades = 0;
   wallet.wins = 0;
   wallet.losses = 0;
   wallet.lastResetAt = new Date();
+  wallet.cashLedger = true;
   await wallet.save();
-  await logAction({ action: 'WALLET_RESET', message: 'Manual console wallet and trades cleared' });
-  return wallet;
+  await logAction({ action: 'WALLET_RESET', message: 'Manual console trades cleared — capital kept' });
+  return serializeWallet(wallet);
 }
 
 module.exports = {
   STRATEGY_KEY,
+  TOPUP_AMOUNTS,
   ensureEngineRunning,
   getEngineSnapshot,
   createOrder,
@@ -1471,6 +1864,7 @@ module.exports = {
   listTrades,
   listActions,
   resetWallet,
+  topUpWallet,
   recalcWalletFromTrades,
   logAction,
   getLiveMarkSnapshot,

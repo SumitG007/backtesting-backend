@@ -33,6 +33,8 @@ const manualPendingOrderSchema = new mongoose.Schema(
     cancelReason: { type: String, default: null },
     filledAt: { type: Date, default: null },
     sessionDateKey: { type: String, index: true },
+    /** Paper cash held when a LIMIT order is placed (released on cancel / adjusted on fill). */
+    heldAmount: { type: Number, default: null },
   },
   { timestamps: true },
 );
