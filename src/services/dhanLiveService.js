@@ -94,8 +94,67 @@ async function getCurrentLotSize(underlying) {
 
 // ----------------- Option Chain -----------------
 
+/** Cache dynamic equity underlyings resolved from the instrument master. */
+const optionUnderlyingCache = new Map();
+
+/**
+ * Resolve Dhan option-chain UnderlyingScrip / UnderlyingSeg.
+ * Indexes + liquid stocks use PRESET_SYMBOLS; any other FUTSTK/OPTSTK falls back
+ * to UNDERLYING_SECURITY_ID from the instrument master (NSE_EQ).
+ */
+async function resolveOptionChainUnderlying(symbol) {
+  const upper = String(symbol || '').toUpperCase().trim();
+  if (!upper) throw new Error('Symbol required for option chain');
+
+  const preset = resolveSymbolConfig(upper);
+  if (preset.securityId && preset.exchangeSegment) {
+    return {
+      symbol: upper,
+      securityId: String(preset.securityId),
+      exchangeSegment: preset.exchangeSegment,
+      instrument: preset.instrument || 'INDEX',
+    };
+  }
+
+  const cached = optionUnderlyingCache.get(upper);
+  if (cached && Date.now() - cached.at < instrumentCache.ttlMs) {
+    return cached.value;
+  }
+
+  const rows = await loadInstrumentMaster();
+  let found = null;
+  for (const r of rows) {
+    const instr = String(
+      pickField(r, ['INSTRUMENT', 'INSTRUMENT_TYPE', 'SEM_INSTRUMENT_NAME']) || '',
+    ).toUpperCase();
+    if (instr !== 'FUTSTK' && instr !== 'OPTSTK') continue;
+    if (normalizeExchangeSegment(r) !== 'NSE_FNO') continue;
+    const ul = String(pickField(r, ['UNDERLYING_SYMBOL', 'UNDERLYING']) || '')
+      .toUpperCase()
+      .trim();
+    if (ul !== upper) continue;
+    const underlyingSecurityId = String(
+      pickField(r, ['UNDERLYING_SECURITY_ID', 'UNDERLYING_SECURITY']) || '',
+    ).trim();
+    if (!/^\d+$/.test(underlyingSecurityId)) continue;
+    found = {
+      symbol: upper,
+      securityId: underlyingSecurityId,
+      exchangeSegment: 'NSE_EQ',
+      instrument: 'EQUITY',
+    };
+    break;
+  }
+
+  if (!found) {
+    throw new Error(`Unsupported symbol for option chain: ${upper}`);
+  }
+  optionUnderlyingCache.set(upper, { at: Date.now(), value: found });
+  return found;
+}
+
 async function fetchExpiryList(symbol) {
-  const resolved = resolveSymbolConfig(symbol);
+  const resolved = await resolveOptionChainUnderlying(symbol);
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol for option chain');
   }
@@ -164,7 +223,7 @@ function axiosStatus(error) {
 }
 
 async function fetchOptionChain({ symbol, expiry }) {
-  const resolved = resolveSymbolConfig(symbol);
+  const resolved = await resolveOptionChainUnderlying(symbol);
   if (!resolved.securityId || !resolved.exchangeSegment) {
     throw new Error('Unsupported symbol for option chain');
   }
@@ -1311,5 +1370,6 @@ module.exports = {
   subscribeLiveSymbol,
   unsubscribeLiveSymbol,
   getLastPrice,
+  resolveOptionChainUnderlying,
   getOptionChainRateLimitStatus,
 };

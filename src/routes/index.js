@@ -40,6 +40,7 @@ const {
   getManualExpiries,
   getManualQuote,
   getManualChain,
+  getManualOiBoard,
   getManualInstruments,
   getManualFutureQuote,
   postManualOrder,
@@ -106,6 +107,7 @@ router.get('/manual-console/status', getManualConsoleStatus);
 router.get('/manual-console/expiries', getManualExpiries);
 router.get('/manual-console/quote', getManualQuote);
 router.get('/manual-console/chain', getManualChain);
+router.get('/manual-console/oi-board', getManualOiBoard);
 router.get('/manual-console/instruments', getManualInstruments);
 router.get('/manual-console/future-quote', getManualFutureQuote);
 router.post('/manual-console/orders', postManualOrder);

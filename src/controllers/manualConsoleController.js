@@ -55,6 +55,19 @@ async function getManualChain(req, res) {
   }
 }
 
+async function getManualOiBoard(req, res) {
+  try {
+    const board = await manualEngine.getLiveOiBoard({
+      symbol: req.query?.symbol,
+      expiry: req.query?.expiry,
+      lookaroundStrikes: req.query?.lookaround,
+    });
+    return res.json({ ok: true, board });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message, board: null });
+  }
+}
+
 async function getManualInstruments(_req, res) {
   try {
     const data = await manualEngine.getInstrumentUniverse();
@@ -201,6 +214,7 @@ module.exports = {
   getManualExpiries,
   getManualQuote,
   getManualChain,
+  getManualOiBoard,
   getManualInstruments,
   getManualFutureQuote,
   postManualOrder,

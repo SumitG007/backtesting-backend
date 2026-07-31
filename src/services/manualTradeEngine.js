@@ -21,7 +21,9 @@ const {
   getNearestWeeklyExpiry,
   fetchExpiryList,
   fetchOptionChainCached,
+  getOptionChainOiSnapshot,
   listFutureUnderlyings,
+  listOptionStockUnderlyings,
   listFutureExpiries,
   getFutureLtp,
   getFutureQuote,
@@ -44,7 +46,7 @@ const WS_FRESH_MS = 12000;
 const CLOSED_STATS_SYNC_MS = 5 * 60 * 1000;
 let lastClosedStatsSyncAt = 0;
 const LIVE_MARK_EMIT_MIN_GAP_MS = 80;
-const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY']);
+const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY']);
 const MANUAL_STRATEGY_ID = 'manual-console';
 /** Virtual top-up presets (paper only — not real money). */
 const TOPUP_AMOUNTS = Object.freeze([5000, 10000, 50000]);
@@ -88,7 +90,7 @@ function isEodExitTime(minutes) {
 function normalizeSymbol(symbol) {
   const s = String(symbol || 'NIFTY').toUpperCase();
   if (!ALLOWED_SYMBOLS.has(s)) {
-    throw new Error('Symbol must be NIFTY or BANKNIFTY');
+    throw new Error('Symbol must be NIFTY, BANKNIFTY, SENSEX or FINNIFTY');
   }
   return s;
 }
@@ -175,6 +177,37 @@ function premiumFromChain(chain, optionType) {
 function atmStrikeFromSpot(spot, symbol) {
   const step = getStrikeStep(symbol);
   return Math.round(Number(spot) / step) * step;
+}
+
+/**
+ * Underlying price for index options = futures LTP (not cash NIFTY/BANKNIFTY).
+ * Prefer same expiry if a FUT contract exists; otherwise nearest futures.
+ */
+async function resolveIndexFutLtp(symbol, preferredExpiry = null) {
+  const sym = String(symbol || '').toUpperCase();
+  const wanted = preferredExpiry ? String(preferredExpiry).slice(0, 10) : null;
+
+  if (wanted) {
+    try {
+      const { ltp } = await getFutureLtp({ symbol: sym, expiry: wanted });
+      if (Number.isFinite(ltp) && ltp > 0) {
+        return { ltp: Number(ltp), expiry: wanted, source: 'fut_same_expiry' };
+      }
+    } catch {
+      // Weekly option expiry often has no matching FUT — use nearest futures below.
+    }
+  }
+
+  const quote = await getFutureQuote({ symbol: sym });
+  const ltp = Number(quote?.ltp);
+  if (!Number.isFinite(ltp) || ltp <= 0) {
+    throw new Error(`Future LTP unavailable for ${sym}`);
+  }
+  return {
+    ltp,
+    expiry: quote.expiry ? String(quote.expiry).slice(0, 10) : null,
+    source: 'fut_nearest',
+  };
 }
 
 async function logAction({ action, tradeId = null, orderId = null, symbol = null, message = null, details = null }) {
@@ -780,8 +813,18 @@ async function resolveMarkForTrade(trade) {
   const optionType = normalizeOptionType(trade.optionType);
   const optionLtp = premiumFromChain(chain, optionType);
   if (optionLtp != null) rememberTick(trade._id, optionLtp);
+
+  let spot = null;
+  try {
+    const fut = await resolveIndexFutLtp(trade.symbol, trade.expiryDate);
+    spot = fut.ltp;
+  } catch {
+    const cash = Number(chain.chainSpot || chain.spot);
+    spot = Number.isFinite(cash) && cash > 0 ? cash : null;
+  }
+
   return {
-    spot: Number(chain.chainSpot || chain.spot),
+    spot,
     optionLtp,
     source: optionLtp != null ? 'chain' : 'entry',
   };
@@ -919,10 +962,11 @@ async function createMarketFill(order, clock) {
     strike: order.strike,
     expiry: order.expiryDate,
   });
-  const spot = Number(chain.chainSpot || chain.spot);
+  const fut = await resolveIndexFutLtp(order.symbol, order.expiryDate);
+  const spot = fut.ltp;
   const entryPremium = premiumFromChain(chain, order.optionType);
   if (!Number.isFinite(spot) || spot <= 0) {
-    throw new Error('Live index spot unavailable from Dhan');
+    throw new Error('Live index futures LTP unavailable from Dhan');
   }
   if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
     throw new Error(`${order.optionType} LTP unavailable for strike ${order.strike}`);
@@ -1103,9 +1147,9 @@ async function createOrder(payload) {
   }
   if (!expiryDate) throw new Error('Could not resolve option expiry from Dhan');
 
-  const chainSpot = await getAtmPremiums({ symbol, strike: 0, expiry: expiryDate });
-  const spot = Number(chainSpot.chainSpot || chainSpot.spot);
-  if (!Number.isFinite(spot) || spot <= 0) throw new Error('Live spot unavailable');
+  const fut = await resolveIndexFutLtp(symbol, expiryDate);
+  const spot = fut.ltp;
+  if (!Number.isFinite(spot) || spot <= 0) throw new Error('Live index futures LTP unavailable');
 
   let strike = Number(payload.strike);
   if (!Number.isFinite(strike) || strike <= 0) {
@@ -1488,8 +1532,8 @@ async function checkPendingOrders(clock) {
       const ltp = premiumFromChain(chain, order.optionType);
       if (!Number.isFinite(ltp) || ltp <= 0) continue;
       if (ltp <= Number(order.limitPremium)) {
-        const spot = Number(chain.chainSpot || chain.spot);
-        await fillOrderToTrade(order, { entryPremium: ltp, spot, clock });
+        const fut = await resolveIndexFutLtp(order.symbol, order.expiryDate);
+        await fillOrderToTrade(order, { entryPremium: ltp, spot: fut.ltp, clock });
       }
     } catch (err) {
       engineState.lastError = `Limit order poll: ${err.message}`;
@@ -1579,7 +1623,8 @@ async function getQuote({ symbol, expiry, strike, optionType }) {
   const exp = String(expiry || (await getNearestWeeklyExpiry(sym)) || '').slice(0, 10);
   if (!exp) throw new Error('Expiry required');
   const chain = await getAtmPremiums({ symbol: sym, strike: Number(strike) || 0, expiry: exp });
-  const spot = Number(chain.chainSpot || chain.spot);
+  const fut = await resolveIndexFutLtp(sym, exp);
+  const spot = fut.ltp;
   const atm = atmStrikeFromSpot(spot, sym);
   const type = normalizeOptionType(optionType);
   const ltp = premiumFromChain(chain, type);
@@ -1587,6 +1632,7 @@ async function getQuote({ symbol, expiry, strike, optionType }) {
     symbol: sym,
     expiry: exp,
     spot,
+    futExpiry: fut.expiry,
     atmStrike: atm,
     strike: Number(strike) || atm,
     optionType: type,
@@ -1608,14 +1654,25 @@ async function getExpiries(symbol) {
 /** Symbol picker data: index option underlyings + all NSE stock-future underlyings. */
 async function getInstrumentUniverse() {
   let futures = [];
+  let optStocks = [];
   try {
     futures = await listFutureUnderlyings();
   } catch {
     futures = [];
   }
-  const indexOptions = [...ALLOWED_SYMBOLS];
-  // Stock futures exclude the index symbols (those trade as options here) and sandbox test names.
-  const stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s) && isTradableStockUnderlying(s));
+  try {
+    optStocks = await listOptionStockUnderlyings();
+  } catch {
+    optStocks = [];
+  }
+  const indexOptions = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY'].filter((s) => ALLOWED_SYMBOLS.has(s));
+  const optSet = new Set(optStocks);
+  // Stock F&O underlyings that have futures; prefer ones with OPTSTK so live OI works.
+  let stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s) && isTradableStockUnderlying(s));
+  if (optSet.size > 0) {
+    stockFutures = stockFutures.filter((s) => optSet.has(s));
+  }
+  stockFutures.sort((a, b) => a.localeCompare(b));
   return { indexOptions, stockFutures };
 }
 
@@ -1660,7 +1717,8 @@ async function getChainAroundAtm({ symbol, expiry }) {
   const sym = normalizeSymbol(symbol);
   const exp = String(expiry || (await getNearestWeeklyExpiry(sym)) || '').slice(0, 10);
   const chain = await fetchOptionChainCached({ symbol: sym, expiry: exp });
-  const spot = Number(chain.last_price);
+  const fut = await resolveIndexFutLtp(sym, exp);
+  const spot = fut.ltp;
   const step = getStrikeStep(sym);
   const atm = atmStrikeFromSpot(spot, sym);
   const lotSize = Math.max(1, Number(await getCurrentLotSize(sym)) || 1);
@@ -1676,7 +1734,125 @@ async function getChainAroundAtm({ symbol, expiry }) {
       peLtp: pickLegLtp(row.pe),
     });
   }
-  return { symbol: sym, expiry: exp, spot, atmStrike: atm, lotSize, strikes: rows };
+  return {
+    symbol: sym,
+    expiry: exp,
+    spot,
+    futExpiry: fut.expiry,
+    atmStrike: atm,
+    lotSize,
+    strikes: rows,
+  };
+}
+
+/** Same Live OI Chain board shape as OI Wall Entry (FUT-anchored ATM + ΔOI). */
+async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
+  const clock = getIstClock(new Date());
+  const raw = String(symbol || 'NIFTY').toUpperCase().trim() || 'NIFTY';
+  let sym = 'NIFTY';
+  if (ALLOWED_SYMBOLS.has(raw)) {
+    sym = raw;
+  } else {
+    sym = await normalizeFutureSymbol(raw);
+  }
+  const exp = String(expiry || (await getNearestWeeklyExpiry(sym)) || '').slice(0, 10);
+  if (!exp) throw new Error('No weekly expiry from Dhan');
+
+  let futLtp = null;
+  let futExpiry = null;
+  try {
+    const fut = await resolveIndexFutLtp(sym, exp);
+    futLtp = fut.ltp;
+    futExpiry = fut.expiry;
+  } catch {
+    // snapshot can still use chain cash as fallback via spotOverride null
+  }
+
+  const lookaround = Math.max(5, Math.min(20, Math.floor(Number(lookaroundStrikes) || 10)));
+  const snapshot = await getOptionChainOiSnapshot({
+    symbol: sym,
+    expiry: exp,
+    lookaroundStrikes: lookaround,
+    spotOverride: Number.isFinite(futLtp) ? futLtp : null,
+  });
+
+  const strikes = (snapshot.strikes || []).map((r) => ({
+    strike: r.strike,
+    putOi: r.putOi,
+    callOi: r.callOi,
+    putChgOi: r.putChgOi,
+    callChgOi: r.callChgOi,
+    totalOi: (Number(r.putOi) || 0) + (Number(r.callOi) || 0),
+    ceLtp: r.ceLtp,
+    peLtp: r.peLtp,
+    distanceFromAtm: r.distanceFromAtm,
+  }));
+
+  let maxPut = null;
+  let maxCall = null;
+  let maxTotal = null;
+  for (const row of strikes) {
+    if (Number.isFinite(row.putOi) && (!maxPut || row.putOi > maxPut.putOi)) maxPut = row;
+    if (Number.isFinite(row.callOi) && (!maxCall || row.callOi > maxCall.callOi)) maxCall = row;
+    if (!maxTotal || row.totalOi > maxTotal.totalOi) maxTotal = row;
+  }
+
+  const totals = snapshot.totals || {};
+  const pcr = Number(totals.pcr);
+  const nearPcr = Number(totals.nearPcr);
+  let pcrBias = 'NEUTRAL';
+  const biasPcr = Number.isFinite(nearPcr) ? nearPcr : pcr;
+  if (Number.isFinite(biasPcr)) {
+    if (biasPcr >= 1.1) pcrBias = 'PUT_HEAVY';
+    else if (biasPcr <= 0.9) pcrBias = 'CALL_HEAVY';
+  }
+
+  let callChgSum = 0;
+  let putChgSum = 0;
+  let sawCallChg = false;
+  let sawPutChg = false;
+  for (const row of strikes) {
+    if (Number.isFinite(row.putChgOi)) {
+      putChgSum += row.putChgOi;
+      sawPutChg = true;
+    }
+    if (Number.isFinite(row.callChgOi)) {
+      callChgSum += row.callChgOi;
+      sawCallChg = true;
+    }
+  }
+
+  return {
+    at: new Date().toISOString(),
+    dateKey: clock.dateKey,
+    priceSource: 'FUT',
+    symbol: sym,
+    spot: snapshot.spot,
+    fut: Number.isFinite(futLtp) ? futLtp : snapshot.spot,
+    futExpiry,
+    chainSpot: snapshot.chainSpot ?? null,
+    atm: snapshot.atm,
+    expiry: exp,
+    strikeStep: snapshot.strikeStep,
+    strikes,
+    totals: {
+      callOi: totals.callOi ?? null,
+      putOi: totals.putOi ?? null,
+      callChgOi: sawCallChg ? Math.round(callChgSum) : null,
+      putChgOi: sawPutChg ? Math.round(putChgSum) : null,
+      totalChgOi: (sawCallChg || sawPutChg)
+        ? Math.round((sawCallChg ? callChgSum : 0) + (sawPutChg ? putChgSum : 0))
+        : null,
+      pcr: Number.isFinite(pcr) ? pcr : null,
+      nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
+      pcrBias,
+    },
+    highlight: {
+      maxPutStrike: maxPut?.strike ?? null,
+      maxCallStrike: maxCall?.strike ?? null,
+      maxTotalStrike: maxTotal?.strike ?? null,
+    },
+  };
 }
 
 async function syncClosedTradeStats(wallet) {
@@ -1861,6 +2037,7 @@ module.exports = {
   getInstrumentUniverse,
   getFuture,
   getChainAroundAtm,
+  getLiveOiBoard,
   listTrades,
   listActions,
   resetWallet,
