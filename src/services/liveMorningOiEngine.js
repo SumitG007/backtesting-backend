@@ -3060,11 +3060,65 @@ function startPoll() {
   engineState.pollTimer = setInterval(tick, POLL_INTERVAL_MS);
 }
 
+function applyExitPointsFromEntry(trade) {
+  const entry = Number(trade.entryPremium);
+  if (!Number.isFinite(entry) || entry <= 0) return false;
+  const targetPoints = Number(engineState.settings.targetPoints);
+  const hasSl = Boolean(engineState.settings.hasStopLoss);
+  const stopLossPoints = Number(engineState.settings.stopLossPoints);
+  trade.targetPremium = Number((entry + targetPoints).toFixed(2));
+  trade.targetMode = 'POINTS';
+  if (hasSl && Number.isFinite(stopLossPoints) && stopLossPoints > 0) {
+    trade.stopLossPremium = Number(Math.max(0.05, entry - stopLossPoints).toFixed(2));
+    trade.stopLossMode = 'POINTS';
+  } else {
+    trade.stopLossPremium = null;
+    trade.stopLossMode = null;
+  }
+  return true;
+}
+
+/** Re-apply TG/SL premiums on the open paper trade from current settings. */
+async function reapplyExitPointsToOpenTrade({ reason = 'SETTINGS' } = {}) {
+  if (!engineState.openTradeId) return { ok: true, updated: 0 };
+  const trade = await LivePaperTrade.findById(engineState.openTradeId);
+  if (!trade || trade.exitTime) return { ok: true, updated: 0 };
+  const before = {
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
+  };
+  if (!applyExitPointsFromEntry(trade)) return { ok: true, updated: 0 };
+  const sameTarget = Number(before.targetPremium) === Number(trade.targetPremium);
+  const sameSl =
+    (before.stopLossPremium == null && trade.stopLossPremium == null)
+    || Number(before.stopLossPremium) === Number(trade.stopLossPremium);
+  if (sameTarget && sameSl) {
+    cacheOpenTradeLite(trade);
+    return { ok: true, updated: 0 };
+  }
+  const s = engineState.settings;
+  const noteBit = `exits_reapplied=${reason}; tg=${s.targetPoints} sl=${s.hasStopLoss ? s.stopLossPoints : 'off'}`;
+  trade.notes = [trade.notes, noteBit].filter(Boolean).join(' | ').slice(0, 500);
+  await trade.save();
+  cacheOpenTradeLite(trade);
+  publishLiveMarkSnapshot();
+  logEntry('EXITS_REAPPLIED', {
+    tradeId: trade._id.toString(),
+    entry: trade.entryPremium,
+    before,
+    targetPremium: trade.targetPremium,
+    stopLossPremium: trade.stopLossPremium,
+    reason,
+  });
+  return { ok: true, updated: 1 };
+}
+
 async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   if (engineState.running) {
     if (settings && Object.keys(settings).length > 0) {
       engineState.settings = normalizeSettings({ ...engineState.settings, ...settings });
       syncEngineSymbolFromSettings();
+      await reapplyExitPointsToOpenTrade({ reason: 'SETTINGS_WHILE_RUNNING' });
     }
     return { ok: true, alreadyRunning: true, state: getEngineSnapshot() };
   }
@@ -3131,10 +3185,12 @@ async function updateEngineSettings(partial = {}) {
   try {
     const wallet = await ensureWallet();
     wallet.strategy12EngineSettings = next;
+    wallet.markModified('strategy12EngineSettings');
     await wallet.save();
   } catch (err) {
     engineState.lastError = `Settings persist failed: ${err.message}`;
   }
+  await reapplyExitPointsToOpenTrade({ reason: 'SETTINGS_SAVE' });
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -3162,7 +3218,10 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
           ? DEFAULT_TARGET_POINTS
           : migrated.targetPct;
     }
-    if (migrated.stopLossPoints == null || migrated.stopLossPoints === '') {
+    // Keep intentional SL-off (null + hasStopLoss=false). Only fill defaults when never set.
+    if (migrated.hasStopLoss === false) {
+      migrated.stopLossPoints = null;
+    } else if (migrated.stopLossPoints == null || migrated.stopLossPoints === '') {
       migrated.stopLossPoints =
         migrated.stopLossPct == null || migrated.stopLossPct === ''
           ? DEFAULT_STOP_POINTS

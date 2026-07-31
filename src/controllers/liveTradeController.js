@@ -494,6 +494,7 @@ const OPTIONAL_PCT_KEYS = new Set(['targetPct', 'stopLossPct', 'targetVolCrushPc
 const OPTIONAL_POINT_KEYS = new Set(['targetPoints', 'stopLossPoints', 'targetProfitPoints']);
 const SIGNAL_LIST_KEYS = new Set(['enabledPeSignals', 'enabledCeSignals']);
 const STRING_LIST_KEYS = new Set(['universe']);
+const BOOLEAN_KEYS = new Set(['hasStopLoss', 'riskDefaultsV2', 'confirmCandleIndex', 'confirmCandleStock', 'universeExplicit']);
 
 function coerceLiveEngineSetting(key, value) {
   if (SIGNAL_LIST_KEYS.has(key) || STRING_LIST_KEYS.has(key)) {
@@ -508,6 +509,9 @@ function coerceLiveEngineSetting(key, value) {
         .map(([id]) => String(id));
     }
     return undefined;
+  }
+  if (BOOLEAN_KEYS.has(key)) {
+    return value !== false && value !== 'false' && value !== 0 && value !== '0';
   }
   if (typeof value === 'string' && /Time$/.test(key)) {
     return value.trim();
