@@ -58,19 +58,6 @@ const livePaperTradeSchema = new mongoose.Schema(
 
 livePaperTradeSchema.index({ entryTime: -1 });
 livePaperTradeSchema.index({ strategyKey: 1, exitTime: 1 });
-// OI Universe allows many symbols, but never two OPEN trades for the same symbol.
-// This database constraint closes the race between local/live processes sharing Mongo.
-livePaperTradeSchema.index(
-  { strategyKey: 1, symbol: 1 },
-  {
-    unique: true,
-    name: 'oi_universe_one_open_per_symbol',
-    partialFilterExpression: {
-      strategyKey: 'strategy13_oi_universe_live',
-      status: 'OPEN',
-    },
-  },
-);
 
 module.exports =
   mongoose.models.LivePaperTrade || mongoose.model('LivePaperTrade', livePaperTradeSchema);

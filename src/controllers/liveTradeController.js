@@ -5,14 +5,12 @@ const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6'
 const strategySevenPutBuyEngine = require('../services/livePutBuyEngine');
 const strategyTwelveEngine = require('../services/liveMorningOiEngine');
 const strategyTwelveMultiEngine = require('../services/liveMorningOiMultiEngine');
-const strategyThirteenUniverseEngine = require('../services/liveOiUniverseScannerEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
-  STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
@@ -20,7 +18,6 @@ const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SEVEN_PUT_BUY_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
   STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
-  STRATEGY_THIRTEEN_OI_UNIVERSE_LIVE_KEY,
 ];
 
 function buildPaperLiveKeyFilter(ctx) {
@@ -265,24 +262,6 @@ function morningOiMultiPaperLiveCtx(strategyId) {
   };
 }
 
-function oiUniversePaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: strategyThirteenUniverseEngine.STRATEGY_KEY,
-    startEngine: strategyThirteenUniverseEngine.startEngine,
-    stopEngine: strategyThirteenUniverseEngine.stopEngine,
-    updateEngineSettings: strategyThirteenUniverseEngine.updateEngineSettings,
-    getEngineSnapshot: strategyThirteenUniverseEngine.getEngineSnapshot,
-    ensureWallet: strategyThirteenUniverseEngine.ensureWallet,
-    recalcWallet: strategyThirteenUniverseEngine.recalcWalletFromTrades,
-    ensureRunning: strategyThirteenUniverseEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyThirteenUniverseEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyThirteenUniverseEngine.closeOpenPosition,
-    refreshOpenMark: strategyThirteenUniverseEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategyThirteenUniverseEngine.clearDailySkipState,
-  };
-}
-
 function putBuyPaperLiveCtx(strategyId) {
   return {
     strategyId,
@@ -302,7 +281,7 @@ function putBuyPaperLiveCtx(strategyId) {
 }
 
 function isMorningOiLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-9' || strategyId === 'strategy-10' || strategyId === 'strategy-11';
+  return strategyId === 'strategy-9' || strategyId === 'strategy-10';
 }
 
 const LIVE_STRATEGIES = {
@@ -310,7 +289,6 @@ const LIVE_STRATEGIES = {
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
   'strategy-9': morningOiPaperLiveCtx('strategy-9'),
   'strategy-10': morningOiMultiPaperLiveCtx('strategy-10'),
-  'strategy-11': oiUniversePaperLiveCtx('strategy-11'),
 };
 
 function getLiveContext(req) {
@@ -371,8 +349,8 @@ async function getStatus(req, res) {
       }
     }
     let openTrade = openTrades[0] || null;
-    // OI Universe: multi-open (one per symbol). Other strategies keep single openTrade.
-    if (ctx.strategyId !== 'strategy-11' && openTrades.length > 1) {
+    // OI Wall Multi: multi-open. Other strategies keep single openTrade.
+    if (ctx.strategyId !== 'strategy-10' && openTrades.length > 1) {
       openTrades = openTrade ? [openTrade] : [];
     }
     const snapshot = ctx.getEngineSnapshot();
@@ -418,9 +396,7 @@ async function getStatus(req, res) {
           ? 'Short straddle'
           : ctx.strategyId === 'strategy-3'
               ? 'Put & Call buy'
-              : ctx.strategyId === 'strategy-11'
-                ? 'OI Universe Scanner'
-                : ctx.strategyId === 'strategy-10'
+              : ctx.strategyId === 'strategy-10'
                 ? 'OI Wall Multi'
                 : isMorningOiLiveStrategyId(ctx.strategyId)
                   ? 'OI Wall Entry'
@@ -475,7 +451,7 @@ function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    // OI Wall / OI Universe engines are always-on — ignore stop requests.
+    // OI Wall engines are always-on — ignore stop requests.
     if (isMorningOiLiveStrategyId(ctx.strategyId)) {
       return res.json({
         ok: true,

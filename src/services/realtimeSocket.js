@@ -74,15 +74,13 @@ function initRealtime(httpServer) {
       socket.emit('notification:day', listToday());
     });
 
-    // Paper-live MTM / live mark snapshot (OI Wall + Universe + Manual Console).
+    // Paper-live MTM / live mark snapshot (OI Wall + Manual Console).
     socket.on('paper-live:subscribe', (msg = {}) => {
       const strategyId = String(msg?.strategyId || '').toLowerCase();
       try {
         let engine = null;
         if (strategyId === 'manual-console') {
           engine = require('./manualTradeEngine');
-        } else if (strategyId === 'strategy-11') {
-          engine = require('./liveOiUniverseScannerEngine');
         } else if (strategyId === 'strategy-10') {
           engine = require('./liveMorningOiMultiEngine');
         } else if (strategyId === 'strategy-9') {

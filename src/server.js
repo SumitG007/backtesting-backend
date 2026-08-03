@@ -12,7 +12,6 @@ const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrate
 const strategySevenPutBuyEngine = require('./services/livePutBuyEngine');
 const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
 const strategyTwelveMultiPaperEngine = require('./services/liveMorningOiMultiEngine');
-const strategyThirteenUniverseEngine = require('./services/liveOiUniverseScannerEngine');
 
 /** Legacy Strategy A reopen env — engine retired. */
 async function runPendingStrategyAReopenFromEnv() {
@@ -29,7 +28,6 @@ async function bootBackgroundServices() {
     await require('./services/livePutBuyEngine').reconcileOpenTrades();
     await require('./services/liveMorningOiEngine').reconcileOpenTrades();
     await require('./services/liveMorningOiMultiEngine').reconcileOpenTrades();
-    await require('./services/liveOiUniverseScannerEngine').reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
   }
@@ -98,17 +96,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategyThirteenUniverseEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('OI Universe Scanner paper-live started (strategy-11)');
-    } else {
-      console.warn('OI Universe Scanner paper-live boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('OI Universe Scanner paper-live boot failed:', err.message);
-  }
-
-  try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
     if (
@@ -116,7 +103,6 @@ async function bootBackgroundServices() {
       || resume.strategy6?.resumed
       || resume.strategy12?.resumed
       || resume.strategy12Multi?.resumed
-      || resume.strategy13?.resumed
     ) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }

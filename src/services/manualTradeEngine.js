@@ -182,14 +182,16 @@ function atmStrikeFromSpot(spot, symbol) {
 /**
  * Underlying price for index options = futures LTP (not cash NIFTY/BANKNIFTY).
  * Prefer same expiry if a FUT contract exists; otherwise nearest futures.
+ * `maxWaitMs` keeps UI paths (create-order chain) from blocking ~4s on cold WS.
  */
-async function resolveIndexFutLtp(symbol, preferredExpiry = null) {
+async function resolveIndexFutLtp(symbol, preferredExpiry = null, { maxWaitMs = 2000 } = {}) {
   const sym = String(symbol || '').toUpperCase();
   const wanted = preferredExpiry ? String(preferredExpiry).slice(0, 10) : null;
+  const waitOpts = { maxWaitMs };
 
   if (wanted) {
     try {
-      const { ltp } = await getFutureLtp({ symbol: sym, expiry: wanted });
+      const { ltp } = await getFutureLtp({ symbol: sym, expiry: wanted, ...waitOpts });
       if (Number.isFinite(ltp) && ltp > 0) {
         return { ltp: Number(ltp), expiry: wanted, source: 'fut_same_expiry' };
       }
@@ -198,7 +200,7 @@ async function resolveIndexFutLtp(symbol, preferredExpiry = null) {
     }
   }
 
-  const quote = await getFutureQuote({ symbol: sym });
+  const quote = await getFutureQuote({ symbol: sym, maxWaitMs });
   const ltp = Number(quote?.ltp);
   if (!Number.isFinite(ltp) || ltp <= 0) {
     throw new Error(`Future LTP unavailable for ${sym}`);
@@ -1717,8 +1719,24 @@ async function getChainAroundAtm({ symbol, expiry }) {
   const sym = normalizeSymbol(symbol);
   const exp = String(expiry || (await getNearestWeeklyExpiry(sym)) || '').slice(0, 10);
   const chain = await fetchOptionChainCached({ symbol: sym, expiry: exp });
-  const fut = await resolveIndexFutLtp(sym, exp);
-  const spot = fut.ltp;
+
+  // Prefer futures LTP for ATM, but never block create-order on cold FUT feed —
+  // option-chain last_price is enough to render the strike grid immediately.
+  let spot = Number(chain?.last_price);
+  let futExpiry = null;
+  try {
+    const fut = await resolveIndexFutLtp(sym, exp, { maxWaitMs: 400 });
+    if (Number.isFinite(fut.ltp) && fut.ltp > 0) {
+      spot = fut.ltp;
+      futExpiry = fut.expiry;
+    }
+  } catch {
+    // keep chain cash spot
+  }
+  if (!Number.isFinite(spot) || spot <= 0) {
+    throw new Error('Underlying price unavailable for option chain');
+  }
+
   const step = getStrikeStep(sym);
   const atm = atmStrikeFromSpot(spot, sym);
   const lotSize = Math.max(1, Number(await getCurrentLotSize(sym)) || 1);
@@ -1738,7 +1756,7 @@ async function getChainAroundAtm({ symbol, expiry }) {
     symbol: sym,
     expiry: exp,
     spot,
-    futExpiry: fut.expiry,
+    futExpiry,
     atmStrike: atm,
     lotSize,
     strikes: rows,

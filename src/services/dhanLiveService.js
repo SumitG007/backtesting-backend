@@ -1059,34 +1059,81 @@ async function fetchMarketLtp(segmentToIds) {
   return resp.data?.data || resp.data || {};
 }
 
-/** Resolve last price for a resolved future/instrument via REST, falling back to WS ticker. */
-async function fetchInstrumentLtp(inst) {
+/** Short-lived futures LTP memory (avoids 4s WS waits on every chain open). */
+const futLtpMemCache = new Map();
+const FUT_LTP_MEM_TTL_MS = 20_000;
+
+function futLtpCacheKey(inst) {
+  return `${inst.exchangeSegment || 'NSE_FNO'}:${String(inst.securityId)}`;
+}
+
+function readFutLtpMem(inst) {
+  const hit = futLtpMemCache.get(futLtpCacheKey(inst));
+  if (!hit) return null;
+  if (Date.now() - hit.at > FUT_LTP_MEM_TTL_MS) {
+    futLtpMemCache.delete(futLtpCacheKey(inst));
+    return null;
+  }
+  return Number.isFinite(hit.ltp) && hit.ltp > 0 ? hit.ltp : null;
+}
+
+function writeFutLtpMem(inst, ltp) {
+  const n = Number(ltp);
+  if (!Number.isFinite(n) || n <= 0) return;
+  futLtpMemCache.set(futLtpCacheKey(inst), { ltp: n, at: Date.now() });
+}
+
+/**
+ * Resolve last price for a resolved future/instrument via REST, falling back to WS ticker.
+ * `maxWaitMs` caps how long we block on WS (default 2s — was ~4s). UI chain paths pass a lower cap.
+ */
+async function fetchInstrumentLtp(inst, { maxWaitMs = 2000 } = {}) {
   const segment = inst.exchangeSegment || 'NSE_FNO';
   const securityId = String(inst.securityId);
+  const key = `fut:${segment}:${securityId}`;
+
+  const mem = readFutLtpMem(inst);
+  if (mem != null) return mem;
+
+  const warm = Number(getLastPrice(key)?.ltp);
+  if (Number.isFinite(warm) && warm > 0) {
+    writeFutLtpMem(inst, warm);
+    return warm;
+  }
+
   try {
     const data = await fetchMarketLtp({ [segment]: [securityId] });
     const seg = data?.[segment] || {};
     const node = seg[securityId] || seg[Number(securityId)] || {};
     const ltp = Number(node.last_price ?? node.ltp ?? node.LTP);
-    if (Number.isFinite(ltp) && ltp > 0) return ltp;
+    if (Number.isFinite(ltp) && ltp > 0) {
+      writeFutLtpMem(inst, ltp);
+      return ltp;
+    }
   } catch {
     // fall back to WS ticker below
   }
-  const key = `fut:${segment}:${securityId}`;
+
   subscribeLiveInstrument({ key, securityId, exchangeSegment: segment, onTick: () => {} });
-  for (let i = 0; i < 10; i += 1) {
+  const waitMs = Math.max(0, Number(maxWaitMs) || 0);
+  const deadline = Date.now() + waitMs;
+  while (Date.now() <= deadline) {
     const last = Number(getLastPrice(key)?.ltp);
-    if (Number.isFinite(last) && last > 0) return last;
+    if (Number.isFinite(last) && last > 0) {
+      writeFutLtpMem(inst, last);
+      return last;
+    }
+    if (Date.now() >= deadline) break;
     // eslint-disable-next-line no-await-in-loop
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 150));
   }
   throw new Error('Future LTP unavailable (no REST or WS data yet)');
 }
 
 /** Live last price for a stock/index future by underlying + (optional) expiry. */
-async function getFutureLtp({ symbol, expiry } = {}) {
+async function getFutureLtp({ symbol, expiry, maxWaitMs } = {}) {
   const inst = await resolveFutureInstrument({ symbol, expiry });
-  const ltp = await fetchInstrumentLtp(inst);
+  const ltp = await fetchInstrumentLtp(inst, maxWaitMs != null ? { maxWaitMs } : undefined);
   return { ltp, instrument: inst };
 }
 
@@ -1094,13 +1141,13 @@ async function getFutureLtp({ symbol, expiry } = {}) {
  * Quote for the futures order ticket: nearest tradable expiry, LTP, lot size and
  * the full expiry list so the UI can let the user roll to the next month.
  */
-async function getFutureQuote({ symbol, expiry } = {}) {
+async function getFutureQuote({ symbol, expiry, maxWaitMs } = {}) {
   const upper = String(symbol || '').toUpperCase();
   const expiries = await listFutureExpiries(upper);
   if (!expiries.length) throw new Error(`No futures contracts found for ${upper}`);
   const wanted = expiry ? String(expiry).slice(0, 10) : null;
   const inst = (wanted && expiries.find((e) => e.expiry === wanted)) || expiries[0];
-  const ltp = await fetchInstrumentLtp(inst);
+  const ltp = await fetchInstrumentLtp(inst, maxWaitMs != null ? { maxWaitMs } : undefined);
   const lotSize = await getCurrentLotSize(upper);
   return {
     symbol: upper,
