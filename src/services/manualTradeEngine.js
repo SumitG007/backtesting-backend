@@ -815,6 +815,20 @@ async function resolveMarkForTrade(trade) {
     return { spot: null, optionLtp: afterSub.ltp, source: 'websocket' };
   }
 
+  // Prefer single-instrument LTP over full option-chain (chain is cached ~4s).
+  const sub = liveSubs.get(String(trade._id));
+  if (sub?.instrument) {
+    try {
+      const seeded = await fetchInstrumentLtp(sub.instrument);
+      if (Number.isFinite(seeded) && seeded > 0) {
+        rememberTick(trade._id, seeded);
+        return { spot: null, optionLtp: Number(seeded), source: 'marketfeed' };
+      }
+    } catch {
+      // fall through to futures / chain
+    }
+  }
+
   if (isFutureTrade(trade)) {
     const { ltp } = await getFutureLtp({ symbol: trade.symbol, expiry: trade.expiryDate });
     const price = Number.isFinite(ltp) && ltp > 0 ? ltp : null;
