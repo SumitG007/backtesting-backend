@@ -1454,7 +1454,8 @@ async function refreshLiveOiBoard(clock, { force = false } = {}) {
     const pcr = Number(totals.pcr);
     const nearPcr = Number(totals.nearPcr);
     let pcrBias = 'NEUTRAL';
-    const biasPcr = Number.isFinite(nearPcr) ? nearPcr : pcr;
+    // PCR_OI = Put OI ÷ Call OI — prefer full-board totals over ATM-near band.
+    const biasPcr = Number.isFinite(pcr) ? pcr : nearPcr;
     if (Number.isFinite(biasPcr)) {
       if (biasPcr >= 1.1) pcrBias = 'PUT_HEAVY';
       else if (biasPcr <= 0.9) pcrBias = 'CALL_HEAVY';

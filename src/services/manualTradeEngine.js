@@ -982,27 +982,59 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
 
 async function createMarketFill(order, clock) {
   if (normalizeProduct(order.product) === 'FUTURE') {
-    const { ltp } = await getFutureLtp({ symbol: order.symbol, expiry: order.expiryDate });
+    const { ltp } = await getFutureLtp({
+      symbol: order.symbol,
+      expiry: order.expiryDate,
+      forceFresh: true,
+      maxWaitMs: 2500,
+    });
     if (!Number.isFinite(ltp) || ltp <= 0) {
       throw new Error(`Future LTP unavailable for ${order.symbol}`);
     }
     return fillOrderToTrade(order, { entryPremium: ltp, spot: ltp, clock });
   }
-  const chain = await getAtmPremiums({
+
+  // Market buy: always hit live marketfeed for this CE/PE — not the UI/chain cache.
+  const optionType = normalizeOptionType(order.optionType);
+  const instrument = await resolveOptionInstrument({
     symbol: order.symbol,
     strike: order.strike,
     expiry: order.expiryDate,
+    optionType,
   });
-  const fut = await resolveIndexFutLtp(order.symbol, order.expiryDate);
-  const spot = fut.ltp;
-  const entryPremium = premiumFromChain(chain, order.optionType);
-  if (!Number.isFinite(spot) || spot <= 0) {
-    throw new Error('Live index futures LTP unavailable from Dhan');
+  let entryPremium = null;
+  try {
+    entryPremium = await fetchInstrumentLtp(instrument, { forceFresh: true, maxWaitMs: 2500 });
+  } catch (err) {
+    // Last resort only — chain can be up to ~4s stale.
+    const chain = await getAtmPremiums({
+      symbol: order.symbol,
+      strike: order.strike,
+      expiry: order.expiryDate,
+    });
+    entryPremium = premiumFromChain(chain, optionType);
+    if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
+      throw new Error(
+        `${optionType} live LTP unavailable for strike ${order.strike}: ${err.message || 'no price'}`,
+      );
+    }
   }
   if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
-    throw new Error(`${order.optionType} LTP unavailable for strike ${order.strike}`);
+    throw new Error(`${optionType} LTP unavailable for strike ${order.strike}`);
   }
-  return fillOrderToTrade(order, { entryPremium, spot, clock });
+
+  let spot = null;
+  try {
+    const fut = await resolveIndexFutLtp(order.symbol, order.expiryDate, { maxWaitMs: 1500 });
+    spot = fut.ltp;
+  } catch {
+    spot = null;
+  }
+  if (!Number.isFinite(spot) || spot <= 0) {
+    spot = Number(order.entrySpot) || entryPremium;
+  }
+
+  return fillOrderToTrade(order, { entryPremium: Number(entryPremium), spot, clock });
 }
 
 async function holdFundsForLimitOrder(order, premium) {
@@ -1369,11 +1401,57 @@ async function closePositionById(tradeId, { reason = 'MANUAL_CLOSE' } = {}) {
     exitTime: null,
   });
   if (!trade) throw new Error('Open position not found');
-  const mark = await resolveMarkForTrade(trade);
-  if (!Number.isFinite(mark.optionLtp) || mark.optionLtp <= 0) {
+
+  // Manual exit: fetch exact live market price now — not the LTP shown in the open table.
+  let optionLtp = null;
+  let spot = null;
+  let source = 'marketfeed';
+  try {
+    if (isFutureTrade(trade)) {
+      const { ltp } = await getFutureLtp({
+        symbol: trade.symbol,
+        expiry: trade.expiryDate,
+        forceFresh: true,
+        maxWaitMs: 2500,
+      });
+      optionLtp = ltp;
+      spot = ltp;
+    } else {
+      const optionType = normalizeOptionType(trade.optionType);
+      const instrument = await resolveOptionInstrument({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+        optionType,
+      });
+      optionLtp = await fetchInstrumentLtp(instrument, { forceFresh: true, maxWaitMs: 2500 });
+      try {
+        const fut = await resolveIndexFutLtp(trade.symbol, trade.expiryDate, { maxWaitMs: 1500 });
+        spot = fut.ltp;
+      } catch {
+        spot = Number(trade.entrySpot) || null;
+      }
+    }
+  } catch (err) {
+    // Fallback only if live feed fails entirely.
+    const mark = await resolveMarkForTrade(trade);
+    optionLtp = mark.optionLtp;
+    spot = mark.spot;
+    source = mark.source || 'fallback';
+    if (!Number.isFinite(optionLtp) || optionLtp <= 0) {
+      throw new Error(
+        `Cannot close — live LTP unavailable from Dhan (${err.message || 'no price'})`,
+      );
+    }
+  }
+
+  if (!Number.isFinite(optionLtp) || optionLtp <= 0) {
     throw new Error('Cannot close — option LTP unavailable from Dhan');
   }
-  return finalizeTrade(trade, { exitPremium: mark.optionLtp, mark, reason });
+
+  rememberTick(trade._id, optionLtp);
+  const mark = { optionLtp: Number(optionLtp), spot, source };
+  return finalizeTrade(trade, { exitPremium: Number(optionLtp), mark, reason });
 }
 
 function parseRiskPointsInput(raw) {
@@ -1845,10 +1923,11 @@ async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
   }
 
   const totals = snapshot.totals || {};
-  const pcr = Number(totals.pcr);
+  const pcr = Number(totals.pcr); // Put OI ÷ Call OI
   const nearPcr = Number(totals.nearPcr);
   let pcrBias = 'NEUTRAL';
-  const biasPcr = Number.isFinite(nearPcr) ? nearPcr : pcr;
+  // Prefer full-board PCR (same Put/Call totals) over ATM-near PCR.
+  const biasPcr = Number.isFinite(pcr) ? pcr : nearPcr;
   if (Number.isFinite(biasPcr)) {
     if (biasPcr >= 1.1) pcrBias = 'PUT_HEAVY';
     else if (biasPcr <= 0.9) pcrBias = 'CALL_HEAVY';

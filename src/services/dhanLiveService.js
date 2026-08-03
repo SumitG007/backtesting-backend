@@ -623,8 +623,8 @@ async function getOptionChainOiSnapshot({
       if (Number.isFinite(p) && p > 0) nearPutOi += p;
     }
   }
-  const pcr = sumCallOi > 0 ? sumPutOi / sumCallOi : null;
-  const nearPcr = nearCallOi > 0 ? nearPutOi / nearCallOi : null;
+  const pcr = sumCallOi > 0 ? sumPutOi / sumCallOi : null; // PCR_OI = Put OI ÷ Call OI
+  const nearPcr = nearCallOi > 0 ? nearPutOi / nearCallOi : null; // same formula, ATM± band only
 
   return {
     spot: Number.isFinite(spot) ? spot : null,
@@ -1086,19 +1086,22 @@ function writeFutLtpMem(inst, ltp) {
 /**
  * Resolve last price for a resolved future/instrument via REST, falling back to WS ticker.
  * `maxWaitMs` caps how long we block on WS (default 2s — was ~4s). UI chain paths pass a lower cap.
+ * `forceFresh` skips mem/WS warm caches and hits marketfeed REST first (fills / manual exits).
  */
-async function fetchInstrumentLtp(inst, { maxWaitMs = 2000 } = {}) {
+async function fetchInstrumentLtp(inst, { maxWaitMs = 2000, forceFresh = false } = {}) {
   const segment = inst.exchangeSegment || 'NSE_FNO';
   const securityId = String(inst.securityId);
   const key = `fut:${segment}:${securityId}`;
 
-  const mem = readFutLtpMem(inst);
-  if (mem != null) return mem;
+  if (!forceFresh) {
+    const mem = readFutLtpMem(inst);
+    if (mem != null) return mem;
 
-  const warm = Number(getLastPrice(key)?.ltp);
-  if (Number.isFinite(warm) && warm > 0) {
-    writeFutLtpMem(inst, warm);
-    return warm;
+    const warm = Number(getLastPrice(key)?.ltp);
+    if (Number.isFinite(warm) && warm > 0) {
+      writeFutLtpMem(inst, warm);
+      return warm;
+    }
   }
 
   try {
@@ -1114,6 +1117,7 @@ async function fetchInstrumentLtp(inst, { maxWaitMs = 2000 } = {}) {
     // fall back to WS ticker below
   }
 
+  // Even on forceFresh, allow a short WS wait if REST is empty.
   subscribeLiveInstrument({ key, securityId, exchangeSegment: segment, onTick: () => {} });
   const waitMs = Math.max(0, Number(maxWaitMs) || 0);
   const deadline = Date.now() + waitMs;
@@ -1131,9 +1135,12 @@ async function fetchInstrumentLtp(inst, { maxWaitMs = 2000 } = {}) {
 }
 
 /** Live last price for a stock/index future by underlying + (optional) expiry. */
-async function getFutureLtp({ symbol, expiry, maxWaitMs } = {}) {
+async function getFutureLtp({ symbol, expiry, maxWaitMs, forceFresh = false } = {}) {
   const inst = await resolveFutureInstrument({ symbol, expiry });
-  const ltp = await fetchInstrumentLtp(inst, maxWaitMs != null ? { maxWaitMs } : undefined);
+  const ltp = await fetchInstrumentLtp(inst, {
+    ...(maxWaitMs != null ? { maxWaitMs } : {}),
+    forceFresh: Boolean(forceFresh),
+  });
   return { ltp, instrument: inst };
 }
 
