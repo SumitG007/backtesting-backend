@@ -1923,10 +1923,12 @@ async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
   }
 
   const totals = snapshot.totals || {};
-  const pcr = Number(totals.pcr); // Put OI ÷ Call OI
+  const boardPcr = Number(totals.pcr); // lookaround Put÷Call
   const nearPcr = Number(totals.nearPcr);
+  const allPcr = Number(totals.allPcr); // full-chain Put÷Call
+  const pcr = Number.isFinite(allPcr) ? allPcr : boardPcr;
   let pcrBias = 'NEUTRAL';
-  // Prefer full-board PCR (same Put/Call totals) over ATM-near PCR.
+  // Prefer full-chain PCR for bias when available.
   const biasPcr = Number.isFinite(pcr) ? pcr : nearPcr;
   if (Number.isFinite(biasPcr)) {
     if (biasPcr >= 1.1) pcrBias = 'PUT_HEAVY';
@@ -1964,13 +1966,16 @@ async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
     totals: {
       callOi: totals.callOi ?? null,
       putOi: totals.putOi ?? null,
+      allCallOi: totals.allCallOi ?? null,
+      allPutOi: totals.allPutOi ?? null,
       callChgOi: sawCallChg ? Math.round(callChgSum) : null,
       putChgOi: sawPutChg ? Math.round(putChgSum) : null,
       totalChgOi: (sawCallChg || sawPutChg)
         ? Math.round((sawCallChg ? callChgSum : 0) + (sawPutChg ? putChgSum : 0))
         : null,
-      pcr: Number.isFinite(pcr) ? pcr : null,
+      pcr: Number.isFinite(boardPcr) ? boardPcr : null,
       nearPcr: Number.isFinite(nearPcr) ? nearPcr : null,
+      allPcr: Number.isFinite(allPcr) ? allPcr : null,
       pcrBias,
     },
     highlight: {

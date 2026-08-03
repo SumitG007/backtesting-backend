@@ -608,6 +608,17 @@ async function getOptionChainOiSnapshot({
       ? rows
       : rows.filter((r) => Math.abs(r.strike - atm) <= lookaroundStrikes * strikeStep);
 
+  // Full-chain totals (header / Sensibull-style PCR).
+  let allCallOi = 0;
+  let allPutOi = 0;
+  for (const r of rows) {
+    const c = Number(r.callOi);
+    const p = Number(r.putOi);
+    if (Number.isFinite(c) && c > 0) allCallOi += c;
+    if (Number.isFinite(p) && p > 0) allPutOi += p;
+  }
+
+  // Board window totals (lookaround strikes only).
   let sumCallOi = 0;
   let sumPutOi = 0;
   let nearCallOi = 0;
@@ -623,8 +634,10 @@ async function getOptionChainOiSnapshot({
       if (Number.isFinite(p) && p > 0) nearPutOi += p;
     }
   }
-  const pcr = sumCallOi > 0 ? sumPutOi / sumCallOi : null; // PCR_OI = Put OI ÷ Call OI
-  const nearPcr = nearCallOi > 0 ? nearPutOi / nearCallOi : null; // same formula, ATM± band only
+  // PCR_OI = Total Put OI ÷ Total Call OI
+  const allPcr = allCallOi > 0 ? allPutOi / allCallOi : null;
+  const pcr = sumCallOi > 0 ? sumPutOi / sumCallOi : null;
+  const nearPcr = nearCallOi > 0 ? nearPutOi / nearCallOi : null;
 
   return {
     spot: Number.isFinite(spot) ? spot : null,
@@ -640,6 +653,9 @@ async function getOptionChainOiSnapshot({
       putOi: sumPutOi,
       pcr: Number.isFinite(pcr) ? Number(pcr.toFixed(3)) : null,
       nearPcr: Number.isFinite(nearPcr) ? Number(nearPcr.toFixed(3)) : null,
+      allCallOi,
+      allPutOi,
+      allPcr: Number.isFinite(allPcr) ? Number(allPcr.toFixed(3)) : null,
     },
   };
 }
