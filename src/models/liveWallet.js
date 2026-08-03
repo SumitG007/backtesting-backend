@@ -101,6 +101,28 @@ const liveWalletSchema = new mongoose.Schema(
       confirmEntryWindowMinutes: { type: Number, default: 2 },
       perTradeCost: { type: Number, default: 100 },
     },
+    /** EOD OI Walls next-day: engine settings. */
+    strategy14EngineSettings: {
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 5 },
+      tradeFromTime: { type: String, default: '09:20' },
+      tradeToTime: { type: String, default: '15:10' },
+      eodExitTime: { type: String, default: '15:20' },
+      eodCaptureFromTime: { type: String, default: '15:15' },
+      targetPoints: { type: Number, default: 8 },
+      stopLossPoints: { type: Number, default: null },
+      hasStopLoss: { type: Boolean, default: false },
+      proximityPoints: { type: Number, default: 20 },
+      strikeLookaround: { type: Number, default: 12 },
+      maxTradesPerDay: { type: Number, default: 1 },
+      cooldownMinutes: { type: Number, default: 2 },
+      perTradeCost: { type: Number, default: 100 },
+    },
+    /** Yesterday's top Put+Call OI walls for next-session entry. */
+    strategy14Watchlist: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
     strategy3OrHistory: {
       type: [{ dateKey: String, orIv: Number }],
       default: [],

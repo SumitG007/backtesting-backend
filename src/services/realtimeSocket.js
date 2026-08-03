@@ -85,6 +85,8 @@ function initRealtime(httpServer) {
           engine = require('./liveMorningOiMultiEngine');
         } else if (strategyId === 'strategy-9') {
           engine = require('./liveMorningOiEngine');
+        } else if (strategyId === 'strategy-14') {
+          engine = require('./liveEodOiWallsEngine');
         } else {
           return;
         }

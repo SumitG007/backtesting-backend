@@ -9,7 +9,6 @@ const ManualTradeAction = require('../models/manualTradeAction');
 const { MANUAL_CONSOLE_LIVE_KEY } = require('../strategies/keys');
 const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
 const { getStrikeStep } = require('../utils/market');
-const { pickStrike } = require('../strategies/shared/intradayOptions');
 const {
   ensureNseHolidaysLoaded,
   isNseCashTradingDay,
@@ -176,7 +175,23 @@ function premiumFromChain(chain, optionType) {
 
 function atmStrikeFromSpot(spot, symbol) {
   const step = getStrikeStep(symbol);
-  return Math.round(Number(spot) / step) * step;
+  // Bottom ATM: strike at or below live price (never round up to the upper strike).
+  return Math.floor(Number(spot) / step) * step;
+}
+
+/** Manual console strike pick — ATM uses bottom (floor) strike, same as create-order chain. */
+function pickManualStrike({ entrySpot, symbol, optionType, strikeMode }) {
+  const step = getStrikeStep(symbol);
+  const atm = atmStrikeFromSpot(entrySpot, symbol);
+  const type = normalizeOptionType(optionType);
+  const mode = String(strikeMode || 'ATM').toUpperCase();
+  if (mode === 'ITM') {
+    return type === 'CE' ? atm - step : atm + step;
+  }
+  if (mode === 'OTM') {
+    return type === 'CE' ? atm + step : atm - step;
+  }
+  return atm;
 }
 
 /**
@@ -1155,9 +1170,9 @@ async function createOrder(payload) {
 
   let strike = Number(payload.strike);
   if (!Number.isFinite(strike) || strike <= 0) {
-    strike = pickStrike({
+    strike = pickManualStrike({
       entrySpot: spot,
-      strikeStep: getStrikeStep(symbol),
+      symbol,
       optionType,
       strikeMode: String(payload.strikeMode || 'ATM').toUpperCase(),
     });
