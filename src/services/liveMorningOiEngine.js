@@ -54,7 +54,7 @@ const DEFAULT_CANDLE_INTERVAL = '1';
 const DEFAULT_CONFIRM_CANDLE_INTERVAL = '5';
 const CONFIRM_CANDLE_REFRESH_MIN_GAP_MS = 15000;
 const DEFAULT_TRADE_FROM = 560; // 09:20
-const DEFAULT_TRADE_TO = 910; // 15:10
+const DEFAULT_TRADE_TO = 840; // 14:00 — no new entries after 2 PM IST
 const DEFAULT_EOD = 920; // 15:20
 const DEFAULT_TARGET_POINTS = 8;
 const DEFAULT_STOP_POINTS = 10;
@@ -78,7 +78,7 @@ const engineState = {
     symbol: 'NIFTY',
     lotCount: 5,
     tradeFromTime: '09:20',
-    tradeToTime: '15:10',
+    tradeToTime: '14:00',
     eodExitTime: '15:20',
     targetPoints: DEFAULT_TARGET_POINTS,
     stopLossPoints: DEFAULT_STOP_POINTS,
@@ -288,10 +288,11 @@ function normalizeSettings(settings = {}) {
     tradeFromTime: String(settings.tradeFromTime || settings.oiScanFromTime || '09:20'),
     tradeToTime: (() => {
       const raw = String(settings.tradeToTime || '').trim();
+      if (raw === '15:10' || raw === '15:00') return '14:00';
       if (raw && raw !== '10:30' && raw !== '11:30') return raw;
       const legacy = String(settings.lastEntryTime || '').trim();
-      if (legacy && legacy !== '10:30' && legacy !== '11:30') return legacy;
-      return '15:10';
+      if (legacy && legacy !== '10:30' && legacy !== '11:30' && legacy !== '15:10') return legacy;
+      return '14:00';
     })(),
     eodExitTime: String(settings.eodExitTime || '15:20'),
     targetPoints,
@@ -323,7 +324,9 @@ function tradeFromMin() {
 }
 
 function tradeToMin() {
-  return parseClockMinutes(engineState.settings.tradeToTime, DEFAULT_TRADE_TO);
+  // Hard cap: no new OI Wall Entry trades after 14:00 IST.
+  const configured = parseClockMinutes(engineState.settings.tradeToTime, DEFAULT_TRADE_TO);
+  return Math.min(configured, DEFAULT_TRADE_TO);
 }
 
 function eodExitMin() {
@@ -3209,9 +3212,16 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     if (!migrated.tradeToTime) {
       const oldLast = String(migrated.lastEntryTime || '');
       migrated.tradeToTime =
-        oldLast === '10:30' || oldLast === '11:30' || !oldLast ? '15:10' : oldLast;
-    } else if (migrated.tradeToTime === '10:30' || migrated.tradeToTime === '11:30') {
-      migrated.tradeToTime = '15:10';
+        oldLast === '10:30' || oldLast === '11:30' || oldLast === '15:10' || !oldLast
+          ? '14:00'
+          : oldLast;
+    } else if (
+      migrated.tradeToTime === '10:30' ||
+      migrated.tradeToTime === '11:30' ||
+      migrated.tradeToTime === '15:10' ||
+      migrated.tradeToTime === '15:00'
+    ) {
+      migrated.tradeToTime = '14:00';
     }
     if (migrated.targetPoints == null) {
       migrated.targetPoints =

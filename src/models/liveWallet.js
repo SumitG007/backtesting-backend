@@ -64,7 +64,7 @@ const liveWalletSchema = new mongoose.Schema(
       symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 5 },
       tradeFromTime: { type: String, default: '09:20' },
-      tradeToTime: { type: String, default: '15:10' },
+      tradeToTime: { type: String, default: '14:00' },
       eodExitTime: { type: String, default: '15:20' },
       targetPoints: { type: Number, default: 8 },
       stopLossPoints: { type: Number, default: 10 },
