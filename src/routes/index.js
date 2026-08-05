@@ -53,6 +53,14 @@ const {
   postManualWalletTopup,
 } = require('../controllers/manualConsoleController');
 const {
+  getManualOiAutoStatus,
+  getManualOiAutoBook,
+  getManualOiAutoTrades,
+  postManualOiAutoEnabled,
+  patchManualOiAutoSettings,
+  postManualOiAutoClose,
+} = require('../controllers/manualOiAutoController');
+const {
   getPatternResearch,
   getPatternResearchReport,
   getMultiScenarioResearch,
@@ -118,5 +126,12 @@ router.get('/manual-console/trades', getManualTrades);
 router.get('/manual-console/actions', getManualActions);
 router.post('/manual-console/wallet/reset', postManualWalletReset);
 router.post('/manual-console/wallet/topup', postManualWalletTopup);
+
+router.get('/manual-oi-auto/status', getManualOiAutoStatus);
+router.get('/manual-oi-auto/book', getManualOiAutoBook);
+router.get('/manual-oi-auto/trades', getManualOiAutoTrades);
+router.post('/manual-oi-auto/enabled', postManualOiAutoEnabled);
+router.patch('/manual-oi-auto/settings', patchManualOiAutoSettings);
+router.post('/manual-oi-auto/close', postManualOiAutoClose);
 
 module.exports = router;

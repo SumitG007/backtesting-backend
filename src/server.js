@@ -54,6 +54,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const manualOiAuto = require('./services/manualOiAutoEngine');
+    await manualOiAuto.ensureEngineRunning();
+  } catch (err) {
+    console.warn('Manual OI auto engine boot:', err.message);
+  }
+
+  try {
     const boot = await strategySixPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Short straddle paper-live engine started (strategy-6)');
