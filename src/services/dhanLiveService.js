@@ -635,6 +635,10 @@ async function getOptionChainOiSnapshot({
   // Board window totals (lookaround strikes only).
   let sumCallOi = 0;
   let sumPutOi = 0;
+  let sumCallChgOi = 0;
+  let sumPutChgOi = 0;
+  let hasNearCallChg = false;
+  let hasNearPutChg = false;
   let nearCallOi = 0;
   let nearPutOi = 0;
   const nearBand = strikeStep * 5;
@@ -643,6 +647,16 @@ async function getOptionChainOiSnapshot({
     const p = Number(r.putOi);
     if (Number.isFinite(c) && c > 0) sumCallOi += c;
     if (Number.isFinite(p) && p > 0) sumPutOi += p;
+    const cc = Number(r.callChgOi);
+    const pc = Number(r.putChgOi);
+    if (Number.isFinite(cc)) {
+      sumCallChgOi += cc;
+      hasNearCallChg = true;
+    }
+    if (Number.isFinite(pc)) {
+      sumPutChgOi += pc;
+      hasNearPutChg = true;
+    }
     if (atm != null && Number.isFinite(r.strike) && Math.abs(r.strike - atm) <= nearBand) {
       if (Number.isFinite(c) && c > 0) nearCallOi += c;
       if (Number.isFinite(p) && p > 0) nearPutOi += p;
@@ -662,9 +676,12 @@ async function getOptionChainOiSnapshot({
     fetchedAt: new Date().toISOString(),
     strikes: near,
     allStrikeCount: rows.length,
+    lookaroundStrikes,
     totals: {
       callOi: sumCallOi,
       putOi: sumPutOi,
+      callChgOi: hasNearCallChg ? sumCallChgOi : null,
+      putChgOi: hasNearPutChg ? sumPutChgOi : null,
       pcr: Number.isFinite(pcr) ? Number(pcr.toFixed(3)) : null,
       nearPcr: Number.isFinite(nearPcr) ? Number(nearPcr.toFixed(3)) : null,
       allCallOi,

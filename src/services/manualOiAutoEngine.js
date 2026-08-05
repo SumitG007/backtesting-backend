@@ -32,7 +32,7 @@ const EXIT_EPS = 0.15;
 const DEFAULT_SETTINGS = {
   enabled: false,
   symbol: 'NIFTY',
-  lotCount: 1,
+  lotCount: 10,
   tradeFromTime: '09:30',
   tradeToTime: '13:00',
   eodExitTime: '15:15',
@@ -399,7 +399,7 @@ function normalizeSettings(raw = {}) {
   const s = { ...DEFAULT_SETTINGS, ...(raw || {}) };
   s.enabled = Boolean(s.enabled);
   s.symbol = String(s.symbol || 'NIFTY').toUpperCase();
-  s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 1)));
+  s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.targetPoints = Math.max(1, Number(s.targetPoints) || 5);
   s.stopLossPoints = Math.max(1, Number(s.stopLossPoints) || 15);
   s.proximityPoints = Math.max(5, Number(s.proximityPoints) || 20);
@@ -415,6 +415,11 @@ function normalizeSettings(raw = {}) {
 async function loadSettingsFromDb() {
   const wallet = await ensureWallet();
   engineState.settings = normalizeSettings(wallet.manualOiAutoEngineSettings || {});
+  // Persist new default lots when wallet still has stale/missing lotCount.
+  const rawLots = wallet.manualOiAutoEngineSettings?.lotCount;
+  if (rawLots == null || rawLots === '' || Number(rawLots) === 1) {
+    engineState.settings = await saveSettingsToDb({ lotCount: 10 });
+  }
   return engineState.settings;
 }
 
@@ -760,7 +765,7 @@ async function tryEnter(signal, board) {
     const lotSize = engineState.lotSize || (await getCurrentLotSize(symbol));
     engineState.lotSize = lotSize;
     engineState.expiry = expiry;
-    const lots = Math.max(1, Number(engineState.settings.lotCount) || 1);
+    const lots = Math.max(1, Number(engineState.settings.lotCount) || 10);
     const qty = lotSize * lots;
     const charges = Math.max(0, Number(engineState.settings.perTradeCost) || 0);
     const targetPoints = Number(engineState.settings.targetPoints) || 5;

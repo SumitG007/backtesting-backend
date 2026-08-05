@@ -127,7 +127,7 @@ const liveWalletSchema = new mongoose.Schema(
     manualOiAutoEngineSettings: {
       enabled: { type: Boolean, default: false },
       symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 1 },
+      lotCount: { type: Number, default: 10 },
       tradeFromTime: { type: String, default: '09:30' },
       tradeToTime: { type: String, default: '13:00' },
       eodExitTime: { type: String, default: '15:15' },

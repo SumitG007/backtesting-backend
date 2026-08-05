@@ -3,7 +3,7 @@
  * Captures every IST minute from 09:15 → 15:30.
  * On a new day, previous dateKeys are deleted (one day in DB).
  *
- * callsChgOi / putsChgOi = vs previous 1-minute DB row
+ * callsChgOi / putsChgOi = vs previous 1-minute DB row (ATM ± 3 strikes only)
  * chngInDir              = Puts chng − Calls chng
  * diffInOi               = Puts total − Calls total (+ when Puts more)
  * dirOfChng              = up / down / flat from chngInDir
@@ -19,6 +19,8 @@ const {
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
 const SESSION_TO = 15 * 60 + 30; // 15:30
+/** ATM ± 3 strikes (3 left + ATM + 3 right). */
+const LOOKAROUND_STRIKES = 3;
 const LOOP_MS = 5000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
@@ -140,12 +142,13 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
       const snapshot = await getOptionChainOiSnapshot({
         symbol: engineState.symbol,
         expiry: engineState.expiry,
-        lookaroundStrikes: 40,
+        lookaroundStrikes: LOOKAROUND_STRIKES,
       });
-      const callOiTotal = snapshot?.totals?.allCallOi;
-      const putOiTotal = snapshot?.totals?.allPutOi;
-      const dayCallChgOi = snapshot?.totals?.allCallChgOi;
-      const dayPutChgOi = snapshot?.totals?.allPutChgOi;
+      // ATM ± 3 window only (not full chain).
+      const callOiTotal = snapshot?.totals?.callOi;
+      const putOiTotal = snapshot?.totals?.putOi;
+      const dayCallChgOi = snapshot?.totals?.callChgOi;
+      const dayPutChgOi = snapshot?.totals?.putChgOi;
       const spotPrice = Number.isFinite(snapshot?.spot) ? snapshot.spot : null;
       const prev = await getPreviousRow(engineState.symbol, dateKey, minutes);
       const derived = deriveFields({
@@ -162,6 +165,8 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
         minutes,
         time,
         spotPrice,
+        atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
+        lookaroundStrikes: LOOKAROUND_STRIKES,
         callOiTotal: Number.isFinite(callOiTotal) ? callOiTotal : null,
         putOiTotal: Number.isFinite(putOiTotal) ? putOiTotal : null,
         dayCallChgOi: Number.isFinite(dayCallChgOi) ? dayCallChgOi : null,
@@ -197,6 +202,8 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
     minutes,
     time,
     spotPrice: null,
+    atm: null,
+    lookaroundStrikes: LOOKAROUND_STRIKES,
     callOiTotal: null,
     putOiTotal: null,
     dayCallChgOi: null,
@@ -282,10 +289,10 @@ function ensureEngineRunning() {
 }
 
 function buildRowFromSnapshot(snapshot, clock, prev, { livePreview = false, afterClose = false } = {}) {
-  const callOiTotal = snapshot?.totals?.allCallOi;
-  const putOiTotal = snapshot?.totals?.allPutOi;
-  const dayCallChgOi = snapshot?.totals?.allCallChgOi;
-  const dayPutChgOi = snapshot?.totals?.allPutChgOi;
+  const callOiTotal = snapshot?.totals?.callOi;
+  const putOiTotal = snapshot?.totals?.putOi;
+  const dayCallChgOi = snapshot?.totals?.callChgOi;
+  const dayPutChgOi = snapshot?.totals?.putChgOi;
   const spotPrice = Number.isFinite(snapshot?.spot) ? snapshot.spot : null;
   const derived = deriveFields({
     callOiTotal,
@@ -300,6 +307,8 @@ function buildRowFromSnapshot(snapshot, clock, prev, { livePreview = false, afte
     minutes: clock.minutes,
     time: formatHhmm(clock.minutes),
     spotPrice,
+    atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
+    lookaroundStrikes: LOOKAROUND_STRIKES,
     callOiTotal: Number.isFinite(callOiTotal) ? callOiTotal : null,
     putOiTotal: Number.isFinite(putOiTotal) ? putOiTotal : null,
     dayCallChgOi: Number.isFinite(dayCallChgOi) ? dayCallChgOi : null,
@@ -324,7 +333,7 @@ async function buildAfterCloseLastEntry(clock, prev) {
     const snapshot = await getOptionChainOiSnapshot({
       symbol: engineState.symbol,
       expiry: engineState.expiry,
-      lookaroundStrikes: 40,
+      lookaroundStrikes: LOOKAROUND_STRIKES,
     });
     return buildRowFromSnapshot(snapshot, clock, prev, { livePreview: true, afterClose: true });
   } catch (err) {
@@ -374,6 +383,7 @@ async function getStatus() {
     lastError: engineState.lastError,
     lastRow: lastRow || null,
     expiry: engineState.expiry,
+    lookaroundStrikes: LOOKAROUND_STRIKES,
   };
 }
 
@@ -425,4 +435,5 @@ module.exports = {
   captureMinute,
   SESSION_FROM,
   SESSION_TO,
+  LOOKAROUND_STRIKES,
 };
