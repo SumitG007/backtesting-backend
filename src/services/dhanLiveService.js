@@ -611,11 +611,25 @@ async function getOptionChainOiSnapshot({
   // Full-chain totals (header / Sensibull-style PCR).
   let allCallOi = 0;
   let allPutOi = 0;
+  let allCallChgOi = 0;
+  let allPutChgOi = 0;
+  let hasCallChg = false;
+  let hasPutChg = false;
   for (const r of rows) {
     const c = Number(r.callOi);
     const p = Number(r.putOi);
     if (Number.isFinite(c) && c > 0) allCallOi += c;
     if (Number.isFinite(p) && p > 0) allPutOi += p;
+    const cc = Number(r.callChgOi);
+    const pc = Number(r.putChgOi);
+    if (Number.isFinite(cc)) {
+      allCallChgOi += cc;
+      hasCallChg = true;
+    }
+    if (Number.isFinite(pc)) {
+      allPutChgOi += pc;
+      hasPutChg = true;
+    }
   }
 
   // Board window totals (lookaround strikes only).
@@ -656,6 +670,8 @@ async function getOptionChainOiSnapshot({
       allCallOi,
       allPutOi,
       allPcr: Number.isFinite(allPcr) ? Number(allPcr.toFixed(3)) : null,
+      allCallChgOi: hasCallChg ? allCallChgOi : null,
+      allPutChgOi: hasPutChg ? allPutChgOi : null,
     },
   };
 }

@@ -61,6 +61,16 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiFlow = require('./services/oiFlowMinuteEngine');
+    const boot = oiFlow.ensureEngineRunning();
+    if (boot.ok) {
+      console.log('OI flow minute recorder started (current day only)');
+    }
+  } catch (err) {
+    console.warn('OI flow minute engine boot:', err.message);
+  }
+
+  try {
     const boot = await strategySixPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Short straddle paper-live engine started (strategy-6)');
