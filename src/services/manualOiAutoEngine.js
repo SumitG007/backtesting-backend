@@ -672,32 +672,10 @@ async function checkOpenTrade(signal, board = null) {
       reason: 'TARGET',
       futFallback,
     });
-    return;
   }
 
-  // Spot/FUT CONFLICT is normal with basis — do NOT exit on conflict alone.
-  // Only exit on a confirmed opposite TAKE_ENTRY (real side flip), after longer hold.
-  const openSide = String(open.optionType).toUpperCase();
-  const oppositeTake =
-    signal?.status === 'TAKE_ENTRY'
-    && signal?.optionType
-    && signal.optionType !== openSide
-    && Number(signal.ratio) >= engineState.settings.minOiRatio;
-
-  if (heldMs >= OI_EXIT_MIN_HOLD_MS && oppositeTake) {
-    engineState.oiFlipTicks += 1;
-  } else {
-    engineState.oiFlipTicks = 0;
-  }
-
-  if (engineState.oiFlipTicks >= OI_FLIP_CONFIRM_TICKS) {
-    await finalizeTrade(open, {
-      exitPremium: optionLtp,
-      mark,
-      reason: 'OI_SIDE_FLIP',
-      futFallback,
-    });
-  }
+  // No OI conflict / side-flip exits — Spot vs FUT basis conflict is normal.
+  // Open trades exit only on TARGET, STOP_LOSS, DAY_CLOSE, or manual close.
 }
 
 async function tryEnter(signal, board) {
