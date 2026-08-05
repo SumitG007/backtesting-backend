@@ -135,7 +135,7 @@ const liveWalletSchema = new mongoose.Schema(
       stopLossPoints: { type: Number, default: 15 },
       proximityPoints: { type: Number, default: 20 },
       minOiRatio: { type: Number, default: 1.2 },
-      cooldownSeconds: { type: Number, default: 60 },
+      cooldownSeconds: { type: Number, default: 90 },
       perTradeCost: { type: Number, default: 0 },
     },
     strategy3OrHistory: {

@@ -13,15 +13,21 @@ const {
   getNearestWeeklyExpiry,
   resolveOptionInstrument,
   fetchInstrumentLtp,
+  getFutureLtp,
 } = require('./dhanLiveService');
 
 const STRATEGY_KEY = MANUAL_OI_AUTO_LIVE_KEY;
 const WALLET_KEY = 'paper_live_manual_oi_auto';
 const STRATEGY_ID = 'manual-oi-auto';
 
-const LOOP_MS = 4000;
-const MIN_HOLD_MS = 12000;
+const LOOP_MS = 5000;
+const MIN_HOLD_MS = 20000;
+/** OI side-flip exits need a longer hold + confirmed opposite signal. */
+const OI_EXIT_MIN_HOLD_MS = 60000;
+const OI_FLIP_CONFIRM_TICKS = 3;
 const NEAR_BAND_DIV = 2;
+/** Ignore tiny LTP noise vs entry before counting as real target/SL. */
+const EXIT_EPS = 0.15;
 
 const DEFAULT_SETTINGS = {
   enabled: false,
@@ -34,7 +40,7 @@ const DEFAULT_SETTINGS = {
   stopLossPoints: 15,
   proximityPoints: 20,
   minOiRatio: 1.2,
-  cooldownSeconds: 60,
+  cooldownSeconds: 90,
   perTradeCost: 0,
 };
 
@@ -43,14 +49,20 @@ const engineState = {
   startedAt: null,
   settings: { ...DEFAULT_SETTINGS },
   loopTimer: null,
+  tickInFlight: false,
   openTradeId: null,
   lastExitAtMs: 0,
+  /** After an exit, require signal to leave TAKE_ENTRY before next arm. */
+  entryArmed: true,
+  lastEntryKey: null,
   lastSignal: null,
   lastBoardAt: null,
   lastError: null,
   lastEntryDebug: null,
   closingTrade: false,
   enteringTrade: false,
+  /** Consecutive opposite TAKE_ENTRY ticks while in a trade (OI flip confirm). */
+  oiFlipTicks: 0,
   lotSize: null,
   expiry: null,
 };
@@ -140,6 +152,131 @@ function biasFromRow(row, minOiRatio) {
   };
 }
 
+/** Prev / center / next strike biases around a price. */
+function clusterAround(board, price, step, minOiRatio) {
+  const center = roundToStrike(price, step);
+  if (!Number.isFinite(center)) return { center: null, strikes: [], biases: [] };
+  const strikes = [center - step, center, center + step];
+  const biases = strikes.map((s) => biasFromRow(findStrikeRow(board.strikes, s), minOiRatio));
+  return { center, strikes, biases };
+}
+
+/**
+ * Strong entry needs FUT cluster + Spot cluster agreement.
+ * - FUT center clear on side
+ * - ≥2 of 3 FUT strikes (prev/center/next) lean same CE/PE
+ * - Spot center must not clearly fight that side
+ * - ≥1 of 3 Spot strikes lean same side (or Spot all weak)
+ */
+function evaluateStrongSetup(board, settings) {
+  const minOiRatio = Math.max(1.05, Number(settings.minOiRatio) || 1.2);
+  /** Slightly stricter for live auto entry. */
+  const strongRatio = Math.max(minOiRatio, 1.25);
+  const step = Math.max(1, Number(board.strikeStep) || 50);
+  const fut = Number(board.fut ?? board.spot);
+  const spotCash = Number(board.chainSpot);
+  const spotPrice = Number.isFinite(spotCash) && spotCash > 0 ? spotCash : fut;
+
+  const futCluster = clusterAround(board, fut, step, minOiRatio);
+  const spotCluster = clusterAround(board, spotPrice, step, minOiRatio);
+  const futCenter = futCluster.biases[1] || null;
+  const spotCenter = spotCluster.biases[1] || null;
+
+  if (!futCenter?.clear || !futCenter.deltaOk) {
+    return {
+      ok: false,
+      reason: !futCenter?.clear ? 'FUT center wall weak' : 'FUT center ΔOI fighting',
+      optionType: futCenter?.optionType || null,
+      futCenter,
+      spotCenter,
+      futCluster,
+      spotCluster,
+      fut,
+      spotCash: Number.isFinite(spotCash) ? spotCash : null,
+      strongRatio,
+    };
+  }
+
+  const side = futCenter.optionType;
+  const futAgree = futCluster.biases.filter((b) => b && b.optionType === side && b.clear).length;
+  const futSoftAgree = futCluster.biases.filter((b) => b && b.optionType === side).length;
+  const spotFight = Boolean(
+    spotCenter?.clear && spotCenter.optionType && spotCenter.optionType !== side,
+  );
+  const spotAgree = spotCluster.biases.filter((b) => b && b.optionType === side && b.clear).length;
+  const spotSoftAgree = spotCluster.biases.filter((b) => b && b.optionType === side).length;
+  const spotAllWeak = spotCluster.biases.every((b) => !b || !b.clear);
+
+  const futStrong = futCenter.ratio >= strongRatio && futAgree >= 2 && futSoftAgree >= 2;
+  const spotOk = !spotFight && (spotAgree >= 1 || (spotAllWeak && spotSoftAgree >= 1) || spotAgree + spotSoftAgree >= 2);
+
+  if (spotFight) {
+    return {
+      ok: false,
+      reason: `Spot ${spotCenter.strike} fights (${spotCenter.optionType} vs FUT ${side})`,
+      optionType: side,
+      futCenter,
+      spotCenter,
+      futCluster,
+      spotCluster,
+      futAgree,
+      spotAgree,
+      fut,
+      spotCash: Number.isFinite(spotCash) ? spotCash : null,
+      strongRatio,
+      conflict: true,
+    };
+  }
+  if (!futStrong) {
+    return {
+      ok: false,
+      reason: `FUT cluster weak (${futAgree}/3 clear ${side}, need ≥2 · ratio ≥${strongRatio}×)`,
+      optionType: side,
+      futCenter,
+      spotCenter,
+      futCluster,
+      spotCluster,
+      futAgree,
+      spotAgree,
+      fut,
+      spotCash: Number.isFinite(spotCash) ? spotCash : null,
+      strongRatio,
+    };
+  }
+  if (!spotOk) {
+    return {
+      ok: false,
+      reason: `Spot cluster not supporting ${side} (prev/spot/next)`,
+      optionType: side,
+      futCenter,
+      spotCenter,
+      futCluster,
+      spotCluster,
+      futAgree,
+      spotAgree,
+      fut,
+      spotCash: Number.isFinite(spotCash) ? spotCash : null,
+      strongRatio,
+    };
+  }
+
+  return {
+    ok: true,
+    reason: `Strong ${side}: FUT ${futAgree}/3 · Spot ${spotAgree}/3 support`,
+    optionType: side,
+    dominantSide: futCenter.dominantSide,
+    futCenter,
+    spotCenter,
+    futCluster,
+    spotCluster,
+    futAgree,
+    spotAgree,
+    fut,
+    spotCash: Number.isFinite(spotCash) ? spotCash : null,
+    strongRatio,
+  };
+}
+
 function buildSignalFromBoard(board, settings) {
   const minOiRatio = Math.max(1.05, Number(settings.minOiRatio) || 1.2);
   const proximityPoints = Math.max(5, Number(settings.proximityPoints) || 20);
@@ -150,105 +287,96 @@ function buildSignalFromBoard(board, settings) {
   }
 
   const step = Math.max(1, Number(board.strikeStep) || 50);
-  const fut = Number(board.fut ?? board.spot);
-  const spotCash = Number(board.chainSpot);
-  const futStrike = roundToStrike(fut, step);
-  const spotStrike = roundToStrike(Number.isFinite(spotCash) ? spotCash : fut, step);
-  const futBias = biasFromRow(findStrikeRow(board.strikes, futStrike), minOiRatio);
-  const spotBias = biasFromRow(findStrikeRow(board.strikes, spotStrike), minOiRatio);
-  const futDist = futBias && Number.isFinite(fut)
-    ? Math.round(Math.abs(fut - futBias.strike))
+  const setup = evaluateStrongSetup(board, settings);
+  const fut = setup.fut;
+  const futStrike = setup.futCenter?.strike || roundToStrike(fut, step);
+  const primary = setup.futCenter;
+  const atm = Number(board.atm) || futStrike;
+  const futDist = primary && Number.isFinite(fut)
+    ? Math.round(Math.abs(fut - primary.strike))
     : null;
 
-  const sameStrike = futBias && spotBias && futBias.strike === spotBias.strike;
-  const bothClear = Boolean(futBias?.clear && spotBias?.clear);
-  const conflict =
-    bothClear && !sameStrike && futBias.optionType !== spotBias.optionType;
+  const base = {
+    levelStrike: primary?.strike ?? futStrike,
+    entryStrike: atm,
+    fut,
+    spotCash: setup.spotCash,
+    ratio: primary?.ratio,
+    spotDist: futDist,
+    futAgree: setup.futAgree,
+    spotAgree: setup.spotAgree,
+    strongRatio: setup.strongRatio,
+    clusterDetail: setup.reason,
+  };
 
-  const primary = futBias;
-  const atm = Number(board.atm) || futStrike;
-
-  if (conflict) {
+  if (setup.conflict) {
     return {
+      ...base,
       status: 'CONFLICT',
       optionType: null,
       buyLive: false,
-      levelStrike: primary?.strike ?? futStrike,
-      entryStrike: atm,
-      fut,
-      ratio: primary?.ratio,
-      spotDist: futDist,
       conflict: true,
-      detail: 'Spot/FUT walls disagree',
+      detail: setup.reason,
     };
   }
   if (!primary?.clear) {
     return {
+      ...base,
       status: 'CAUTION',
       optionType: primary?.optionType || null,
       buyLive: false,
-      levelStrike: primary?.strike ?? futStrike,
-      entryStrike: atm,
-      fut,
-      ratio: primary?.ratio,
-      spotDist: futDist,
-      detail: 'Weak OI wall',
+      detail: setup.reason || 'Weak OI wall',
     };
   }
   if (!primary.deltaOk) {
     return {
+      ...base,
       status: 'CAUTION',
       optionType: primary.optionType,
       buyLive: false,
-      levelStrike: primary.strike,
-      entryStrike: atm,
-      fut,
-      ratio: primary.ratio,
-      spotDist: futDist,
-      detail: 'ΔOI fighting',
+      detail: 'ΔOI fighting on FUT strike',
+    };
+  }
+  if (!setup.ok) {
+    return {
+      ...base,
+      status: 'CAUTION',
+      optionType: setup.optionType,
+      buyLive: false,
+      detail: setup.reason,
     };
   }
   if (futDist == null || futDist > proximityPoints) {
     return {
+      ...base,
       status: 'WATCHING',
-      optionType: primary.optionType,
+      optionType: setup.optionType,
       buyLive: false,
-      levelStrike: primary.strike,
-      entryStrike: atm,
-      fut,
-      ratio: primary.ratio,
-      spotDist: futDist,
-      detail: 'FUT far from wall',
+      dominantSide: setup.dominantSide,
+      detail: `Strong cluster ready · FUT ${futDist ?? '—'} pts from wall (need ≤${proximityPoints})`,
     };
   }
   if (futDist > nearBand) {
     return {
+      ...base,
       status: 'NEAR',
-      optionType: primary.optionType,
+      optionType: setup.optionType,
       buyLive: false,
-      levelStrike: primary.strike,
-      entryStrike: atm,
-      fut,
-      ratio: primary.ratio,
-      spotDist: futDist,
-      detail: 'Near wall — prepare',
+      dominantSide: setup.dominantSide,
+      detail: `Near wall · cluster OK (${setup.reason})`,
     };
   }
   return {
+    ...base,
     status: 'TAKE_ENTRY',
-    optionType: primary.optionType,
+    optionType: setup.optionType,
     buyLive: true,
-    levelStrike: primary.strike,
-    entryStrike: atm,
-    fut,
-    ratio: primary.ratio,
-    spotDist: futDist,
-    dominantSide: primary.dominantSide,
+    dominantSide: setup.dominantSide,
     putOi: primary.putOi,
     callOi: primary.callOi,
     putChgOi: primary.putChgOi,
     callChgOi: primary.callChgOi,
-    detail: `Take ${primary.optionType} @ wall ${primary.strike}`,
+    detail: `Strong entry ${setup.optionType} · ${setup.reason}`,
   };
 }
 
@@ -276,7 +404,7 @@ function normalizeSettings(raw = {}) {
   s.stopLossPoints = Math.max(1, Number(s.stopLossPoints) || 15);
   s.proximityPoints = Math.max(5, Number(s.proximityPoints) || 20);
   s.minOiRatio = Math.max(1.05, Math.min(3, Number(s.minOiRatio) || 1.2));
-  s.cooldownSeconds = Math.max(0, Math.floor(Number(s.cooldownSeconds) || 60));
+  s.cooldownSeconds = Math.max(30, Math.floor(Number(s.cooldownSeconds) || 90));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:30');
   s.tradeToTime = String(s.tradeToTime || '13:00');
@@ -340,6 +468,18 @@ async function syncOpenTradeId() {
 
 async function resolveOptionLtp(trade) {
   const optionType = String(trade.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
+  let futSpot = null;
+  try {
+    const fut = await getFutureLtp({
+      symbol: trade.symbol,
+      expiry: trade.expiryDate,
+      maxWaitMs: 1200,
+    });
+    if (Number.isFinite(fut?.ltp) && fut.ltp > 0) futSpot = fut.ltp;
+  } catch {
+    /* optional */
+  }
+
   try {
     const inst = await resolveOptionInstrument({
       symbol: trade.symbol,
@@ -348,9 +488,9 @@ async function resolveOptionLtp(trade) {
       optionType,
     });
     if (inst) {
-      const ltp = await fetchInstrumentLtp(inst, { maxWaitMs: 1500 });
+      const ltp = await fetchInstrumentLtp(inst, { maxWaitMs: 2000, forceFresh: true });
       if (Number.isFinite(ltp) && ltp > 0) {
-        return { optionLtp: ltp, spot: null, source: 'marketfeed' };
+        return { optionLtp: ltp, spot: futSpot, source: 'marketfeed' };
       }
     }
   } catch {
@@ -363,16 +503,49 @@ async function resolveOptionLtp(trade) {
       expiry: trade.expiryDate,
     });
     const ltp = optionType === 'PE' ? Number(prem.peLtp) : Number(prem.ceLtp);
+    const spot =
+      (Number.isFinite(futSpot) && futSpot > 0)
+        ? futSpot
+        : (Number(prem.spot) > 0 ? Number(prem.spot) : Number(prem.chainSpot));
     if (Number.isFinite(ltp) && ltp > 0) {
-      return { optionLtp: ltp, spot: prem.spot ?? prem.chainSpot, source: 'chain' };
+      return {
+        optionLtp: ltp,
+        spot: Number.isFinite(spot) && spot > 0 ? spot : null,
+        source: 'chain',
+      };
     }
   } catch {
     /* fall through */
   }
-  return { optionLtp: null, spot: null, source: 'none' };
+  return { optionLtp: null, spot: futSpot, source: 'none' };
 }
 
-async function finalizeTrade(trade, { exitPremium, mark, reason }) {
+function pickExitSpot(mark, trade, futFallback = null) {
+  for (const raw of [mark?.spot, futFallback, trade?.entrySpot, trade?.openPositionMark?.spot]) {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Number(n.toFixed(2));
+  }
+  return null;
+}
+
+async function secondsSinceLastExit() {
+  if (engineState.lastExitAtMs > 0) {
+    return (Date.now() - engineState.lastExitAtMs) / 1000;
+  }
+  const last = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    exitTime: { $ne: null },
+  })
+    .sort({ exitTime: -1 })
+    .select({ exitTime: 1 })
+    .lean();
+  if (!last?.exitTime) return Infinity;
+  const ms = Date.now() - new Date(last.exitTime).getTime();
+  engineState.lastExitAtMs = new Date(last.exitTime).getTime();
+  return ms / 1000;
+}
+
+async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = null }) {
   if (engineState.closingTrade) return null;
   engineState.closingTrade = true;
   try {
@@ -391,11 +564,12 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
     const pnl = finalValue - invested - charges;
     const clock = getIstClock(new Date());
 
+    const exitSpot = pickExitSpot(resolved, trade, futFallback);
     trade.status = 'CLOSED';
     trade.exitPremium = Number(safeExit.toFixed(2));
-    trade.exitSpot = Number.isFinite(Number(resolved?.spot))
-      ? Number(Number(resolved.spot).toFixed(2))
-      : trade.entrySpot;
+    // Never persist 0 — UI treated 0 as a real FUT print.
+    trade.exitSpot = exitSpot != null ? exitSpot : Number(trade.entrySpot) || undefined;
+    if (!(Number(trade.exitSpot) > 0)) trade.exitSpot = undefined;
     trade.exitTime = new Date();
     trade.exitDateKey = clock.dateKey;
     trade.reason = reason;
@@ -416,13 +590,15 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
     await recalcWalletFromTrades();
     engineState.openTradeId = null;
     engineState.lastExitAtMs = Date.now();
+    engineState.entryArmed = false;
+    engineState.oiFlipTicks = 0;
     return trade;
   } finally {
     engineState.closingTrade = false;
   }
 }
 
-async function checkOpenTrade(signal) {
+async function checkOpenTrade(signal, board = null) {
   const open = await LivePaperTrade.findOne({
     strategyKey: STRATEGY_KEY,
     status: 'OPEN',
@@ -430,16 +606,20 @@ async function checkOpenTrade(signal) {
   }).sort({ entryTime: -1 });
   if (!open) {
     engineState.openTradeId = null;
+    engineState.oiFlipTicks = 0;
     return;
   }
   engineState.openTradeId = String(open._id);
 
   const clock = getIstClock(new Date());
   const mark = await resolveOptionLtp(open);
+  const futFallback = Number(signal?.fut || board?.fut || open.entrySpot);
   if (Number.isFinite(mark.optionLtp) && mark.optionLtp > 0) {
     open.openPositionMark = {
       optionLtp: Number(mark.optionLtp.toFixed(2)),
-      spot: mark.spot,
+      spot: Number.isFinite(mark.spot) && mark.spot > 0
+        ? mark.spot
+        : (Number.isFinite(futFallback) && futFallback > 0 ? futFallback : null),
       source: mark.source,
       at: new Date().toISOString(),
     };
@@ -452,6 +632,7 @@ async function checkOpenTrade(signal) {
       exitPremium: mark.optionLtp,
       mark,
       reason: 'DAY_CLOSE',
+      futFallback,
     });
     return;
   }
@@ -461,44 +642,60 @@ async function checkOpenTrade(signal) {
 
   const optionLtp = Number(mark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
+  // Prefer live mark for exits; chain-only marks can be stale vs entry.
+  if (mark.source === 'chain' && heldMs < MIN_HOLD_MS * 2) return;
 
-  if (open.stopLossPremium != null && optionLtp <= Number(open.stopLossPremium)) {
+  const entry = Number(open.entryPremium);
+  if (open.stopLossPremium != null && optionLtp <= Number(open.stopLossPremium) - EXIT_EPS) {
     await finalizeTrade(open, {
-      exitPremium: Number(open.stopLossPremium),
+      exitPremium: Math.min(optionLtp, Number(open.stopLossPremium)),
       mark,
       reason: 'STOP_LOSS',
+      futFallback,
     });
     return;
   }
-  if (open.targetPremium != null && optionLtp >= Number(open.targetPremium)) {
+  if (open.targetPremium != null && optionLtp >= Number(open.targetPremium) + EXIT_EPS) {
     await finalizeTrade(open, {
-      exitPremium: Number(open.targetPremium),
+      exitPremium: Math.max(optionLtp, Number(open.targetPremium)),
       mark,
       reason: 'TARGET',
+      futFallback,
     });
     return;
   }
-
-  // Sudden OI flip / opposite clear wall while in trade → auto close
-  const openSide = String(open.optionType).toUpperCase();
-  if (signal?.status === 'CONFLICT') {
+  const targetPts = Number(engineState.settings.targetPoints) || 5;
+  if (Number.isFinite(entry) && optionLtp >= entry + targetPts - EXIT_EPS) {
     await finalizeTrade(open, {
       exitPremium: optionLtp,
       mark,
-      reason: 'OI_CONFLICT_EXIT',
+      reason: 'TARGET',
+      futFallback,
     });
     return;
   }
-  if (
-    signal?.optionType
+
+  // Spot/FUT CONFLICT is normal with basis — do NOT exit on conflict alone.
+  // Only exit on a confirmed opposite TAKE_ENTRY (real side flip), after longer hold.
+  const openSide = String(open.optionType).toUpperCase();
+  const oppositeTake =
+    signal?.status === 'TAKE_ENTRY'
+    && signal?.optionType
     && signal.optionType !== openSide
-    && (signal.status === 'TAKE_ENTRY' || signal.status === 'NEAR' || signal.status === 'WATCHING')
-    && signal.ratio >= engineState.settings.minOiRatio
-  ) {
+    && Number(signal.ratio) >= engineState.settings.minOiRatio;
+
+  if (heldMs >= OI_EXIT_MIN_HOLD_MS && oppositeTake) {
+    engineState.oiFlipTicks += 1;
+  } else {
+    engineState.oiFlipTicks = 0;
+  }
+
+  if (engineState.oiFlipTicks >= OI_FLIP_CONFIRM_TICKS) {
     await finalizeTrade(open, {
       exitPremium: optionLtp,
       mark,
       reason: 'OI_SIDE_FLIP',
+      futFallback,
     });
   }
 }
@@ -506,7 +703,17 @@ async function checkOpenTrade(signal) {
 async function tryEnter(signal, board) {
   if (!engineState.settings.enabled) return;
   if (engineState.openTradeId || engineState.enteringTrade || engineState.closingTrade) return;
-  if (signal?.status !== 'TAKE_ENTRY' || !signal.buyLive || !signal.optionType) return;
+  if (signal?.status !== 'TAKE_ENTRY' || !signal.buyLive || !signal.optionType) {
+    // Leaving TAKE_ENTRY re-arms for the next clean setup.
+    if (signal?.status && signal.status !== 'TAKE_ENTRY') {
+      engineState.entryArmed = true;
+    }
+    return;
+  }
+  if (!engineState.entryArmed) {
+    engineState.lastEntryDebug = { skip: 'waiting_rearm', status: signal.status };
+    return;
+  }
 
   const clock = getIstClock(new Date());
   if (!inWindow(clock.minutes, engineState.settings.tradeFromTime, engineState.settings.tradeToTime)) {
@@ -514,8 +721,16 @@ async function tryEnter(signal, board) {
   }
   if (isEod(clock.minutes, engineState.settings.eodExitTime)) return;
 
-  const cooldownMs = (Number(engineState.settings.cooldownSeconds) || 0) * 1000;
-  if (cooldownMs > 0 && Date.now() - engineState.lastExitAtMs < cooldownMs) return;
+  const cooldownSec = Math.max(30, Number(engineState.settings.cooldownSeconds) || 90);
+  const sinceExit = await secondsSinceLastExit();
+  if (sinceExit < cooldownSec) {
+    engineState.lastEntryDebug = {
+      skip: 'cooldown',
+      sinceExitSec: Number(sinceExit.toFixed(1)),
+      need: cooldownSec,
+    };
+    return;
+  }
 
   const existing = await LivePaperTrade.findOne({
     strategyKey: STRATEGY_KEY,
@@ -538,10 +753,29 @@ async function tryEnter(signal, board) {
       return;
     }
 
-    const prem = await getAtmPremiums({ symbol, strike, expiry });
-    const entryPremium = optionType === 'PE' ? Number(prem.peLtp) : Number(prem.ceLtp);
+    // Prefer fresh marketfeed LTP so entry matches real premium (not stale chain).
+    let entryPremium = null;
+    let entrySource = 'none';
+    try {
+      const inst = await resolveOptionInstrument({ symbol, strike, expiry, optionType });
+      if (inst) {
+        const live = await fetchInstrumentLtp(inst, { maxWaitMs: 2000, forceFresh: true });
+        if (Number.isFinite(live) && live > 0) {
+          entryPremium = live;
+          entrySource = 'marketfeed';
+        }
+      }
+    } catch {
+      /* fall through */
+    }
     if (!Number.isFinite(entryPremium) || entryPremium <= 0) {
-      engineState.lastEntryDebug = { skip: 'no_premium', strike, optionType, expiry };
+      engineState.lastEntryDebug = {
+        skip: 'no_live_premium',
+        strike,
+        optionType,
+        expiry,
+        hint: 'Skipped — need live option LTP (avoid stale chain fills)',
+      };
       return;
     }
 
@@ -555,7 +789,14 @@ async function tryEnter(signal, board) {
     const stopLossPoints = Number(engineState.settings.stopLossPoints) || 15;
     const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = Math.max(0.05, entryPremium - stopLossPoints);
-    const fut = Number(signal.fut || board?.fut || prem.spot) || entryPremium;
+    const fut = Number(signal.fut || board?.fut);
+    const entryFut = Number.isFinite(fut) && fut > 0 ? fut : null;
+
+    const entryKey = `${clock.dateKey}:${optionType}:${strike}:${Math.round(entryPremium * 10)}`;
+    if (engineState.lastEntryKey === entryKey && sinceExit < cooldownSec * 2) {
+      engineState.lastEntryDebug = { skip: 'duplicate_entry_key', entryKey };
+      return;
+    }
 
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
@@ -569,7 +810,7 @@ async function tryEnter(signal, board) {
       lots,
       qty,
       entryPremium: Number(entryPremium.toFixed(2)),
-      entrySpot: Number(Number(fut).toFixed(2)),
+      entrySpot: entryFut != null ? Number(entryFut.toFixed(2)) : Number(entryPremium.toFixed(2)),
       entryTime: new Date(),
       entryDateKey: clock.dateKey,
       status: 'OPEN',
@@ -582,16 +823,19 @@ async function tryEnter(signal, board) {
       targetMode: 'POINTS',
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `Auto ${optionType} · wall ${signal.levelStrike} · ${signal.dominantSide || ''} · ratio ${signal.ratio}×`,
-      notes: `manual_oi_auto; wall=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${targetPoints}; sl=${stopLossPoints}`,
+      notes: `manual_oi_auto; wall=${signal.levelStrike}; side=${signal.dominantSide}; ratio=${signal.ratio}; tg=${targetPoints}; sl=${stopLossPoints}; entrySrc=${entrySource}`,
     });
 
     engineState.openTradeId = String(tradeDoc._id);
+    engineState.lastEntryKey = entryKey;
+    engineState.entryArmed = false; // consume arm until next non-TAKE_ENTRY then re-arm
     engineState.lastEntryDebug = {
       at: new Date().toISOString(),
       tradeId: engineState.openTradeId,
       optionType,
       strike,
       entryPremium,
+      entrySource,
       targetPremium,
       stopLossPremium,
       signal,
@@ -613,25 +857,39 @@ async function fetchBoard() {
 }
 
 async function tickOnce() {
+  if (engineState.tickInFlight) return;
+  engineState.tickInFlight = true;
   try {
     await loadSettingsFromDb();
     const board = await fetchBoard();
     engineState.lastBoardAt = board?.at || new Date().toISOString();
     const signal = buildSignalFromBoard(board, engineState.settings);
+
+    // Re-arm only when signal leaves TAKE_ENTRY (fresh setup required).
+    if (signal?.status && signal.status !== 'TAKE_ENTRY') {
+      engineState.entryArmed = true;
+    }
+
     engineState.lastSignal = {
       ...signal,
       at: engineState.lastBoardAt,
       enabled: engineState.settings.enabled,
+      entryArmed: engineState.entryArmed,
     };
 
-    await checkOpenTrade(signal);
+    const hadOpen = Boolean(engineState.openTradeId);
+    await checkOpenTrade(signal, board);
+    const closedThisTick = hadOpen && !engineState.openTradeId;
 
-    if (!engineState.openTradeId) {
+    // Never enter in the same tick as an exit.
+    if (!engineState.openTradeId && !closedThisTick) {
       await tryEnter(signal, board);
     }
     engineState.lastError = null;
   } catch (err) {
     engineState.lastError = err.message;
+  } finally {
+    engineState.tickInFlight = false;
   }
 }
 
@@ -649,8 +907,10 @@ async function ensureEngineRunning() {
     await loadSettingsFromDb();
     await syncOpenTradeId();
     await recalcWalletFromTrades();
+    await secondsSinceLastExit(); // hydrate lastExitAtMs from DB
     engineState.running = true;
     engineState.startedAt = new Date();
+    engineState.entryArmed = true;
     startLoop();
     tickOnce().catch(() => {});
     console.log('Manual OI auto-signal engine started');
@@ -787,7 +1047,12 @@ async function closeOpenTradeManual(reason = 'MANUAL_CLOSE') {
   }).sort({ entryTime: -1 });
   if (!open) throw new Error('No open auto trade');
   const mark = await resolveOptionLtp(open);
-  return finalizeTrade(open, { exitPremium: mark.optionLtp, mark, reason });
+  return finalizeTrade(open, {
+    exitPremium: mark.optionLtp,
+    mark,
+    reason,
+    futFallback: mark.spot || open.entrySpot,
+  });
 }
 
 module.exports = {
@@ -802,4 +1067,5 @@ module.exports = {
   getBookSummary,
   closeOpenTradeManual,
   buildSignalFromBoard,
+  recalcWalletFromTrades,
 };
