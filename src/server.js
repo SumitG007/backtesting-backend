@@ -71,6 +71,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiFlowAuto = require('./services/oiFlowAutoEngine');
+    await oiFlowAuto.ensureEngineRunning();
+  } catch (err) {
+    console.warn('OI Flow auto engine boot:', err.message);
+  }
+
+  try {
     const boot = await strategySixPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Short straddle paper-live engine started (strategy-6)');
