@@ -117,38 +117,40 @@ function findStrikeRow(strikes, strike) {
   return exact || nearest;
 }
 
+/** Bias from ΔOI only — absolute OI is not used for side/ratio. */
 function biasFromRow(row, minOiRatio) {
   if (!row || !Number.isFinite(Number(row.strike))) return null;
   const putOi = Number(row.putOi);
   const callOi = Number(row.callOi);
-  if (!Number.isFinite(putOi) || !Number.isFinite(callOi)) return null;
-  if (putOi <= 0 && callOi <= 0) return null;
-
-  const putDom = putOi >= callOi;
-  const ratio = putDom
-    ? putOi / Math.max(callOi, 1)
-    : callOi / Math.max(putOi, 1);
   const putChg = Number(row.putChgOi);
   const callChg = Number(row.callChgOi);
+  if (!Number.isFinite(putChg) || !Number.isFinite(callChg)) return null;
+
+  const oiMass = Math.max(0, putChg) + Math.max(0, callChg);
+  if (!(oiMass > 0)) return null;
+
+  const putDom = putChg >= callChg;
+  const ratio = putDom
+    ? Math.max(putChg, 0) / Math.max(Math.max(callChg, 0), 1)
+    : Math.max(callChg, 0) / Math.max(Math.max(putChg, 0), 1);
   const clear = ratio >= minOiRatio;
 
   let deltaOk = true;
-  if (Number.isFinite(putChg) && Number.isFinite(callChg)) {
-    if (putDom && callChg > putChg * 1.25 && callChg > 0) deltaOk = false;
-    if (!putDom && putChg > callChg * 1.25 && putChg > 0) deltaOk = false;
-  }
+  if (putDom && callChg > putChg * 1.25 && callChg > 0) deltaOk = false;
+  if (!putDom && putChg > callChg * 1.25 && putChg > 0) deltaOk = false;
 
   return {
     strike: Number(row.strike),
     dominantSide: putDom ? 'PUT' : 'CALL',
     optionType: putDom ? 'CE' : 'PE',
-    putOi,
-    callOi,
-    putChgOi: Number.isFinite(putChg) ? putChg : null,
-    callChgOi: Number.isFinite(callChg) ? callChg : null,
+    putOi: Number.isFinite(putOi) ? putOi : null,
+    callOi: Number.isFinite(callOi) ? callOi : null,
+    putChgOi: putChg,
+    callChgOi: callChg,
     ratio: Number(ratio.toFixed(2)),
     clear,
     deltaOk,
+    oiMass,
   };
 }
 

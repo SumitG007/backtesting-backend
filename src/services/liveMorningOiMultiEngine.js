@@ -388,39 +388,36 @@ function isStrongBuildupFighting(optionType, marketStructure = engineState.marke
 
 /**
  * Level helpers for Multi neighbor-wall scalp.
- * Bias: Put OI ≥ Call OI → Buy CE, else Buy PE.
- * Clear dominance (ratio ≥ minOiRatio, default 1.2) is enforced at signal/entry time.
+ * Bias from ΔOI: Put Δ ≥ Call Δ → Buy CE, else Buy PE.
+ * Clear dominance (ΔOI ratio ≥ minOiRatio, default 1.2) is enforced at signal/entry time.
  */
 
-/** Put/Call bias from a single option-chain strike row. */
+/** Put/Call bias from a single option-chain strike row — ΔOI only. */
 function biasFromOiRow(row) {
   if (!row || !Number.isFinite(Number(row.strike))) return null;
   const putOi = Number(row.putOi);
   const callOi = Number(row.callOi);
-  if (!Number.isFinite(putOi) || !Number.isFinite(callOi)) return null;
-  if (putOi < 0 || callOi < 0) return null;
-  if (putOi <= 0 && callOi <= 0) return null;
-
-  const oiMass = putOi + callOi;
-  if (!(oiMass > 0)) return null;
-
-  const putDom = putOi >= callOi;
   const putChg = Number(row.putChgOi);
   const callChg = Number(row.callChgOi);
-  const hasChg = Number.isFinite(putChg) && Number.isFinite(callChg);
+  if (!Number.isFinite(putChg) || !Number.isFinite(callChg)) return null;
+
+  const oiMass = Math.max(0, putChg) + Math.max(0, callChg);
+  if (!(oiMass > 0)) return null;
+
+  const putDom = putChg >= callChg;
   const ratio = putDom
-    ? putOi / Math.max(callOi, 1)
-    : callOi / Math.max(putOi, 1);
+    ? Math.max(putChg, 0) / Math.max(Math.max(callChg, 0), 1)
+    : Math.max(callChg, 0) / Math.max(Math.max(putChg, 0), 1);
 
   return {
     strike: row.strike,
     dominantSide: putDom ? 'PUT' : 'CALL',
     optionType: putDom ? 'CE' : 'PE',
-    putOi,
-    callOi,
-    putChgOi: Number.isFinite(putChg) ? putChg : null,
-    callChgOi: Number.isFinite(callChg) ? callChg : null,
-    hasChangeOi: hasChg,
+    putOi: Number.isFinite(putOi) ? putOi : null,
+    callOi: Number.isFinite(callOi) ? callOi : null,
+    putChgOi: putChg,
+    callChgOi: callChg,
+    hasChangeOi: true,
     ratio: Number(ratio.toFixed(2)),
     oiMass,
     ceLtp: row.ceLtp,
@@ -487,7 +484,7 @@ function rankNeighborCandidate(a, b, proxPts) {
  * - Skip fighting ATM (crowded Put+Call).
  * - Clear Put wall at/below FUT → Buy CE (support bounce).
  * - Clear Call wall at/above FUT → Buy PE (resistance reject).
- * - Prefer nearest level (in proximity first), then highest OI mass.
+ * - Prefer nearest level (in proximity first), then highest ΔOI mass.
  * Entry still needs 5m FUT + option confirm + proximity.
  */
 function resolveMultiOiLevel(snapshot) {
@@ -590,7 +587,7 @@ function trackArmedBias(signal) {
 }
 
 /**
- * Fresh OI re-check right before fill — wall side + ΔOI must still agree.
+ * Fresh OI re-check right before fill — ΔOI wall side + ratio must still agree.
  */
 async function revalidateWallEntry(clock, intended) {
   engineState.lastOiFetchAt = 0;
@@ -609,10 +606,10 @@ async function revalidateWallEntry(clock, intended) {
       live,
     };
   }
-  if (intendedType === 'CE' && Number(live.putOi) < Number(live.callOi)) {
+  if (intendedType === 'CE' && Number(live.putChgOi) < Number(live.callChgOi)) {
     return { ok: false, reason: 'WALL_SIDE_BROKEN', live };
   }
-  if (intendedType === 'PE' && Number(live.callOi) < Number(live.putOi)) {
+  if (intendedType === 'PE' && Number(live.callChgOi) < Number(live.putChgOi)) {
     return { ok: false, reason: 'WALL_SIDE_BROKEN', live };
   }
   if (!isOiDominanceClear(live.ratio)) {
@@ -1365,7 +1362,7 @@ async function refreshLiveSignalStatus(clock) {
       status: 'CAUTION',
       label: `Weak ${levelKind} · ${optionType} ${level}`,
       detail: [
-        `Need clear OI dominance ≥ ${minOiRatio.toFixed(2)}× (now ${Number(signal.ratio) || '—'}×)`,
+        `Need clear ΔOI dominance ≥ ${minOiRatio.toFixed(2)}× (now ${Number(signal.ratio) || '—'}×)`,
         entryBlockDetail,
       ].filter(Boolean).join(' · '),
       reason: 'WEAK_OI_RATIO',

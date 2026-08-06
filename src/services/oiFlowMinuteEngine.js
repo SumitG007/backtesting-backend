@@ -3,10 +3,13 @@
  * Captures every IST minute from 09:15 → 15:30.
  * On a new day, previous dateKeys are deleted (one day in DB).
  *
- * callsChgOi / putsChgOi = vs previous 1-minute DB row (ATM ± 3 strikes only)
- * chngInDir              = Puts chng − Calls chng
- * diffInOi               = Puts total − Calls total (+ when Puts more)
- * dirOfChng              = up / down / flat from chngInDir
+ * Focus = Change in OI (ΔOI), not absolute standing OI.
+ * dayCallChgOi / dayPutChgOi = ATM ± 3 day-so-far ΔOI (our "total OI")
+ * callsChgOi / putsChgOi     = vs previous 1-minute DB row
+ * chngInDir                  = Puts chng − Calls chng (interval)
+ * diffInOi                   = day Put Δ − day Call Δ (+ when Puts building more)
+ * dirOfChng                  = up / down / flat from chngInDir
+ * callOiTotal / putOiTotal   = absolute OI stored for reference only
  */
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
 const { getIstClock, isWeekendDateKey, sleep } = require('../utils/dateTime');
@@ -76,16 +79,16 @@ function deriveFields({
     putsChgOi = 0;
   }
 
-  // Chng in dir = final of minute Calls/Puts chng (Puts − Calls).
+  // Chng in dir = interval Calls/Puts Δ (Puts − Calls).
   const chngInDir =
     Number.isFinite(callsChgOi) && Number.isFinite(putsChgOi)
       ? putsChgOi - callsChgOi
       : null;
 
-  // Diff. in OI = Puts total − Calls total → Puts more shows + (green).
+  // Diff. in OI = day Put Δ − day Call Δ (change totals, not absolute OI).
   const diffInOi =
-    Number.isFinite(callOiTotal) && Number.isFinite(putOiTotal)
-      ? putOiTotal - callOiTotal
+    Number.isFinite(dayPutChgOi) && Number.isFinite(dayCallChgOi)
+      ? dayPutChgOi - dayCallChgOi
       : null;
 
   return {
