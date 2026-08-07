@@ -65,14 +65,6 @@ const {
   getOiFlowToday,
 } = require('../controllers/oiFlowController');
 const {
-  getOiFlowAutoStatus,
-  getOiFlowAutoBook,
-  getOiFlowAutoTrades,
-  postOiFlowAutoEnabled,
-  patchOiFlowAutoSettings,
-  postOiFlowAutoClose,
-} = require('../controllers/oiFlowAutoController');
-const {
   getPatternResearch,
   getPatternResearchReport,
   getMultiScenarioResearch,
@@ -148,12 +140,5 @@ router.post('/manual-oi-auto/close', postManualOiAutoClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
-
-router.get('/oi-flow-auto/status', getOiFlowAutoStatus);
-router.get('/oi-flow-auto/book', getOiFlowAutoBook);
-router.get('/oi-flow-auto/trades', getOiFlowAutoTrades);
-router.post('/oi-flow-auto/enabled', postOiFlowAutoEnabled);
-router.patch('/oi-flow-auto/settings', patchOiFlowAutoSettings);
-router.post('/oi-flow-auto/close', postOiFlowAutoClose);
 
 module.exports = router;

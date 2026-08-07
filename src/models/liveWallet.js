@@ -138,23 +138,6 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownSeconds: { type: Number, default: 90 },
       perTradeCost: { type: Number, default: 0 },
     },
-    /** OI Flow Tracker multi-TF ΔOI scalp (separate wallet). */
-    oiFlowAutoEngineSettings: {
-      enabled: { type: Boolean, default: true },
-      symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 10 },
-      tradeFromTime: { type: String, default: '09:30' },
-      tradeToTime: { type: String, default: '13:00' },
-      eodExitTime: { type: String, default: '15:15' },
-      targetPoints: { type: Number, default: 8 },
-      stopLossPoints: { type: Number, default: 10 },
-      proximityPoints: { type: Number, default: 20 },
-      minOiRatio: { type: Number, default: 1.2 },
-      minAbsChngInDir: { type: Number, default: 25000 },
-      cooldownSeconds: { type: Number, default: 90 },
-      atmShiftSkipMinutes: { type: Number, default: 2 },
-      perTradeCost: { type: Number, default: 0 },
-    },
     strategy3OrHistory: {
       type: [{ dateKey: String, orIv: Number }],
       default: [],
