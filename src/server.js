@@ -9,7 +9,6 @@ const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence')
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 const { initRealtime } = require('./services/realtimeSocket');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
-const strategySevenPutBuyEngine = require('./services/livePutBuyEngine');
 const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
 const strategyTwelveMultiPaperEngine = require('./services/liveMorningOiMultiEngine');
 const strategyFourteenPaperEngine = require('./services/liveEodOiWallsEngine');
@@ -26,7 +25,6 @@ async function bootBackgroundServices() {
   try {
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
     await s6.reconcileOpenTrades();
-    await require('./services/livePutBuyEngine').reconcileOpenTrades();
     await require('./services/liveMorningOiEngine').reconcileOpenTrades();
     await require('./services/liveMorningOiMultiEngine').reconcileOpenTrades();
     await require('./services/liveEodOiWallsEngine').reconcileOpenTrades();
@@ -82,17 +80,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategySevenPutBuyEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('Put & Call buy paper-live started (strategy-3)');
-    } else {
-      console.warn('Put & Call buy paper-live boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('Put & Call buy paper-live boot failed:', err.message);
-  }
-
-  try {
     const boot = await strategyTwelvePaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('OI Wall Entry paper-live started (strategy-9)');
@@ -129,8 +116,7 @@ async function bootBackgroundServices() {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
     if (
-      resume.strategy3?.resumed
-      || resume.strategy6?.resumed
+      resume.strategy6?.resumed
       || resume.strategy12?.resumed
       || resume.strategy12Multi?.resumed
       || resume.strategy14?.resumed

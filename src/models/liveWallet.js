@@ -27,21 +27,6 @@ const liveWalletSchema = new mongoose.Schema(
       ],
       default: [],
     },
-    strategy3EngineSettings: {
-      symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 1 },
-      perTradeCost: { type: Number, default: 100 },
-      ivLookbackDays: { type: Number, default: 20 },
-      ivSpikeMultiplier: { type: Number, default: 1.15 },
-      maxSpikeMultiplier: { type: Number, default: 2.5 },
-      minOrHistoryDays: { type: Number, default: 3 },
-      entryToTime: { type: String, default: '12:00' },
-      spikeMode: { type: String, default: 'either' },
-      orPercentileMin: { type: Number, default: 65 },
-      targetVolCrushPct: { type: Number, default: null },
-      stopVolExpandPct: { type: Number, default: null },
-      ivExpandStopMult: { type: Number, default: 1.5 },
-    },
     strategy4EngineSettings: {
       symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 1 },
@@ -137,10 +122,6 @@ const liveWalletSchema = new mongoose.Schema(
       minOiRatio: { type: Number, default: 1.2 },
       cooldownSeconds: { type: Number, default: 90 },
       perTradeCost: { type: Number, default: 0 },
-    },
-    strategy3OrHistory: {
-      type: [{ dateKey: String, orIv: Number }],
-      default: [],
     },
   },
   { timestamps: true }

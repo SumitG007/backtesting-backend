@@ -12,8 +12,6 @@
     "research:multi": "node scripts/runMultiScenarioResearch.js",
     "research:scalping": "node scripts/runScalpingResearch.js",
     "scenarios:s4": "node scripts/runStrategy4MultiYear.js",
-    "scenarios:s3": "node scripts/runStrategy3MultiYear.js",
-    "analyze:s3": "node scripts/runStrategy3ProbabilityAnalysis.js",
     "cache:candles": "node scripts/saveCandleCache.js",
     "mongo:free-space": "node scripts/freeMongoStorage.js",
     "test": "echo \"Error: no test specified\" && exit 1"

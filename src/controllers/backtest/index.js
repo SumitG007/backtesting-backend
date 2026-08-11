@@ -10,13 +10,6 @@ const {
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
 } = require('./intradayTierHandlers');
-const {
-  runStrategySeven,
-  getStrategySevenRunTrades,
-  getStrategySevenValidation,
-  postStrategySevenValidation,
-  postStrategySevenValidationYear,
-} = require('./strategySevenHandlers');
 
 module.exports = {
   health,
@@ -27,9 +20,4 @@ module.exports = {
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
-  runStrategySeven,
-  getStrategySevenRunTrades,
-  getStrategySevenValidation,
-  postStrategySevenValidation,
-  postStrategySevenValidationYear,
 };

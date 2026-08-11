@@ -286,14 +286,8 @@ function normalizeSettings(settings = {}) {
     symbol: String(settings.symbol || 'NIFTY').toUpperCase(),
     lotCount,
     tradeFromTime: String(settings.tradeFromTime || settings.oiScanFromTime || '09:20'),
-    tradeToTime: (() => {
-      const raw = String(settings.tradeToTime || '').trim();
-      if (raw === '15:10' || raw === '15:00') return '14:00';
-      if (raw && raw !== '10:30' && raw !== '11:30') return raw;
-      const legacy = String(settings.lastEntryTime || '').trim();
-      if (legacy && legacy !== '10:30' && legacy !== '11:30' && legacy !== '15:10') return legacy;
-      return '14:00';
-    })(),
+    // Fixed last entry: no new OI Wall Entry fills after 14:00 IST.
+    tradeToTime: '14:00',
     eodExitTime: String(settings.eodExitTime || '15:20'),
     targetPoints,
     stopLossPoints,
@@ -3207,20 +3201,9 @@ async function bootEngineFromDb({ symbol = 'NIFTY' } = {}) {
     if (!migrated.tradeFromTime) {
       migrated.tradeFromTime = migrated.oiScanFromTime === '09:15' ? '09:20' : (migrated.oiScanFromTime || '09:20');
     }
-    if (!migrated.tradeToTime) {
-      const oldLast = String(migrated.lastEntryTime || '');
-      migrated.tradeToTime =
-        oldLast === '10:30' || oldLast === '11:30' || oldLast === '15:10' || !oldLast
-          ? '14:00'
-          : oldLast;
-    } else if (
-      migrated.tradeToTime === '10:30' ||
-      migrated.tradeToTime === '11:30' ||
-      migrated.tradeToTime === '15:10' ||
-      migrated.tradeToTime === '15:00'
-    ) {
-      migrated.tradeToTime = '14:00';
-    }
+    // Always last-entry 14:00 IST (ignore older persisted windows).
+    migrated.tradeToTime = '14:00';
+    delete migrated.lastEntryTime;
     if (migrated.targetPoints == null) {
       migrated.targetPoints =
         migrated.targetPct == null || Number(migrated.targetPct) === 15
