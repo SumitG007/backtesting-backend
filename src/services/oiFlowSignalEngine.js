@@ -110,10 +110,11 @@ function flowAt(ctx, minute) {
   };
 }
 
-function decideRaw(ctx, minute) {
+function decideRaw(ctx, minute, opts = {}) {
   const cur = rowAt(ctx, minute);
   if (!cur) return null;
 
+  const minPutOi = Math.max(10000, Number(opts.minPutOi) || MIN_PUT_OI);
   const flow = flowAt(ctx, minute);
   const base = {
     time: cur.time,
@@ -128,6 +129,7 @@ function decideRaw(ctx, minute) {
     putChgL: fmtLakh(flow.putChg),
     callAct: flow.callAct,
     putAct: flow.putAct,
+    minPutOi,
   };
 
   if (minute < TRADE_FROM || minute > TRADE_TO) {
@@ -136,27 +138,29 @@ function decideRaw(ctx, minute) {
 
   const putChg = Number(flow.putChg) || 0;
 
-  if (flow.putAct === 'Put buying' && putChg >= MIN_PUT_OI) {
+  if (flow.putAct === 'Put buying' && putChg >= minPutOi) {
     return {
       ...base,
       decision: 'PUT BUY',
-      reason: `Put buying ≥ ${MIN_PUT_OI} (got ${putChg})`,
+      matchedRule: `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`,
+      reason: `Put buying ≥ ${minPutOi} (got ${putChg})`,
     };
   }
 
-  if (flow.putAct === 'Put writing' && putChg >= MIN_PUT_OI) {
+  if (flow.putAct === 'Put writing' && putChg >= minPutOi) {
     return {
       ...base,
       decision: 'CALL BUY',
-      reason: `Put writing ≥ ${MIN_PUT_OI} (got ${putChg})`,
+      matchedRule: `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`,
+      reason: `Put writing ≥ ${minPutOi} (got ${putChg})`,
     };
   }
 
   let reason = 'no big put buying/writing';
-  if (flow.putAct === 'Put buying' && putChg < MIN_PUT_OI) {
-    reason = `Put buying but ΔOI ${putChg} < ${MIN_PUT_OI}`;
-  } else if (flow.putAct === 'Put writing' && putChg < MIN_PUT_OI) {
-    reason = `Put writing but ΔOI ${putChg} < ${MIN_PUT_OI}`;
+  if (flow.putAct === 'Put buying' && putChg < minPutOi) {
+    reason = `Put buying but ΔOI ${putChg} < ${minPutOi}`;
+  } else if (flow.putAct === 'Put writing' && putChg < minPutOi) {
+    reason = `Put writing but ΔOI ${putChg} < ${minPutOi}`;
   } else if (flow.putAct !== 'Put flat') {
     reason = `Put act ${flow.putAct}`;
   }

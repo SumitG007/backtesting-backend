@@ -55,6 +55,8 @@ const engineState = {
   lastExitAtMs: 0,
   lastSignalMinutes: null,
   lastSignalKey: null,
+  /** After entry/exit, stay false until decision returns to WAIT (fresh setup). */
+  entryArmed: true,
   lastDecision: null,
   lastError: null,
   lastEntryDebug: null,
@@ -287,6 +289,78 @@ function pickExitSpot(mark, trade, futFallback = null) {
   return null;
 }
 
+function tradeQty(trade) {
+  const q = Number(trade?.qty);
+  if (Number.isFinite(q) && q > 0) return q;
+  const lots = Number(trade?.lots) || 0;
+  const lotSize = Number(trade?.lotSize) || 0;
+  const product = lots * lotSize;
+  return product > 0 ? product : 0;
+}
+
+function computeOpenMtm(trade, optionLtp) {
+  const entry = Number(trade?.entryPremium);
+  const mark = Number(optionLtp);
+  const qty = tradeQty(trade);
+  if (!Number.isFinite(entry) || !Number.isFinite(mark) || mark <= 0 || qty <= 0) return null;
+  return Number((mark - entry) * qty - (Number(trade.charges) || 0));
+}
+
+function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
+  if (!Number.isFinite(nextMark?.optionLtp) || nextMark.optionLtp <= 0) return false;
+  if (nextMark.source === 'marketfeed') return true;
+  if (!prevMark || !Number.isFinite(prevMark.optionLtp) || prevMark.optionLtp <= 0) return true;
+  // Never overwrite a recent marketfeed mark with chain/none (causes MTM flicker).
+  if (String(prevMark.source || '').startsWith('marketfeed')) {
+    const ageMs = prevAt ? Date.now() - new Date(prevAt).getTime() : Infinity;
+    if (ageMs < 45000) return false;
+  }
+  return nextMark.source === 'chain';
+}
+
+async function resolveDisplayMark(trade, liveMark) {
+  if (liveMark?.source === 'marketfeed' && Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0) {
+    return liveMark;
+  }
+  const prev = trade.openPositionMark;
+  if (
+    prev &&
+    String(prev.source || '').startsWith('marketfeed') &&
+    Number.isFinite(prev.optionLtp) &&
+    prev.optionLtp > 0
+  ) {
+    const ageMs = trade.openPositionMarkAt
+      ? Date.now() - new Date(trade.openPositionMarkAt).getTime()
+      : Infinity;
+    if (ageMs < 45000) {
+      return {
+        optionLtp: Number(prev.optionLtp),
+        spot: Number.isFinite(liveMark?.spot) ? liveMark.spot : prev.spot,
+        source: 'marketfeed_hold',
+        securityId: liveMark?.securityId || prev.securityId,
+      };
+    }
+  }
+  // Prefer last marketfeed tick in the 5m buffer over a fresh chain print.
+  try {
+    const ticks = await loadRecentTicks(trade._id);
+    for (let i = ticks.length - 1; i >= 0; i -= 1) {
+      const t = ticks[i];
+      if (String(t.source || '').startsWith('marketfeed') && Number(t.ltp) > 0) {
+        return {
+          optionLtp: Number(t.ltp),
+          spot: t.spot,
+          source: 'marketfeed_buffer',
+          securityId: t.securityId || liveMark?.securityId,
+        };
+      }
+    }
+  } catch {
+    /* optional */
+  }
+  return liveMark;
+}
+
 async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = null, exitAt = null }) {
   if (engineState.closingTrade) return null;
   engineState.closingTrade = true;
@@ -299,7 +373,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
       0.05,
       Number(exitPremium) || Number(resolved?.optionLtp) || Number(trade.entryPremium) || 0.05,
     );
-    const qty = Number(trade.qty) || 0;
+    const qty = tradeQty(trade) || Number(trade.qty) || 0;
     const invested = (Number(trade.entryPremium) || 0) * qty;
     const charges = Math.max(0, Number(trade.charges) || 0);
     const finalValue = safeExit * qty;
@@ -339,6 +413,8 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
     await recalcWalletFromTrades();
     engineState.openTradeId = null;
     engineState.lastExitAtMs = Date.now();
+    // Do not re-enter on the same ongoing signal — wait until decision goes WAIT.
+    engineState.entryArmed = false;
     return trade;
   } finally {
     engineState.closingTrade = false;
@@ -374,17 +450,32 @@ async function checkOpenTrade() {
   engineState.openTradeId = String(open._id);
 
   const clock = getIstClock(new Date());
-  const mark = await resolveOptionLtp(open);
-  if (Number.isFinite(mark.optionLtp) && mark.optionLtp > 0) {
+  const liveMark = await resolveOptionLtp(open);
+  const mark = await resolveDisplayMark(open, liveMark);
+
+  if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
+    const mtm = computeOpenMtm(open, mark.optionLtp);
     open.openPositionMark = {
-      optionLtp: Number(mark.optionLtp.toFixed(2)),
-      spot: Number.isFinite(mark.spot) && mark.spot > 0 ? mark.spot : null,
+      optionLtp: Number(Number(mark.optionLtp).toFixed(2)),
+      spot: Number.isFinite(mark.spot) && mark.spot > 0 ? Number(Number(mark.spot).toFixed(2)) : null,
       source: mark.source,
       at: new Date().toISOString(),
+      mtm: mtm != null ? Number(mtm.toFixed(2)) : null,
+      qty: tradeQty(open),
+      pts: Number.isFinite(Number(open.entryPremium))
+        ? Number((Number(mark.optionLtp) - Number(open.entryPremium)).toFixed(2))
+        : null,
     };
     open.openPositionMarkAt = new Date();
     await open.save();
-    await saveOptionTick(open, mark);
+  }
+  // Only persist ticks from live resolve (not held stale display) when fresh feed/chain.
+  if (
+    Number.isFinite(liveMark.optionLtp) &&
+    liveMark.optionLtp > 0 &&
+    (liveMark.source === 'marketfeed' || liveMark.source === 'chain')
+  ) {
+    await saveOptionTick(open, liveMark);
   }
 
   // Missed SL/TP from 5m buffer (fast candles between polls)
@@ -415,6 +506,7 @@ async function checkOpenTrade() {
 
   const optionLtp = Number(mark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
+  // Avoid acting on chain prints early; prefer marketfeed / held feed.
   if (mark.source === 'chain' && heldMs < MIN_HOLD_MS * 2) return;
 
   if (open.stopLossPremium != null && optionLtp <= Number(open.stopLossPremium) - EXIT_EPS) {
@@ -456,9 +548,16 @@ async function readLatestSignal() {
   if (rows.length < 2) return null;
   const ctx = buildIndex(rows);
   const last = rows[rows.length - 1];
-  const decision = decideRaw(ctx, last.minutes);
+  const decision = decideRaw(ctx, last.minutes, {
+    minPutOi: engineState.settings.minPutOi,
+  });
   engineState.lastDecision = decision;
-  if (!decision || (decision.decision !== 'CALL BUY' && decision.decision !== 'PUT BUY')) {
+  // Re-arm only after signal clears (WAIT) — next BUY is a fresh setup.
+  if (!decision || decision.decision === 'WAIT') {
+    engineState.entryArmed = true;
+    return null;
+  }
+  if (decision.decision !== 'CALL BUY' && decision.decision !== 'PUT BUY') {
     return null;
   }
   return decision;
@@ -467,6 +566,14 @@ async function readLatestSignal() {
 async function tryEnter(signal) {
   if (!engineState.settings.enabled) return;
   if (!signal || engineState.openTradeId || engineState.enteringTrade || engineState.closingTrade) {
+    return;
+  }
+  if (!engineState.entryArmed) {
+    engineState.lastEntryDebug = {
+      skip: 'waiting_rearm',
+      hint: 'need WAIT then new signal after prior entry/exit',
+      lastSignalMinutes: engineState.lastSignalMinutes,
+    };
     return;
   }
 
@@ -479,6 +586,17 @@ async function tryEnter(signal) {
   const signalKey = `${clock.dateKey}:${signal.minutes}:${signal.decision}`;
   if (engineState.lastSignalKey === signalKey) {
     engineState.lastEntryDebug = { skip: 'same_signal', signalKey };
+    return;
+  }
+  if (
+    engineState.lastSignalMinutes != null &&
+    Number(signal.minutes) <= Number(engineState.lastSignalMinutes)
+  ) {
+    engineState.lastEntryDebug = {
+      skip: 'stale_signal_bar',
+      signalMinutes: signal.minutes,
+      last: engineState.lastSignalMinutes,
+    };
     return;
   }
 
@@ -563,8 +681,49 @@ async function tryEnter(signal) {
     const charges = Math.max(0, Number(engineState.settings.perTradeCost) || 0);
     const targetPoints = Number(engineState.settings.targetPoints) || 10;
     const stopLossPoints = Number(engineState.settings.stopLossPoints) || 8;
+    const maxHoldMinutes = Number(engineState.settings.maxHoldMinutes) || 15;
+    const minPutOi = Number(engineState.settings.minPutOi) || 80000;
     const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = Math.max(0.05, entryPremium - stopLossPoints);
+
+    const signalSnapshot = {
+      decision: signal.decision,
+      matchedRule:
+        signal.matchedRule ||
+        (signal.decision === 'PUT BUY'
+          ? `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`
+          : `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`),
+      rules: [
+        `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`,
+        `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`,
+      ],
+      reason: signal.reason || null,
+      time: signal.time,
+      minutes: signal.minutes,
+      spot: signal.spot,
+      priceDir: signal.priceDir,
+      spotChg1: signal.spotChg1,
+      spotChg5: signal.spotChg5,
+      putAct: signal.putAct,
+      callAct: signal.callAct,
+      putChg: signal.putChg,
+      putChgL: signal.putChgL,
+      callChg: signal.callChg,
+      callChgL: signal.callChgL,
+      minPutOi,
+      targetPoints,
+      stopLossPoints,
+      maxHoldMinutes,
+      lots,
+      lotSize,
+      qty,
+      optionType,
+      strike,
+      expiry,
+      entryPremium: Number(entryPremium.toFixed(2)),
+      entrySource,
+      tradeWindow: `${engineState.settings.tradeFromTime}–${engineState.settings.tradeToTime}`,
+    };
 
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
@@ -591,11 +750,23 @@ async function tryEnter(signal) {
       capitalLocked: Number((entryPremium * qty + charges).toFixed(2)),
       charges,
       notes: `entryMark=${entrySource}; signal=${signal.time}`,
+      signalSnapshot,
+      openPositionMark: {
+        optionLtp: Number(entryPremium.toFixed(2)),
+        spot: Number.isFinite(entrySpot) ? Number(entrySpot.toFixed(2)) : null,
+        source: entrySource,
+        at: new Date().toISOString(),
+        mtm: 0,
+        qty,
+        pts: 0,
+      },
+      openPositionMarkAt: new Date(),
     });
 
     engineState.openTradeId = String(tradeDoc._id);
     engineState.lastSignalKey = signalKey;
     engineState.lastSignalMinutes = signal.minutes;
+    engineState.entryArmed = false;
     engineState.lastEntryDebug = {
       ok: true,
       tradeId: engineState.openTradeId,
@@ -633,9 +804,42 @@ async function tickOnce() {
   }
 }
 
+async function hydrateEntryGateFromDb() {
+  const clock = getIstClock(new Date());
+  const open = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    status: 'OPEN',
+    exitTime: null,
+  })
+    .sort({ entryTime: -1 })
+    .lean();
+  if (open) {
+    engineState.openTradeId = String(open._id);
+    engineState.entryArmed = false;
+    const snapMin = Number(open.signalSnapshot?.minutes);
+    if (Number.isFinite(snapMin)) engineState.lastSignalMinutes = snapMin;
+    return;
+  }
+  const last = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: clock.dateKey,
+  })
+    .sort({ entryTime: -1 })
+    .lean();
+  if (last) {
+    engineState.entryArmed = false; // require WAIT before next entry today
+    const snapMin = Number(last.signalSnapshot?.minutes);
+    if (Number.isFinite(snapMin)) engineState.lastSignalMinutes = snapMin;
+    if (last.exitTime) engineState.lastExitAtMs = new Date(last.exitTime).getTime();
+  } else {
+    engineState.entryArmed = true;
+  }
+}
+
 async function ensureEngineRunning() {
   if (engineState.running) return { ok: true, already: true };
   await loadSettingsFromDb();
+  await hydrateEntryGateFromDb();
   engineState.running = true;
   engineState.startedAt = new Date().toISOString();
   engineState.loopTimer = setInterval(() => {
@@ -755,8 +959,12 @@ async function getBookSummary() {
   let openMtm = 0;
   for (const t of open) {
     const markLtp = Number(t.openPositionMark?.optionLtp);
-    if (Number.isFinite(markLtp) && Number.isFinite(t.entryPremium)) {
-      openMtm += (markLtp - Number(t.entryPremium)) * Number(t.qty) - (Number(t.charges) || 0);
+    const mtmStored = Number(t.openPositionMark?.mtm);
+    if (Number.isFinite(mtmStored)) {
+      openMtm += mtmStored;
+    } else if (Number.isFinite(markLtp) && Number.isFinite(t.entryPremium)) {
+      const m = computeOpenMtm(t, markLtp);
+      if (m != null) openMtm += m;
     }
   }
 
@@ -765,6 +973,7 @@ async function getBookSummary() {
     enabled: Boolean(engineState.settings.enabled),
     strategyLabel: 'Put writing → CALL · Put buying → PUT',
     decision: engineState.lastDecision,
+    entryArmed: Boolean(engineState.entryArmed),
     wallet: {
       walletKey: WALLET_KEY,
       balance: wallet.balance,

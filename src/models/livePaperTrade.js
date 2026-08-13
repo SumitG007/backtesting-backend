@@ -52,6 +52,8 @@ const livePaperTradeSchema = new mongoose.Schema(
     /** Latest open MTM snapshot (refreshed ~every 6s while position is open). */
     openPositionMark: { type: mongoose.Schema.Types.Mixed, default: null },
     openPositionMarkAt: { type: Date, default: null },
+    /** OI Flow (and similar): matched rules / OI acts at entry for history eye popup. */
+    signalSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );
