@@ -1,0 +1,5913 @@
+{
+  "generatedAt": "2026-08-13T06:22:48.862Z",
+  "days": {
+    "2026-08-12": {
+      "label": "YDAY (full)",
+      "rows": 376,
+      "from": "09:15",
+      "to": "15:30",
+      "results": [
+        {
+          "name": "C1_bigChngDir_align_1500k",
+          "n": 1,
+          "hit15": 100,
+          "hit30": 100,
+          "hit60": 100,
+          "avg15": 33.15,
+          "avg30": 35.55,
+          "avg60": 45.9,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 0,
+            "pending": 0
+          },
+          "nonBadPct": 100,
+          "sample": [
+            {
+              "time": "09:48",
+              "decision": "PUT BUY",
+              "s15": 33.14999999999782,
+              "s30": 35.54999999999927,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_800k",
+          "n": 2,
+          "hit15": 100,
+          "hit30": 100,
+          "hit60": 100,
+          "avg15": 29.7,
+          "avg30": 31.05,
+          "avg60": 47.75,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 0,
+            "pending": 0
+          },
+          "nonBadPct": 100,
+          "sample": [
+            {
+              "time": "09:48",
+              "decision": "PUT BUY",
+              "s15": 33.14999999999782,
+              "s30": 35.54999999999927,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:59",
+              "decision": "PUT BUY",
+              "s15": 26.25,
+              "s30": 26.549999999999272,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_400k",
+          "n": 7,
+          "hit15": 42.9,
+          "hit30": 57.1,
+          "hit60": 57.1,
+          "avg15": 5.16,
+          "avg30": 22.89,
+          "avg60": 29.08,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 57.1,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:13",
+              "decision": "CALL BUY",
+              "s15": 17.400000000001455,
+              "s30": 48.150000000001455,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "F5_ignoreNoise_bigOnly_500k",
+          "n": 6,
+          "hit15": 50,
+          "hit30": 66.7,
+          "hit60": 66.7,
+          "avg15": 7.36,
+          "avg30": 20.14,
+          "avg60": 38.92,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 12.700000000000728,
+              "s30": 4.400000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B1_call_writing_PUT",
+          "n": 8,
+          "hit15": 75,
+          "hit30": 62.5,
+          "hit60": 62.5,
+          "avg15": 6.63,
+          "avg30": 19.17,
+          "avg60": 25.28,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 62.5,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": 22.19999999999709,
+              "s30": 66.19999999999709,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:02",
+              "decision": "PUT BUY",
+              "s15": 9.049999999999272,
+              "s30": -8.200000000000728,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:39",
+              "decision": "PUT BUY",
+              "s15": 26.700000000000728,
+              "s30": 84.29999999999927,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:09",
+              "decision": "PUT BUY",
+              "s15": -16.75,
+              "s30": 10.650000000001455,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:39",
+              "decision": "PUT BUY",
+              "s15": 7.75,
+              "s30": 14.299999999999272,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:11",
+              "decision": "PUT BUY",
+              "s15": -4.349999999998545,
+              "s30": -19.349999999998545,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:46",
+              "decision": "PUT BUY",
+              "s15": 4.849999999998545,
+              "s30": -4.350000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:45",
+              "decision": "PUT BUY",
+              "s15": 3.5500000000029104,
+              "s30": 9.80000000000291,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "F1_write_plus_spotDown_PUT",
+          "n": 8,
+          "hit15": 75,
+          "hit30": 62.5,
+          "hit60": 62.5,
+          "avg15": 6.73,
+          "avg30": 18.88,
+          "avg60": 22.22,
+          "buckets": {
+            "Excellent": 4,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 62.5,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": 26.200000000000728,
+              "s30": 64.45000000000073,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:02",
+              "decision": "PUT BUY",
+              "s15": 9.049999999999272,
+              "s30": -8.200000000000728,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:39",
+              "decision": "PUT BUY",
+              "s15": 26.700000000000728,
+              "s30": 84.29999999999927,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:13",
+              "decision": "PUT BUY",
+              "s15": 0.6000000000021828,
+              "s30": 15.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:51",
+              "decision": "PUT BUY",
+              "s15": 10.19999999999709,
+              "s30": 11.94999999999709,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:24",
+              "decision": "PUT BUY",
+              "s15": -13.150000000001455,
+              "s30": -9.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:58",
+              "decision": "PUT BUY",
+              "s15": -9.349999999998545,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:45",
+              "decision": "PUT BUY",
+              "s15": 3.5500000000029104,
+              "s30": 9.80000000000291,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B7_sellers_mask_PUT",
+          "n": 7,
+          "hit15": 85.7,
+          "hit30": 57.1,
+          "hit60": 71.4,
+          "avg15": 16.82,
+          "avg30": 17.86,
+          "avg60": 23.87,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 71.4,
+          "sample": [
+            {
+              "time": "09:35",
+              "decision": "PUT BUY",
+              "s15": 39.20000000000073,
+              "s30": 76.95000000000073,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:05",
+              "decision": "PUT BUY",
+              "s15": -8.350000000002183,
+              "s30": -30.5,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:48",
+              "decision": "PUT BUY",
+              "s15": 55.900000000001455,
+              "s30": 58.35000000000218,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:28",
+              "decision": "PUT BUY",
+              "s15": 14.649999999997817,
+              "s30": 16.299999999999272,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:59",
+              "decision": "PUT BUY",
+              "s15": 7.950000000000728,
+              "s30": -1.5,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:46",
+              "decision": "PUT BUY",
+              "s15": 4.849999999998545,
+              "s30": -4.350000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:45",
+              "decision": "PUT BUY",
+              "s15": 3.5500000000029104,
+              "s30": 9.80000000000291,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_200k",
+          "n": 9,
+          "hit15": 55.6,
+          "hit30": 55.6,
+          "hit60": 55.6,
+          "avg15": 2.42,
+          "avg30": 18.72,
+          "avg60": 23.27,
+          "buckets": {
+            "Excellent": 4,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 4,
+            "pending": 0
+          },
+          "nonBadPct": 55.6,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:37",
+              "decision": "PUT BUY",
+              "s15": 8.700000000000728,
+              "s30": 15.950000000000728,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:10",
+              "decision": "PUT BUY",
+              "s15": -1.8500000000021828,
+              "s30": -16.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:42",
+              "decision": "CALL BUY",
+              "s15": -26.049999999999272,
+              "s30": -17.349999999998545,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:17",
+              "decision": "CALL BUY",
+              "s15": 1.0499999999992724,
+              "s30": -5.950000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_400k",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": 3.12,
+          "avg30": 18.67,
+          "avg60": 19.45,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_800k",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": 3.12,
+          "avg30": 18.67,
+          "avg60": 19.45,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_800k",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": 3.12,
+          "avg30": 18.67,
+          "avg60": 19.45,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "F2_putBuy_plus_spotDown_PUT",
+          "n": 6,
+          "hit15": 50,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": 9.07,
+          "avg30": 15.45,
+          "avg60": 24.42,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": 26.200000000000728,
+              "s30": 64.45000000000073,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:16",
+              "decision": "PUT BUY",
+              "s15": -14.450000000000728,
+              "s30": -7.75,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:46",
+              "decision": "PUT BUY",
+              "s15": 54.5,
+              "s30": 61.14999999999782,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:52",
+              "decision": "PUT BUY",
+              "s15": 7.25,
+              "s30": 9.849999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:23",
+              "decision": "PUT BUY",
+              "s15": -11.25,
+              "s30": -11.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B5_dual_sellers_PUT",
+          "n": 8,
+          "hit15": 62.5,
+          "hit30": 50,
+          "hit60": 62.5,
+          "avg15": 3.96,
+          "avg30": 15.52,
+          "avg60": 18.77,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 62.5,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": 22.19999999999709,
+              "s30": 66.19999999999709,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:03",
+              "decision": "PUT BUY",
+              "s15": 2.400000000001455,
+              "s30": -17.099999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:39",
+              "decision": "PUT BUY",
+              "s15": 26.700000000000728,
+              "s30": 84.29999999999927,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:09",
+              "decision": "PUT BUY",
+              "s15": -16.75,
+              "s30": 10.650000000001455,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:46",
+              "decision": "PUT BUY",
+              "s15": 14.599999999998545,
+              "s30": 19.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:20",
+              "decision": "PUT BUY",
+              "s15": -11.700000000000728,
+              "s30": -5.30000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:50",
+              "decision": "PUT BUY",
+              "s15": 0.4000000000014552,
+              "s30": -14.049999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:02",
+              "decision": "PUT BUY",
+              "s15": -6.150000000001455,
+              "s30": -20.25,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B2_put_buying_PUT",
+          "n": 9,
+          "hit15": 55.6,
+          "hit30": 55.6,
+          "hit60": 55.6,
+          "avg15": 6.27,
+          "avg30": 16.08,
+          "avg60": 13.76,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 4,
+            "pending": 0
+          },
+          "nonBadPct": 55.6,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 13.600000000002183,
+              "s30": -0.8499999999985448,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:36",
+              "decision": "PUT BUY",
+              "s15": 36.45000000000073,
+              "s30": 98.05000000000291,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:09",
+              "decision": "PUT BUY",
+              "s15": -16.75,
+              "s30": 10.650000000001455,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:46",
+              "decision": "PUT BUY",
+              "s15": 14.599999999998545,
+              "s30": 19.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:20",
+              "decision": "PUT BUY",
+              "s15": -11.700000000000728,
+              "s30": -5.30000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:33",
+              "decision": "PUT BUY",
+              "s15": 6.599999999998545,
+              "s30": 11.44999999999709,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_200k",
+          "n": 10,
+          "hit15": 30,
+          "hit30": 70,
+          "hit60": 60,
+          "avg15": -0.67,
+          "avg30": 12.28,
+          "avg60": 10.25,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 5,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 70,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": 29.400000000001455,
+              "s30": 79.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -12.700000000000728,
+              "s30": -4.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:33",
+              "decision": "CALL BUY",
+              "s15": -5.150000000001455,
+              "s30": -16.850000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:03",
+              "decision": "CALL BUY",
+              "s15": -0.5,
+              "s30": 3.600000000002183,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:35",
+              "decision": "PUT BUY",
+              "s15": 6.399999999997817,
+              "s30": 6.799999999999272,
+              "bucket": "Good"
+            },
+            {
+              "time": "13:17",
+              "decision": "PUT BUY",
+              "s15": -1.0499999999992724,
+              "s30": 5.950000000000728,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "A3_15_plus_5",
+          "n": 8,
+          "hit15": 62.5,
+          "hit30": 37.5,
+          "hit60": 62.5,
+          "avg15": 11.44,
+          "avg30": 5.86,
+          "avg60": 8.51,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 2,
+            "Ok": 1,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 62.5,
+          "sample": [
+            {
+              "time": "09:45",
+              "decision": "PUT BUY",
+              "s15": 50.349999999998545,
+              "s30": 63.04999999999927,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:16",
+              "decision": "PUT BUY",
+              "s15": -14.450000000000728,
+              "s30": -7.75,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:47",
+              "decision": "PUT BUY",
+              "s15": 58.79999999999927,
+              "s30": 63.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:21",
+              "decision": "CALL BUY",
+              "s15": -13.5,
+              "s30": -21.700000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:00",
+              "decision": "PUT BUY",
+              "s15": 11.25,
+              "s30": -2.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:30",
+              "decision": "CALL BUY",
+              "s15": 3.6999999999970896,
+              "s30": -4.850000000002183,
+              "bucket": "Good"
+            },
+            {
+              "time": "13:15",
+              "decision": "CALL BUY",
+              "s15": 6.549999999999272,
+              "s30": 1.4000000000014552,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:05",
+              "decision": "PUT BUY",
+              "s15": -11.200000000000728,
+              "s30": -44.29999999999927,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_1500k",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 40,
+          "hit60": 40,
+          "avg15": 13.92,
+          "avg30": 3.56,
+          "avg60": -2.05,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:46",
+              "decision": "PUT BUY",
+              "s15": 44,
+              "s30": 57.60000000000218,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:19",
+              "decision": "CALL BUY",
+              "s15": 21.399999999997817,
+              "s30": -22.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_1500k",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 40,
+          "hit60": 40,
+          "avg15": 13.92,
+          "avg30": 3.56,
+          "avg60": -2.05,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:46",
+              "decision": "PUT BUY",
+              "s15": 44,
+              "s30": 57.60000000000218,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:19",
+              "decision": "CALL BUY",
+              "s15": 21.399999999997817,
+              "s30": -22.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:00",
+              "decision": "PUT BUY",
+              "s15": 17.049999999999272,
+              "s30": 22.900000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:56",
+              "decision": "PUT BUY",
+              "s15": -7.80000000000291,
+              "s30": -23.450000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "F3_putWrite_plus_spotUp_CALL",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 60,
+          "hit60": 40,
+          "avg15": 6.38,
+          "avg30": 1.37,
+          "avg60": -3.95,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "10:14",
+              "decision": "CALL BUY",
+              "s15": 10.349999999998545,
+              "s30": 13.049999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:10",
+              "decision": "CALL BUY",
+              "s15": -0.6499999999978172,
+              "s30": -18.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:45",
+              "decision": "CALL BUY",
+              "s15": -15,
+              "s30": -26.25,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:18",
+              "decision": "CALL BUY",
+              "s15": 4.100000000002183,
+              "s30": 6.75,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "14:20",
+              "decision": "CALL BUY",
+              "s15": 33.099999999998545,
+              "s30": 32.099999999998545,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "B6_dual_buyers_CALL",
+          "n": 4,
+          "hit15": 50,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": 6.45,
+          "avg30": 0.99,
+          "avg60": 3.14,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "10:17",
+              "decision": "CALL BUY",
+              "s15": 17.25,
+              "s30": 3.849999999998545,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:23",
+              "decision": "CALL BUY",
+              "s15": -16.049999999999272,
+              "s30": -21.69999999999709,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:34",
+              "decision": "CALL BUY",
+              "s15": -8.5,
+              "s30": -10.299999999999272,
+              "bucket": "Ok"
+            },
+            {
+              "time": "14:20",
+              "decision": "CALL BUY",
+              "s15": 33.099999999998545,
+              "s30": 32.099999999998545,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "A5_relaxed_15_5_oiAct",
+          "n": 9,
+          "hit15": 33.3,
+          "hit30": 33.3,
+          "hit60": 55.6,
+          "avg15": 2.37,
+          "avg30": 3.67,
+          "avg60": 6.47,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 5,
+            "pending": 0
+          },
+          "nonBadPct": 44.4,
+          "sample": [
+            {
+              "time": "09:39",
+              "decision": "PUT BUY",
+              "s15": 15.150000000001455,
+              "s30": 65.10000000000218,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:16",
+              "decision": "PUT BUY",
+              "s15": -14.450000000000728,
+              "s30": -7.75,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:46",
+              "decision": "PUT BUY",
+              "s15": 54.5,
+              "s30": 61.14999999999782,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:19",
+              "decision": "CALL BUY",
+              "s15": -9.700000000000728,
+              "s30": -10.650000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:50",
+              "decision": "PUT BUY",
+              "s15": 18.75,
+              "s30": 13.700000000000728,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:23",
+              "decision": "PUT BUY",
+              "s15": -11.25,
+              "s30": -11.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:55",
+              "decision": "PUT BUY",
+              "s15": -5.5,
+              "s30": -20.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:36",
+              "decision": "CALL BUY",
+              "s15": -8.75,
+              "s30": -17.200000000000728,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_200k",
+          "n": 9,
+          "hit15": 77.8,
+          "hit30": 44.4,
+          "hit60": 55.6,
+          "avg15": 4.14,
+          "avg30": -0.57,
+          "avg60": 7.35,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 4,
+            "pending": 0
+          },
+          "nonBadPct": 55.6,
+          "sample": [
+            {
+              "time": "09:33",
+              "decision": "PUT BUY",
+              "s15": 31.799999999999272,
+              "s30": 64.94999999999709,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:03",
+              "decision": "PUT BUY",
+              "s15": 2.400000000001455,
+              "s30": -17.099999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:33",
+              "decision": "CALL BUY",
+              "s15": -29.849999999998545,
+              "s30": -85.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:03",
+              "decision": "PUT BUY",
+              "s15": 2.4500000000007276,
+              "s30": 9.299999999999272,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:34",
+              "decision": "PUT BUY",
+              "s15": 0.9500000000007276,
+              "s30": 15,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:14",
+              "decision": "PUT BUY",
+              "s15": -9.450000000000728,
+              "s30": -14.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:17",
+              "decision": "CALL BUY",
+              "s15": 1.0499999999992724,
+              "s30": -5.950000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:48",
+              "decision": "PUT BUY",
+              "s15": 4.849999999998545,
+              "s30": -3.150000000001455,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "D2_dayDiff_extreme",
+          "n": 7,
+          "hit15": 57.1,
+          "hit30": 42.9,
+          "hit60": 57.1,
+          "avg15": 5.44,
+          "avg30": -2.36,
+          "avg60": 6.36,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 3,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 57.1,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "CALL BUY",
+              "s15": -26.200000000000728,
+              "s30": -64.45000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:02",
+              "decision": "PUT BUY",
+              "s15": 9.049999999999272,
+              "s30": -8.200000000000728,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:47",
+              "decision": "PUT BUY",
+              "s15": 58.79999999999927,
+              "s30": 63.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:31",
+              "decision": "PUT BUY",
+              "s15": -5,
+              "s30": 9.599999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:01",
+              "decision": "PUT BUY",
+              "s15": 5.150000000001455,
+              "s30": -0.09999999999854481,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:55",
+              "decision": "PUT BUY",
+              "s15": -5.5,
+              "s30": -20.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:46",
+              "decision": "PUT BUY",
+              "s15": 1.7999999999992724,
+              "s30": 3.5,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B4_call_short_cover_CALL",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 50,
+          "hit60": 50,
+          "avg15": -2.03,
+          "avg30": -2.9,
+          "avg60": 15.32,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "10:33",
+              "decision": "CALL BUY",
+              "s15": -29.849999999998545,
+              "s30": -85.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:23",
+              "decision": "CALL BUY",
+              "s15": -16.049999999999272,
+              "s30": -21.69999999999709,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:34",
+              "decision": "CALL BUY",
+              "s15": -1.6500000000014552,
+              "s30": -3.7999999999992724,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:12",
+              "decision": "CALL BUY",
+              "s15": 10.94999999999709,
+              "s30": 8.049999999999272,
+              "bucket": "Good"
+            },
+            {
+              "time": "13:59",
+              "decision": "CALL BUY",
+              "s15": -4.5,
+              "s30": 12.849999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "14:30",
+              "decision": "CALL BUY",
+              "s15": 28.950000000000728,
+              "s30": 72.95000000000073,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "A4_5_3_1_short",
+          "n": 10,
+          "hit15": 50,
+          "hit30": 40,
+          "hit60": 50,
+          "avg15": 1.6,
+          "avg30": -1.29,
+          "avg60": 8.77,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 6,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": 22.19999999999709,
+              "s30": 66.19999999999709,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 13.600000000002183,
+              "s30": -0.8499999999985448,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:32",
+              "decision": "CALL BUY",
+              "s15": -13.400000000001455,
+              "s30": -72.20000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:02",
+              "decision": "PUT BUY",
+              "s15": 4.450000000000728,
+              "s30": 17.599999999998545,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:35",
+              "decision": "CALL BUY",
+              "s15": -10.650000000001455,
+              "s30": -29.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:35",
+              "decision": "CALL BUY",
+              "s15": -6.399999999997817,
+              "s30": -6.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:08",
+              "decision": "PUT BUY",
+              "s15": -14.44999999999709,
+              "s30": -15.049999999999272,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_400k",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 50,
+          "hit60": 75,
+          "avg15": -1.29,
+          "avg30": -7.27,
+          "avg60": 11.01,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 75,
+          "sample": [
+            {
+              "time": "09:35",
+              "decision": "PUT BUY",
+              "s15": 39.20000000000073,
+              "s30": 76.95000000000073,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:05",
+              "decision": "PUT BUY",
+              "s15": -8.350000000002183,
+              "s30": -30.5,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:38",
+              "decision": "CALL BUY",
+              "s15": -30.350000000002183,
+              "s30": -85.95000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:08",
+              "decision": "PUT BUY",
+              "s15": -5.649999999997817,
+              "s30": 10.400000000001455,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "F6_rolling3_oiDominance",
+          "n": 9,
+          "hit15": 55.6,
+          "hit30": 33.3,
+          "hit60": 55.6,
+          "avg15": 1.06,
+          "avg30": -2.37,
+          "avg60": 5.56,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 5,
+            "pending": 0
+          },
+          "nonBadPct": 44.4,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": -29.400000000001455,
+              "s30": -79.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 12.700000000000728,
+              "s30": 4.400000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -2.150000000001455,
+              "s30": 54,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:23",
+              "decision": "CALL BUY",
+              "s15": -16.049999999999272,
+              "s30": -21.69999999999709,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:59",
+              "decision": "PUT BUY",
+              "s15": 7.950000000000728,
+              "s30": -1.5,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:35",
+              "decision": "CALL BUY",
+              "s15": -6.399999999997817,
+              "s30": -6.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:17",
+              "decision": "CALL BUY",
+              "s15": 1.0499999999992724,
+              "s30": -5.950000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:47",
+              "decision": "PUT BUY",
+              "s15": 4.450000000000728,
+              "s30": -1.7000000000007276,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "A1_full_30_15_5_3_1",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 50,
+          "hit60": 66.7,
+          "avg15": -1.97,
+          "avg30": -5.84,
+          "avg60": 2.87,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:50",
+              "decision": "PUT BUY",
+              "s15": 37.75,
+              "s30": 29.399999999997817,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:34",
+              "decision": "CALL BUY",
+              "s15": -43.89999999999782,
+              "s30": -100,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:04",
+              "decision": "PUT BUY",
+              "s15": -4.450000000000728,
+              "s30": 5.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:41",
+              "decision": "CALL BUY",
+              "s15": -18.450000000000728,
+              "s30": -10.649999999997817,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:27",
+              "decision": "CALL BUY",
+              "s15": 22.30000000000291,
+              "s30": 57.70000000000073,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "E2_spot5_burst_8",
+          "n": 9,
+          "hit15": 66.7,
+          "hit30": 77.8,
+          "hit60": 44.4,
+          "avg15": -2.34,
+          "avg30": -8.43,
+          "avg60": -4.12,
+          "buckets": {
+            "Excellent": 4,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 4,
+            "pending": 0
+          },
+          "nonBadPct": 55.6,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": -29.400000000001455,
+              "s30": -79.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 12.700000000000728,
+              "s30": 4.400000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:33",
+              "decision": "CALL BUY",
+              "s15": -29.849999999998545,
+              "s30": -85.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:03",
+              "decision": "PUT BUY",
+              "s15": 2.4500000000007276,
+              "s30": 9.299999999999272,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:40",
+              "decision": "PUT BUY",
+              "s15": 4.149999999997817,
+              "s30": 14.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:19",
+              "decision": "CALL BUY",
+              "s15": 8.5,
+              "s30": 6.849999999998545,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:52",
+              "decision": "CALL BUY",
+              "s15": -7.299999999999272,
+              "s30": 4.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:42",
+              "decision": "PUT BUY",
+              "s15": 3.5499999999992724,
+              "s30": 8.75,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "A2_15_only_spot15",
+          "n": 7,
+          "hit15": 57.1,
+          "hit30": 42.9,
+          "hit60": 71.4,
+          "avg15": -2.37,
+          "avg30": -8.85,
+          "avg60": 3.63,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 57.1,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "CALL BUY",
+              "s15": -26.200000000000728,
+              "s30": -64.45000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:02",
+              "decision": "PUT BUY",
+              "s15": 9.049999999999272,
+              "s30": -8.200000000000728,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:32",
+              "decision": "CALL BUY",
+              "s15": -13.400000000001455,
+              "s30": -72.20000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:02",
+              "decision": "PUT BUY",
+              "s15": 4.450000000000728,
+              "s30": 17.599999999998545,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:38",
+              "decision": "PUT BUY",
+              "s15": 5.649999999997817,
+              "s30": 18.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:41",
+              "decision": "CALL BUY",
+              "s15": -18.450000000000728,
+              "s30": -10.649999999997817,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:27",
+              "decision": "CALL BUY",
+              "s15": 22.30000000000291,
+              "s30": 57.70000000000073,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "D1_dayDiff_turn_bull",
+          "n": 10,
+          "hit15": 60,
+          "hit30": 30,
+          "hit60": 50,
+          "avg15": -3.55,
+          "avg30": -9.67,
+          "avg60": -2.54,
+          "buckets": {
+            "Excellent": 3,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 5,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": -29.400000000001455,
+              "s30": -79.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 12.700000000000728,
+              "s30": 4.400000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:31",
+              "decision": "PUT BUY",
+              "s15": 6.700000000000728,
+              "s30": 61.20000000000073,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:08",
+              "decision": "CALL BUY",
+              "s15": 5.649999999997817,
+              "s30": -10.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:38",
+              "decision": "PUT BUY",
+              "s15": 5.649999999997817,
+              "s30": 18.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:08",
+              "decision": "PUT BUY",
+              "s15": 1.3999999999978172,
+              "s30": -9.850000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:38",
+              "decision": "CALL BUY",
+              "s15": 0.2999999999992724,
+              "s30": -5.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "13:08",
+              "decision": "PUT BUY",
+              "s15": -14.44999999999709,
+              "s30": -15.049999999999272,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B3_put_writing_CALL",
+          "n": 9,
+          "hit15": 55.6,
+          "hit30": 44.4,
+          "hit60": 44.4,
+          "avg15": -2.29,
+          "avg30": -13.52,
+          "avg60": -14.67,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 5,
+            "pending": 0
+          },
+          "nonBadPct": 44.4,
+          "sample": [
+            {
+              "time": "09:34",
+              "decision": "CALL BUY",
+              "s15": -37.75,
+              "s30": -76.90000000000146,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:07",
+              "decision": "CALL BUY",
+              "s15": 12.25,
+              "s30": 22.599999999998545,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:38",
+              "decision": "CALL BUY",
+              "s15": -30.350000000002183,
+              "s30": -85.95000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:10",
+              "decision": "CALL BUY",
+              "s15": -0.6499999999978172,
+              "s30": -18.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:42",
+              "decision": "CALL BUY",
+              "s15": 0.1500000000014552,
+              "s30": -9,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:16",
+              "decision": "CALL BUY",
+              "s15": 5.25,
+              "s30": 8.200000000000728,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:51",
+              "decision": "CALL BUY",
+              "s15": -3.2000000000007276,
+              "s30": 12.149999999997817,
+              "bucket": "Good"
+            },
+            {
+              "time": "13:23",
+              "decision": "CALL BUY",
+              "s15": 0.6000000000021828,
+              "s30": -6.049999999999272,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "F4_bigOi_confirm_15m",
+          "n": 8,
+          "hit15": 25,
+          "hit30": 25,
+          "hit60": 50,
+          "avg15": -10.55,
+          "avg30": -23.05,
+          "avg60": -0.38,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 5,
+            "pending": 0
+          },
+          "nonBadPct": 37.5,
+          "sample": [
+            {
+              "time": "09:34",
+              "decision": "CALL BUY",
+              "s15": -37.75,
+              "s30": -76.90000000000146,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:04",
+              "decision": "PUT BUY",
+              "s15": -11.900000000001455,
+              "s30": -33.29999999999927,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:34",
+              "decision": "CALL BUY",
+              "s15": -43.89999999999782,
+              "s30": -100,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:04",
+              "decision": "PUT BUY",
+              "s15": -4.450000000000728,
+              "s30": 5.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "12:05",
+              "decision": "PUT BUY",
+              "s15": -5.049999999999272,
+              "s30": -16.75,
+              "bucket": "Bad"
+            },
+            {
+              "time": "12:35",
+              "decision": "CALL BUY",
+              "s15": -6.399999999997817,
+              "s30": -6.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "13:17",
+              "decision": "CALL BUY",
+              "s15": 1.0499999999992724,
+              "s30": -5.950000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "14:24",
+              "decision": "CALL BUY",
+              "s15": 24,
+              "s30": 50.05000000000291,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "E1_spot15_only_20",
+          "n": 6,
+          "hit15": 33.3,
+          "hit30": 33.3,
+          "hit60": 50,
+          "avg15": -11.08,
+          "avg30": -28.79,
+          "avg60": -14.48,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "CALL BUY",
+              "s15": -26.200000000000728,
+              "s30": -64.45000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:02",
+              "decision": "PUT BUY",
+              "s15": 9.049999999999272,
+              "s30": -8.200000000000728,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:34",
+              "decision": "CALL BUY",
+              "s15": -43.89999999999782,
+              "s30": -100,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:04",
+              "decision": "PUT BUY",
+              "s15": -4.450000000000728,
+              "s30": 5.25,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:39",
+              "decision": "PUT BUY",
+              "s15": 7.75,
+              "s30": 14.299999999999272,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "12:57",
+              "decision": "PUT BUY",
+              "s15": -8.700000000000728,
+              "s30": -19.649999999997817,
+              "bucket": "Bad"
+            }
+          ]
+        }
+      ]
+    },
+    "2026-08-13": {
+      "label": "TODAY (to ~11:50)",
+      "rows": 156,
+      "from": "09:15",
+      "to": "11:50",
+      "results": [
+        {
+          "name": "F3_putWrite_plus_spotUp_CALL",
+          "n": 3,
+          "hit15": 100,
+          "hit30": 66.7,
+          "hit60": 50,
+          "avg15": 9.52,
+          "avg30": 8.3,
+          "avg60": 4.38,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 0,
+            "pending": 0
+          },
+          "nonBadPct": 100,
+          "sample": [
+            {
+              "time": "09:39",
+              "decision": "CALL BUY",
+              "s15": 12.75,
+              "s30": 6.599999999998545,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:36",
+              "decision": "CALL BUY",
+              "s15": 13.900000000001455,
+              "s30": -1.7999999999992724,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:11",
+              "decision": "CALL BUY",
+              "s15": 1.9000000000014552,
+              "s30": 20.100000000002183,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_1500k",
+          "n": 1,
+          "hit15": 100,
+          "hit30": null,
+          "hit60": null,
+          "avg15": 6.2,
+          "avg30": null,
+          "avg60": null,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 0,
+            "pending": 0
+          },
+          "nonBadPct": 100,
+          "sample": [
+            {
+              "time": "11:34",
+              "decision": "CALL BUY",
+              "s15": 6.19999999999709,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "B2_put_buying_PUT",
+          "n": 4,
+          "hit15": 66.7,
+          "hit30": 66.7,
+          "hit60": 100,
+          "avg15": 3.27,
+          "avg30": 9.58,
+          "avg60": 10.65,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 1
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 6.450000000000728,
+              "s30": 34.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:54",
+              "decision": "PUT BUY",
+              "s15": 23.75,
+              "s30": 15.400000000001455,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:36",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_400k",
+          "n": 4,
+          "hit15": 75,
+          "hit30": 66.7,
+          "hit60": 0,
+          "avg15": 7.41,
+          "avg30": 7.75,
+          "avg60": -10.9,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 2,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 75,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": 6.400000000001455,
+              "s30": 10.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:24",
+              "decision": "CALL BUY",
+              "s15": -4.099999999998545,
+              "s30": 15.05000000000291,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:31",
+              "decision": "CALL BUY",
+              "s15": 7.25,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "F2_putBuy_plus_spotDown_PUT",
+          "n": 3,
+          "hit15": 66.7,
+          "hit30": 66.7,
+          "hit60": 100,
+          "avg15": 0.78,
+          "avg30": 6.8,
+          "avg60": 10.65,
+          "buckets": {
+            "Excellent": 2,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 6.450000000000728,
+              "s30": 34.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:58",
+              "decision": "PUT BUY",
+              "s15": 16.299999999999272,
+              "s30": 7.049999999999272,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "B3_put_writing_CALL",
+          "n": 5,
+          "hit15": 75,
+          "hit30": 50,
+          "hit60": 33.3,
+          "avg15": 6.15,
+          "avg30": 2.48,
+          "avg60": -3.07,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 2,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 1
+          },
+          "nonBadPct": 75,
+          "sample": [
+            {
+              "time": "09:35",
+              "decision": "CALL BUY",
+              "s15": 25.349999999998545,
+              "s30": 18,
+              "bucket": "Good"
+            },
+            {
+              "time": "10:06",
+              "decision": "CALL BUY",
+              "s15": -16.55000000000291,
+              "s30": -26.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:36",
+              "decision": "CALL BUY",
+              "s15": 13.900000000001455,
+              "s30": -1.7999999999992724,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:11",
+              "decision": "CALL BUY",
+              "s15": 1.9000000000014552,
+              "s30": 20.100000000002183,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:43",
+              "decision": "CALL BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_200k",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 50,
+          "hit60": 33.3,
+          "avg15": 2.95,
+          "avg30": 4.82,
+          "avg60": -10.48,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": 6.400000000001455,
+              "s30": 10.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 6.799999999999272,
+              "s30": 32.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:31",
+              "decision": "PUT BUY",
+              "s15": -7.25,
+              "s30": null,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_400k",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 50,
+          "hit60": 33.3,
+          "avg15": 2.95,
+          "avg30": 4.82,
+          "avg60": -10.48,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": 6.400000000001455,
+              "s30": 10.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "PUT BUY",
+              "s15": 6.799999999999272,
+              "s30": 32.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:31",
+              "decision": "PUT BUY",
+              "s15": -7.25,
+              "s30": null,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "A5_relaxed_15_5_oiAct",
+          "n": 4,
+          "hit15": 75,
+          "hit30": 33.3,
+          "hit60": 66.7,
+          "avg15": 9.45,
+          "avg30": -2.02,
+          "avg60": 8.8,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 75,
+          "sample": [
+            {
+              "time": "09:43",
+              "decision": "CALL BUY",
+              "s15": 6.900000000001455,
+              "s30": -0.3499999999985448,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:17",
+              "decision": "PUT BUY",
+              "s15": 24.349999999998545,
+              "s30": 7.099999999998545,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:47",
+              "decision": "CALL BUY",
+              "s15": -0.7000000000007276,
+              "s30": -12.799999999999272,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:31",
+              "decision": "CALL BUY",
+              "s15": 7.25,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "B5_dual_sellers_PUT",
+          "n": 4,
+          "hit15": 66.7,
+          "hit30": 33.3,
+          "hit60": 100,
+          "avg15": -0.62,
+          "avg30": -0.65,
+          "avg60": 10.65,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 2,
+            "pending": 1
+          },
+          "nonBadPct": 33.3,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 6.450000000000728,
+              "s30": 34.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:02",
+              "decision": "PUT BUY",
+              "s15": 12.099999999998545,
+              "s30": -15.299999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:47",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "F5_ignoreNoise_bigOnly_500k",
+          "n": 4,
+          "hit15": 75,
+          "hit30": 33.3,
+          "hit60": 0,
+          "avg15": 5.35,
+          "avg30": -4.32,
+          "avg60": -21.28,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": 6.400000000001455,
+              "s30": 10.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:34",
+              "decision": "CALL BUY",
+              "s15": 6.19999999999709,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "B7_sellers_mask_PUT",
+          "n": 2,
+          "hit15": 50,
+          "hit30": 50,
+          "hit60": 100,
+          "avg15": 2,
+          "avg30": -6.08,
+          "avg60": 17.95,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "10:05",
+              "decision": "PUT BUY",
+              "s15": 4.05000000000291,
+              "s30": 20.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:07",
+              "decision": "PUT BUY",
+              "s15": -0.049999999999272404,
+              "s30": -32.650000000001455,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "A3_15_plus_5",
+          "n": 4,
+          "hit15": 75,
+          "hit30": 33.3,
+          "hit60": 66.7,
+          "avg15": 4.07,
+          "avg30": -4.47,
+          "avg60": 5.57,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:44",
+              "decision": "CALL BUY",
+              "s15": 1.5999999999985448,
+              "s30": -1.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:17",
+              "decision": "PUT BUY",
+              "s15": 24.349999999998545,
+              "s30": 7.099999999998545,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:49",
+              "decision": "CALL BUY",
+              "s15": -11,
+              "s30": -19,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:32",
+              "decision": "CALL BUY",
+              "s15": 1.3500000000021828,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "E2_spot5_burst_8",
+          "n": 4,
+          "hit15": 50,
+          "hit30": 25,
+          "hit60": 100,
+          "avg15": -1.2,
+          "avg30": -6.44,
+          "avg60": 17.6,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:05",
+              "decision": "PUT BUY",
+              "s15": 4.05000000000291,
+              "s30": 20.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:36",
+              "decision": "CALL BUY",
+              "s15": 13.900000000001455,
+              "s30": -1.7999999999992724,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:06",
+              "decision": "PUT BUY",
+              "s15": -2.349999999998545,
+              "s30": -23.299999999999272,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "B6_dual_buyers_CALL",
+          "n": 3,
+          "hit15": 100,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": 10.2,
+          "avg30": -6.48,
+          "avg60": 1.78,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:41",
+              "decision": "CALL BUY",
+              "s15": 11.349999999998545,
+              "s30": -6.200000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:43",
+              "decision": "CALL BUY",
+              "s15": 9.549999999999272,
+              "s30": -6.75,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:30",
+              "decision": "CALL BUY",
+              "s15": 9.700000000000728,
+              "s30": null,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "B4_call_short_cover_CALL",
+          "n": 3,
+          "hit15": 100,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": 8.18,
+          "avg30": -7.35,
+          "avg60": 4.77,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 66.7,
+          "sample": [
+            {
+              "time": "09:48",
+              "decision": "CALL BUY",
+              "s15": 5.299999999999272,
+              "s30": -7.950000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:43",
+              "decision": "CALL BUY",
+              "s15": 9.549999999999272,
+              "s30": -6.75,
+              "bucket": "Good"
+            },
+            {
+              "time": "11:30",
+              "decision": "CALL BUY",
+              "s15": 9.700000000000728,
+              "s30": null,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "A2_15_only_spot15",
+          "n": 4,
+          "hit15": 50,
+          "hit30": 33.3,
+          "hit60": 100,
+          "avg15": -3.37,
+          "avg30": -9.32,
+          "avg60": 10.12,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:38",
+              "decision": "PUT BUY",
+              "s15": -12.700000000000728,
+              "s30": -19.200000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:10",
+              "decision": "PUT BUY",
+              "s15": 8.850000000002183,
+              "s30": 10.25,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:49",
+              "decision": "CALL BUY",
+              "s15": -11,
+              "s30": -19,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:32",
+              "decision": "CALL BUY",
+              "s15": 1.3500000000021828,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "A1_full_30_15_5_3_1",
+          "n": 2,
+          "hit15": 50,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": 2.3,
+          "avg30": -7.6,
+          "avg60": -1.92,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 1,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:49",
+              "decision": "CALL BUY",
+              "s15": -5.25,
+              "s30": -11.149999999997817,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:21",
+              "decision": "PUT BUY",
+              "s15": 9.849999999998545,
+              "s30": -4.05000000000291,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_200k",
+          "n": 5,
+          "hit15": 60,
+          "hit30": 25,
+          "hit60": 0,
+          "avg15": 3.13,
+          "avg30": -11.3,
+          "avg60": -17.88,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 40,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "CALL BUY",
+              "s15": 6.400000000001455,
+              "s30": 10.799999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:00",
+              "decision": "CALL BUY",
+              "s15": -6.799999999999272,
+              "s30": -32.25,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:31",
+              "decision": "CALL BUY",
+              "s15": 7.25,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "B1_call_writing_PUT",
+          "n": 5,
+          "hit15": 25,
+          "hit30": 25,
+          "hit60": 66.7,
+          "avg15": -7.91,
+          "avg30": -11.46,
+          "avg60": -2.62,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 6.450000000000728,
+              "s30": 34.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:31",
+              "decision": "PUT BUY",
+              "s15": -17.649999999997817,
+              "s30": -26.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:07",
+              "decision": "PUT BUY",
+              "s15": -0.049999999999272404,
+              "s30": -32.650000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:40",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "F1_write_plus_spotDown_PUT",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 25,
+          "hit60": 66.7,
+          "avg15": -7.91,
+          "avg30": -11.46,
+          "avg60": -2.62,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "PUT BUY",
+              "s15": 6.450000000000728,
+              "s30": 34.5,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "10:31",
+              "decision": "PUT BUY",
+              "s15": -17.649999999997817,
+              "s30": -26.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:07",
+              "decision": "PUT BUY",
+              "s15": -0.049999999999272404,
+              "s30": -32.650000000001455,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_400k",
+          "n": 4,
+          "hit15": 75,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": 0.66,
+          "avg30": -10.85,
+          "avg60": -7.1,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:41",
+              "decision": "CALL BUY",
+              "s15": 11.349999999998545,
+              "s30": -6.200000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:24",
+              "decision": "PUT BUY",
+              "s15": 4.099999999998545,
+              "s30": -15.05000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:57",
+              "decision": "CALL BUY",
+              "s15": -20.049999999999272,
+              "s30": -11.299999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:31",
+              "decision": "CALL BUY",
+              "s15": 7.25,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "D2_dayDiff_extreme",
+          "n": 3,
+          "hit15": 66.7,
+          "hit30": 0,
+          "hit60": 100,
+          "avg15": 1.9,
+          "avg30": -15.45,
+          "avg60": 10.9,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 33.3,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": -6.400000000001455,
+              "s30": -10.799999999999272,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:24",
+              "decision": "PUT BUY",
+              "s15": 4.099999999998545,
+              "s30": -15.05000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:04",
+              "decision": "PUT BUY",
+              "s15": 8,
+              "s30": -20.5,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_800k",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -3.33,
+          "avg30": -16.62,
+          "avg60": -6,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": -15.900000000001455,
+              "s30": -26.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:01",
+              "decision": "PUT BUY",
+              "s15": 20.099999999998545,
+              "s30": -2.599999999998545,
+              "bucket": "Ok"
+            },
+            {
+              "time": "11:34",
+              "decision": "PUT BUY",
+              "s15": -6.19999999999709,
+              "s30": null,
+              "bucket": "Bad"
+            }
+          ]
+        },
+        {
+          "name": "A4_5_3_1_short",
+          "n": 5,
+          "hit15": 50,
+          "hit30": 25,
+          "hit60": 66.7,
+          "avg15": -3.49,
+          "avg30": -19.09,
+          "avg60": 6.6,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:02",
+              "decision": "CALL BUY",
+              "s15": -10.850000000002183,
+              "s30": -35.20000000000073,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:35",
+              "decision": "CALL BUY",
+              "s15": 16.5,
+              "s30": 2.5499999999992724,
+              "bucket": "Excellent"
+            },
+            {
+              "time": "11:05",
+              "decision": "PUT BUY",
+              "s15": 0.7999999999992724,
+              "s30": -22.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:47",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "D1_dayDiff_turn_bull",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -10.68,
+          "avg30": -20.17,
+          "avg60": -3.38,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 1,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 0
+          },
+          "nonBadPct": 50,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": -6.400000000001455,
+              "s30": -10.799999999999272,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:06",
+              "decision": "CALL BUY",
+              "s15": -16.55000000000291,
+              "s30": -26.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:53",
+              "decision": "CALL BUY",
+              "s15": -27,
+              "s30": -23.30000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:31",
+              "decision": "CALL BUY",
+              "s15": 7.25,
+              "s30": null,
+              "bucket": "Good"
+            }
+          ]
+        },
+        {
+          "name": "E1_spot15_only_20",
+          "n": 4,
+          "hit15": 0,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -4.5,
+          "avg30": -19.93,
+          "avg60": 6.85,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 1,
+            "Bad": 2,
+            "pending": 1
+          },
+          "nonBadPct": 33.3,
+          "sample": [
+            {
+              "time": "09:30",
+              "decision": "PUT BUY",
+              "s15": -6.400000000001455,
+              "s30": -10.799999999999272,
+              "bucket": "Ok"
+            },
+            {
+              "time": "10:29",
+              "decision": "PUT BUY",
+              "s15": -3.399999999997817,
+              "s30": -13.099999999998545,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:08",
+              "decision": "PUT BUY",
+              "s15": -3.6999999999970896,
+              "s30": -35.89999999999782,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:38",
+              "decision": "CALL BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_800k",
+          "n": 4,
+          "hit15": 33.3,
+          "hit30": 0,
+          "hit60": 0,
+          "avg15": -3.33,
+          "avg30": -22.88,
+          "avg60": -21.85,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 0,
+          "sample": [
+            {
+              "time": "09:41",
+              "decision": "CALL BUY",
+              "s15": 11.349999999998545,
+              "s30": -6.200000000000728,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:31",
+              "decision": "PUT BUY",
+              "s15": -17.649999999997817,
+              "s30": -26.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:08",
+              "decision": "PUT BUY",
+              "s15": -3.6999999999970896,
+              "s30": -35.89999999999782,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:40",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_800k",
+          "n": 4,
+          "hit15": 33.3,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -8.8,
+          "avg30": -23.27,
+          "avg60": -6,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 0,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": -15.900000000001455,
+              "s30": -26.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:05",
+              "decision": "PUT BUY",
+              "s15": 0.7999999999992724,
+              "s30": -22.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:36",
+              "decision": "PUT BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C2_bigChngDir_fade_1500k",
+          "n": 4,
+          "hit15": 33.3,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -8.8,
+          "avg30": -23.27,
+          "avg60": -6,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 0,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": -15.900000000001455,
+              "s30": -26.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:05",
+              "decision": "PUT BUY",
+              "s15": 0.7999999999992724,
+              "s30": -22.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:40",
+              "decision": "CALL BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C3_bigAbsOi_side_1500k",
+          "n": 4,
+          "hit15": 33.3,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -8.8,
+          "avg30": -23.27,
+          "avg60": -6,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 0,
+          "sample": [
+            {
+              "time": "09:32",
+              "decision": "PUT BUY",
+              "s15": -15.900000000001455,
+              "s30": -26.100000000002183,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:30",
+              "decision": "PUT BUY",
+              "s15": -11.30000000000291,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:05",
+              "decision": "PUT BUY",
+              "s15": 0.7999999999992724,
+              "s30": -22.549999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:40",
+              "decision": "CALL BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "C1_bigChngDir_align_200k",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 0,
+          "hit60": 0,
+          "avg15": -16.78,
+          "avg30": -25.9,
+          "avg60": -14.48,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:34",
+              "decision": "PUT BUY",
+              "s15": -33.25,
+              "s30": -28,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:06",
+              "decision": "CALL BUY",
+              "s15": -16.55000000000291,
+              "s30": -26.400000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:53",
+              "decision": "CALL BUY",
+              "s15": -27,
+              "s30": -23.30000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:30",
+              "decision": "CALL BUY",
+              "s15": 9.700000000000728,
+              "s30": null,
+              "bucket": "Excellent"
+            }
+          ]
+        },
+        {
+          "name": "F4_bigOi_confirm_15m",
+          "n": 4,
+          "hit15": 0,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -13.23,
+          "avg30": -25.57,
+          "avg60": -15.68,
+          "buckets": {
+            "Excellent": 0,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 1
+          },
+          "nonBadPct": 0,
+          "sample": [
+            {
+              "time": "09:37",
+              "decision": "PUT BUY",
+              "s15": -22,
+              "s30": -26,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:07",
+              "decision": "CALL BUY",
+              "s15": -15.349999999998545,
+              "s30": -27.399999999997817,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:06",
+              "decision": "PUT BUY",
+              "s15": -2.349999999998545,
+              "s30": -23.299999999999272,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:37",
+              "decision": "CALL BUY",
+              "s15": null,
+              "s30": null,
+              "bucket": null
+            }
+          ]
+        },
+        {
+          "name": "F6_rolling3_oiDominance",
+          "n": 4,
+          "hit15": 25,
+          "hit30": 0,
+          "hit60": 50,
+          "avg15": -11.04,
+          "avg30": -26.32,
+          "avg60": 2.7,
+          "buckets": {
+            "Excellent": 1,
+            "Good": 0,
+            "Ok": 0,
+            "Bad": 3,
+            "pending": 0
+          },
+          "nonBadPct": 25,
+          "sample": [
+            {
+              "time": "09:31",
+              "decision": "PUT BUY",
+              "s15": -20.400000000001455,
+              "s30": -21.150000000001455,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:01",
+              "decision": "CALL BUY",
+              "s15": -6.450000000000728,
+              "s30": -34.5,
+              "bucket": "Bad"
+            },
+            {
+              "time": "10:53",
+              "decision": "CALL BUY",
+              "s15": -27,
+              "s30": -23.30000000000291,
+              "bucket": "Bad"
+            },
+            {
+              "time": "11:30",
+              "decision": "CALL BUY",
+              "s15": 9.700000000000728,
+              "s30": null,
+              "bucket": "Excellent"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "ranking": [
+    {
+      "name": "C1_bigChngDir_align_1500k",
+      "combinedScore": 71.05,
+      "yday": {
+        "n": 1,
+        "hit30": 100,
+        "avg30": 35.55,
+        "hit15": 100,
+        "avg15": 33.15,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 0,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 1,
+        "hit30": null,
+        "avg30": null,
+        "hit15": 100,
+        "avg15": 6.2,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 0,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "11:34",
+            "decision": "CALL BUY",
+            "s15": 6.19999999999709,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C2_bigChngDir_fade_400k",
+      "combinedScore": 41.03,
+      "yday": {
+        "n": 7,
+        "hit30": 57.1,
+        "avg30": 22.89,
+        "hit15": 42.9,
+        "avg15": 5.16,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 50,
+        "avg30": 4.82,
+        "hit15": 60,
+        "avg15": 2.95,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "CALL BUY",
+            "s15": 6.400000000001455,
+            "s30": 10.799999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:00",
+            "decision": "PUT BUY",
+            "s15": 6.799999999999272,
+            "s30": 32.25,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:31",
+            "decision": "PUT BUY",
+            "s15": -7.25,
+            "s30": null,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C3_bigAbsOi_side_400k",
+      "combinedScore": 39.06,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": 18.67,
+        "hit15": 33.3,
+        "avg15": 3.12,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 66.7,
+        "avg30": 7.75,
+        "hit15": 75,
+        "avg15": 7.41,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 2,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "CALL BUY",
+            "s15": 6.400000000001455,
+            "s30": 10.799999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:24",
+            "decision": "CALL BUY",
+            "s15": -4.099999999998545,
+            "s30": 15.05000000000291,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:31",
+            "decision": "CALL BUY",
+            "s15": 7.25,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B2_put_buying_PUT",
+      "combinedScore": 36.91,
+      "yday": {
+        "n": 9,
+        "hit30": 55.6,
+        "avg30": 16.08,
+        "hit15": 55.6,
+        "avg15": 6.27,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 4,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 66.7,
+        "avg30": 9.58,
+        "hit15": 66.7,
+        "avg15": 3.27,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "PUT BUY",
+            "s15": 6.450000000000728,
+            "s30": 34.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:54",
+            "decision": "PUT BUY",
+            "s15": 23.75,
+            "s30": 15.400000000001455,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "11:36",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "C1_bigChngDir_align_800k",
+      "combinedScore": 36.6,
+      "yday": {
+        "n": 2,
+        "hit30": 100,
+        "avg30": 31.05,
+        "hit15": 100,
+        "avg15": 29.7,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 0,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -22.88,
+        "hit15": 33.3,
+        "avg15": -3.33,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:41",
+            "decision": "CALL BUY",
+            "s15": 11.349999999998545,
+            "s30": -6.200000000000728,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:31",
+            "decision": "PUT BUY",
+            "s15": -17.649999999997817,
+            "s30": -26.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:08",
+            "decision": "PUT BUY",
+            "s15": -3.6999999999970896,
+            "s30": -35.89999999999782,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:40",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "F2_putBuy_plus_spotDown_PUT",
+      "combinedScore": 35.73,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": 15.45,
+        "hit15": 50,
+        "avg15": 9.07,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 3,
+        "hit30": 66.7,
+        "avg30": 6.8,
+        "hit15": 66.7,
+        "avg15": 0.78,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "PUT BUY",
+            "s15": 6.450000000000728,
+            "s30": 34.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:58",
+            "decision": "PUT BUY",
+            "s15": 16.299999999999272,
+            "s30": 7.049999999999272,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "F5_ignoreNoise_bigOnly_500k",
+      "combinedScore": 33.1,
+      "yday": {
+        "n": 6,
+        "hit30": 66.7,
+        "avg30": 20.14,
+        "hit15": 50,
+        "avg15": 7.36,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 2,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 33.3,
+        "avg30": -4.32,
+        "hit15": 75,
+        "avg15": 5.35,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "CALL BUY",
+            "s15": 6.400000000001455,
+            "s30": 10.799999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:34",
+            "decision": "CALL BUY",
+            "s15": 6.19999999999709,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B7_sellers_mask_PUT",
+      "combinedScore": 29.67,
+      "yday": {
+        "n": 7,
+        "hit30": 57.1,
+        "avg30": 17.86,
+        "hit15": 85.7,
+        "avg15": 16.82,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 2,
+        "hit30": 50,
+        "avg30": -6.08,
+        "hit15": 50,
+        "avg15": 2,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "10:05",
+            "decision": "PUT BUY",
+            "s15": 4.05000000000291,
+            "s30": 20.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "11:07",
+            "decision": "PUT BUY",
+            "s15": -0.049999999999272404,
+            "s30": -32.650000000001455,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C2_bigChngDir_fade_200k",
+      "combinedScore": 29.24,
+      "yday": {
+        "n": 10,
+        "hit30": 70,
+        "avg30": 12.28,
+        "hit15": 30,
+        "avg15": -0.67,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 5,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 50,
+        "avg30": 4.82,
+        "hit15": 60,
+        "avg15": 2.95,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "CALL BUY",
+            "s15": 6.400000000001455,
+            "s30": 10.799999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:00",
+            "decision": "PUT BUY",
+            "s15": 6.799999999999272,
+            "s30": 32.25,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:31",
+            "decision": "PUT BUY",
+            "s15": -7.25,
+            "s30": null,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B5_dual_sellers_PUT",
+      "combinedScore": 26.96,
+      "yday": {
+        "n": 8,
+        "hit30": 50,
+        "avg30": 15.52,
+        "hit15": 62.5,
+        "avg15": 3.96,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 33.3,
+        "avg30": -0.65,
+        "hit15": 66.7,
+        "avg15": -0.62,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 2,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "PUT BUY",
+            "s15": 6.450000000000728,
+            "s30": 34.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "11:02",
+            "decision": "PUT BUY",
+            "s15": 12.099999999998545,
+            "s30": -15.299999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:47",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "B1_call_writing_PUT",
+      "combinedScore": 24.25,
+      "yday": {
+        "n": 8,
+        "hit30": 62.5,
+        "avg30": 19.17,
+        "hit15": 75,
+        "avg15": 6.63,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 25,
+        "avg30": -11.46,
+        "hit15": 25,
+        "avg15": -7.91,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "PUT BUY",
+            "s15": 6.450000000000728,
+            "s30": 34.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:31",
+            "decision": "PUT BUY",
+            "s15": -17.649999999997817,
+            "s30": -26.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:07",
+            "decision": "PUT BUY",
+            "s15": -0.049999999999272404,
+            "s30": -32.650000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:40",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "F1_write_plus_spotDown_PUT",
+      "combinedScore": 23.7,
+      "yday": {
+        "n": 8,
+        "hit30": 62.5,
+        "avg30": 18.88,
+        "hit15": 75,
+        "avg15": 6.73,
+        "buckets": {
+          "Excellent": 4,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 25,
+        "avg30": -11.46,
+        "hit15": 25,
+        "avg15": -7.91,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "PUT BUY",
+            "s15": 6.450000000000728,
+            "s30": 34.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:31",
+            "decision": "PUT BUY",
+            "s15": -17.649999999997817,
+            "s30": -26.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:07",
+            "decision": "PUT BUY",
+            "s15": -0.049999999999272404,
+            "s30": -32.650000000001455,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C3_bigAbsOi_side_200k",
+      "combinedScore": 21.84,
+      "yday": {
+        "n": 9,
+        "hit30": 55.6,
+        "avg30": 18.72,
+        "hit15": 55.6,
+        "avg15": 2.42,
+        "buckets": {
+          "Excellent": 4,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 4,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 25,
+        "avg30": -11.3,
+        "hit15": 60,
+        "avg15": 3.13,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "CALL BUY",
+            "s15": 6.400000000001455,
+            "s30": 10.799999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:00",
+            "decision": "CALL BUY",
+            "s15": -6.799999999999272,
+            "s30": -32.25,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:31",
+            "decision": "CALL BUY",
+            "s15": 7.25,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "F3_putWrite_plus_spotUp_CALL",
+      "combinedScore": 18.24,
+      "yday": {
+        "n": 5,
+        "hit30": 60,
+        "avg30": 1.37,
+        "hit15": 60,
+        "avg15": 6.38,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 3,
+        "hit30": 66.7,
+        "avg30": 8.3,
+        "hit15": 100,
+        "avg15": 9.52,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 0,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:39",
+            "decision": "CALL BUY",
+            "s15": 12.75,
+            "s30": 6.599999999998545,
+            "bucket": "Good"
+          },
+          {
+            "time": "10:36",
+            "decision": "CALL BUY",
+            "s15": 13.900000000001455,
+            "s30": -1.7999999999992724,
+            "bucket": "Good"
+          },
+          {
+            "time": "11:11",
+            "decision": "CALL BUY",
+            "s15": 1.9000000000014552,
+            "s30": 20.100000000002183,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C2_bigChngDir_fade_800k",
+      "combinedScore": 16.22,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": 18.67,
+        "hit15": 33.3,
+        "avg15": 3.12,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -16.62,
+        "hit15": 25,
+        "avg15": -3.33,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:32",
+            "decision": "PUT BUY",
+            "s15": -15.900000000001455,
+            "s30": -26.100000000002183,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:01",
+            "decision": "PUT BUY",
+            "s15": 20.099999999998545,
+            "s30": -2.599999999998545,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:34",
+            "decision": "PUT BUY",
+            "s15": -6.19999999999709,
+            "s30": null,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "C3_bigAbsOi_side_800k",
+      "combinedScore": 11.13,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": 18.67,
+        "hit15": 33.3,
+        "avg15": 3.12,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -23.27,
+        "hit15": 33.3,
+        "avg15": -8.8,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:32",
+            "decision": "PUT BUY",
+            "s15": -15.900000000001455,
+            "s30": -26.100000000002183,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:05",
+            "decision": "PUT BUY",
+            "s15": 0.7999999999992724,
+            "s30": -22.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:36",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "A3_15_plus_5",
+      "combinedScore": 10.8,
+      "yday": {
+        "n": 8,
+        "hit30": 37.5,
+        "avg30": 5.86,
+        "hit15": 62.5,
+        "avg15": 11.44,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 2,
+          "Ok": 1,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 33.3,
+        "avg30": -4.47,
+        "hit15": 75,
+        "avg15": 4.07,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:44",
+            "decision": "CALL BUY",
+            "s15": 1.5999999999985448,
+            "s30": -1.5,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:17",
+            "decision": "PUT BUY",
+            "s15": 24.349999999998545,
+            "s30": 7.099999999998545,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:49",
+            "decision": "CALL BUY",
+            "s15": -11,
+            "s30": -19,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:32",
+            "decision": "CALL BUY",
+            "s15": 1.3500000000021828,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "A5_relaxed_15_5_oiAct",
+      "combinedScore": 7.21,
+      "yday": {
+        "n": 9,
+        "hit30": 33.3,
+        "avg30": 3.67,
+        "hit15": 33.3,
+        "avg15": 2.37,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 5,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 33.3,
+        "avg30": -2.02,
+        "hit15": 75,
+        "avg15": 9.45,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:43",
+            "decision": "CALL BUY",
+            "s15": 6.900000000001455,
+            "s30": -0.3499999999985448,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:17",
+            "decision": "PUT BUY",
+            "s15": 24.349999999998545,
+            "s30": 7.099999999998545,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:47",
+            "decision": "CALL BUY",
+            "s15": -0.7000000000007276,
+            "s30": -12.799999999999272,
+            "bucket": "Ok"
+          },
+          {
+            "time": "11:31",
+            "decision": "CALL BUY",
+            "s15": 7.25,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B6_dual_buyers_CALL",
+      "combinedScore": 2.94,
+      "yday": {
+        "n": 4,
+        "hit30": 50,
+        "avg30": 0.99,
+        "hit15": 50,
+        "avg15": 6.45,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 3,
+        "hit30": 0,
+        "avg30": -6.48,
+        "hit15": 100,
+        "avg15": 10.2,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:41",
+            "decision": "CALL BUY",
+            "s15": 11.349999999998545,
+            "s30": -6.200000000000728,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:43",
+            "decision": "CALL BUY",
+            "s15": 9.549999999999272,
+            "s30": -6.75,
+            "bucket": "Good"
+          },
+          {
+            "time": "11:30",
+            "decision": "CALL BUY",
+            "s15": 9.700000000000728,
+            "s30": null,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B4_call_short_cover_CALL",
+      "combinedScore": -3.37,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": -2.9,
+        "hit15": 33.3,
+        "avg15": -2.03,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 3,
+        "hit30": 0,
+        "avg30": -7.35,
+        "hit15": 100,
+        "avg15": 8.18,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:48",
+            "decision": "CALL BUY",
+            "s15": 5.299999999999272,
+            "s30": -7.950000000000728,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:43",
+            "decision": "CALL BUY",
+            "s15": 9.549999999999272,
+            "s30": -6.75,
+            "bucket": "Good"
+          },
+          {
+            "time": "11:30",
+            "decision": "CALL BUY",
+            "s15": 9.700000000000728,
+            "s30": null,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "E2_spot5_burst_8",
+      "combinedScore": -7.19,
+      "yday": {
+        "n": 9,
+        "hit30": 77.8,
+        "avg30": -8.43,
+        "hit15": 66.7,
+        "avg15": -2.34,
+        "buckets": {
+          "Excellent": 4,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 4,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 25,
+        "avg30": -6.44,
+        "hit15": 50,
+        "avg15": -1.2,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:05",
+            "decision": "PUT BUY",
+            "s15": 4.05000000000291,
+            "s30": 20.5,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:36",
+            "decision": "CALL BUY",
+            "s15": 13.900000000001455,
+            "s30": -1.7999999999992724,
+            "bucket": "Good"
+          },
+          {
+            "time": "11:06",
+            "decision": "PUT BUY",
+            "s15": -2.349999999998545,
+            "s30": -23.299999999999272,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "A1_full_30_15_5_3_1",
+      "combinedScore": -7.84,
+      "yday": {
+        "n": 6,
+        "hit30": 50,
+        "avg30": -5.84,
+        "hit15": 33.3,
+        "avg15": -1.97,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 2,
+        "hit30": 0,
+        "avg30": -7.6,
+        "hit15": 50,
+        "avg15": 2.3,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:49",
+            "decision": "CALL BUY",
+            "s15": -5.25,
+            "s30": -11.149999999997817,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:21",
+            "decision": "PUT BUY",
+            "s15": 9.849999999998545,
+            "s30": -4.05000000000291,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "D2_dayDiff_extreme",
+      "combinedScore": -9.76,
+      "yday": {
+        "n": 7,
+        "hit30": 42.9,
+        "avg30": -2.36,
+        "hit15": 57.1,
+        "avg15": 5.44,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 3,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 3,
+        "hit30": 0,
+        "avg30": -15.45,
+        "hit15": 66.7,
+        "avg15": 1.9,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "PUT BUY",
+            "s15": -6.400000000001455,
+            "s30": -10.799999999999272,
+            "bucket": "Ok"
+          },
+          {
+            "time": "10:24",
+            "decision": "PUT BUY",
+            "s15": 4.099999999998545,
+            "s30": -15.05000000000291,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:04",
+            "decision": "PUT BUY",
+            "s15": 8,
+            "s30": -20.5,
+            "bucket": "Bad"
+          }
+        ]
+      }
+    },
+    {
+      "name": "B3_put_writing_CALL",
+      "combinedScore": -9.86,
+      "yday": {
+        "n": 9,
+        "hit30": 44.4,
+        "avg30": -13.52,
+        "hit15": 55.6,
+        "avg15": -2.29,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 5,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 50,
+        "avg30": 2.48,
+        "hit15": 75,
+        "avg15": 6.15,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 1,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:35",
+            "decision": "CALL BUY",
+            "s15": 25.349999999998545,
+            "s30": 18,
+            "bucket": "Good"
+          },
+          {
+            "time": "10:06",
+            "decision": "CALL BUY",
+            "s15": -16.55000000000291,
+            "s30": -26.400000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:36",
+            "decision": "CALL BUY",
+            "s15": 13.900000000001455,
+            "s30": -1.7999999999992724,
+            "bucket": "Good"
+          },
+          {
+            "time": "11:11",
+            "decision": "CALL BUY",
+            "s15": 1.9000000000014552,
+            "s30": 20.100000000002183,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "11:43",
+            "decision": "CALL BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "C2_bigChngDir_fade_1500k",
+      "combinedScore": -10.14,
+      "yday": {
+        "n": 5,
+        "hit30": 40,
+        "avg30": 3.56,
+        "hit15": 60,
+        "avg15": 13.92,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -23.27,
+        "hit15": 33.3,
+        "avg15": -8.8,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:32",
+            "decision": "PUT BUY",
+            "s15": -15.900000000001455,
+            "s30": -26.100000000002183,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:05",
+            "decision": "PUT BUY",
+            "s15": 0.7999999999992724,
+            "s30": -22.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:40",
+            "decision": "CALL BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "C3_bigAbsOi_side_1500k",
+      "combinedScore": -10.14,
+      "yday": {
+        "n": 5,
+        "hit30": 40,
+        "avg30": 3.56,
+        "hit15": 60,
+        "avg15": 13.92,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -23.27,
+        "hit15": 33.3,
+        "avg15": -8.8,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:32",
+            "decision": "PUT BUY",
+            "s15": -15.900000000001455,
+            "s30": -26.100000000002183,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:30",
+            "decision": "PUT BUY",
+            "s15": -11.30000000000291,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:05",
+            "decision": "PUT BUY",
+            "s15": 0.7999999999992724,
+            "s30": -22.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:40",
+            "decision": "CALL BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "C1_bigChngDir_align_400k",
+      "combinedScore": -10.7,
+      "yday": {
+        "n": 4,
+        "hit30": 50,
+        "avg30": -7.27,
+        "hit15": 25,
+        "avg15": -1.29,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 1,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -10.85,
+        "hit15": 75,
+        "avg15": 0.66,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:41",
+            "decision": "CALL BUY",
+            "s15": 11.349999999998545,
+            "s30": -6.200000000000728,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:24",
+            "decision": "PUT BUY",
+            "s15": 4.099999999998545,
+            "s30": -15.05000000000291,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:57",
+            "decision": "CALL BUY",
+            "s15": -20.049999999999272,
+            "s30": -11.299999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:31",
+            "decision": "CALL BUY",
+            "s15": 7.25,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "A2_15_only_spot15",
+      "combinedScore": -11.69,
+      "yday": {
+        "n": 7,
+        "hit30": 42.9,
+        "avg30": -8.85,
+        "hit15": 57.1,
+        "avg15": -2.37,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 33.3,
+        "avg30": -9.32,
+        "hit15": 50,
+        "avg15": -3.37,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:38",
+            "decision": "PUT BUY",
+            "s15": -12.700000000000728,
+            "s30": -19.200000000000728,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:10",
+            "decision": "PUT BUY",
+            "s15": 8.850000000002183,
+            "s30": 10.25,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "10:49",
+            "decision": "CALL BUY",
+            "s15": -11,
+            "s30": -19,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:32",
+            "decision": "CALL BUY",
+            "s15": 1.3500000000021828,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "A4_5_3_1_short",
+      "combinedScore": -14.51,
+      "yday": {
+        "n": 10,
+        "hit30": 40,
+        "avg30": -1.29,
+        "hit15": 50,
+        "avg15": 1.6,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 0,
+          "Bad": 6,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 5,
+        "hit30": 25,
+        "avg30": -19.09,
+        "hit15": 50,
+        "avg15": -3.49,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:02",
+            "decision": "CALL BUY",
+            "s15": -10.850000000002183,
+            "s30": -35.20000000000073,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:35",
+            "decision": "CALL BUY",
+            "s15": 16.5,
+            "s30": 2.5499999999992724,
+            "bucket": "Excellent"
+          },
+          {
+            "time": "11:05",
+            "decision": "PUT BUY",
+            "s15": 0.7999999999992724,
+            "s30": -22.549999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:47",
+            "decision": "PUT BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "C1_bigChngDir_align_200k",
+      "combinedScore": -16.3,
+      "yday": {
+        "n": 9,
+        "hit30": 44.4,
+        "avg30": -0.57,
+        "hit15": 77.8,
+        "avg15": 4.14,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 4,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -25.9,
+        "hit15": 25,
+        "avg15": -16.78,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:34",
+            "decision": "PUT BUY",
+            "s15": -33.25,
+            "s30": -28,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:06",
+            "decision": "CALL BUY",
+            "s15": -16.55000000000291,
+            "s30": -26.400000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:53",
+            "decision": "CALL BUY",
+            "s15": -27,
+            "s30": -23.30000000000291,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:30",
+            "decision": "CALL BUY",
+            "s15": 9.700000000000728,
+            "s30": null,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "F6_rolling3_oiDominance",
+      "combinedScore": -21.68,
+      "yday": {
+        "n": 9,
+        "hit30": 33.3,
+        "avg30": -2.37,
+        "hit15": 55.6,
+        "avg15": 1.06,
+        "buckets": {
+          "Excellent": 2,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 5,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -26.32,
+        "hit15": 25,
+        "avg15": -11.04,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:31",
+            "decision": "PUT BUY",
+            "s15": -20.400000000001455,
+            "s30": -21.150000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:01",
+            "decision": "CALL BUY",
+            "s15": -6.450000000000728,
+            "s30": -34.5,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:53",
+            "decision": "CALL BUY",
+            "s15": -27,
+            "s30": -23.30000000000291,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:30",
+            "decision": "CALL BUY",
+            "s15": 9.700000000000728,
+            "s30": null,
+            "bucket": "Excellent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "D1_dayDiff_turn_bull",
+      "combinedScore": -25.87,
+      "yday": {
+        "n": 10,
+        "hit30": 30,
+        "avg30": -9.67,
+        "hit15": 60,
+        "avg15": -3.55,
+        "buckets": {
+          "Excellent": 3,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 5,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -20.17,
+        "hit15": 25,
+        "avg15": -10.68,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 0
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "PUT BUY",
+            "s15": -6.400000000001455,
+            "s30": -10.799999999999272,
+            "bucket": "Ok"
+          },
+          {
+            "time": "10:06",
+            "decision": "CALL BUY",
+            "s15": -16.55000000000291,
+            "s30": -26.400000000001455,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:53",
+            "decision": "CALL BUY",
+            "s15": -27,
+            "s30": -23.30000000000291,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:31",
+            "decision": "CALL BUY",
+            "s15": 7.25,
+            "s30": null,
+            "bucket": "Good"
+          }
+        ]
+      }
+    },
+    {
+      "name": "E1_spot15_only_20",
+      "combinedScore": -48.57,
+      "yday": {
+        "n": 6,
+        "hit30": 33.3,
+        "avg30": -28.79,
+        "hit15": 33.3,
+        "avg15": -11.08,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 2,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -19.93,
+        "hit15": 0,
+        "avg15": -4.5,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 1,
+          "Bad": 2,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:30",
+            "decision": "PUT BUY",
+            "s15": -6.400000000001455,
+            "s30": -10.799999999999272,
+            "bucket": "Ok"
+          },
+          {
+            "time": "10:29",
+            "decision": "PUT BUY",
+            "s15": -3.399999999997817,
+            "s30": -13.099999999998545,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:08",
+            "decision": "PUT BUY",
+            "s15": -3.6999999999970896,
+            "s30": -35.89999999999782,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:38",
+            "decision": "CALL BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    },
+    {
+      "name": "F4_bigOi_confirm_15m",
+      "combinedScore": -49.51,
+      "yday": {
+        "n": 8,
+        "hit30": 25,
+        "avg30": -23.05,
+        "hit15": 25,
+        "avg15": -10.55,
+        "buckets": {
+          "Excellent": 1,
+          "Good": 1,
+          "Ok": 1,
+          "Bad": 5,
+          "pending": 0
+        }
+      },
+      "today": {
+        "n": 4,
+        "hit30": 0,
+        "avg30": -25.57,
+        "hit15": 0,
+        "avg15": -13.23,
+        "buckets": {
+          "Excellent": 0,
+          "Good": 0,
+          "Ok": 0,
+          "Bad": 3,
+          "pending": 1
+        },
+        "sample": [
+          {
+            "time": "09:37",
+            "decision": "PUT BUY",
+            "s15": -22,
+            "s30": -26,
+            "bucket": "Bad"
+          },
+          {
+            "time": "10:07",
+            "decision": "CALL BUY",
+            "s15": -15.349999999998545,
+            "s30": -27.399999999997817,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:06",
+            "decision": "PUT BUY",
+            "s15": -2.349999999998545,
+            "s30": -23.299999999999272,
+            "bucket": "Bad"
+          },
+          {
+            "time": "11:37",
+            "decision": "CALL BUY",
+            "s15": null,
+            "s30": null,
+            "bucket": null
+          }
+        ]
+      }
+    }
+  ]
+}

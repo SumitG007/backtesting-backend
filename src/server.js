@@ -69,6 +69,14 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiFlowPaper = require('./services/oiFlowPaperEngine');
+    await oiFlowPaper.ensureEngineRunning();
+    console.log('OI Flow paper trade engine started');
+  } catch (err) {
+    console.warn('OI Flow paper engine boot:', err.message);
+  }
+
+  try {
     const boot = await strategySixPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('Short straddle paper-live engine started (strategy-6)');

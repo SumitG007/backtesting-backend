@@ -123,6 +123,20 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownSeconds: { type: Number, default: 90 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** OI Flow Tracker paper (Put writing→CALL / Put buying→PUT). */
+    oiFlowEngineSettings: {
+      enabled: { type: Boolean, default: false },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:30' },
+      tradeToTime: { type: String, default: '14:30' },
+      eodExitTime: { type: String, default: '15:15' },
+      targetPoints: { type: Number, default: 10 },
+      stopLossPoints: { type: Number, default: 8 },
+      minPutOi: { type: Number, default: 80000 },
+      cooldownMinutes: { type: Number, default: 30 },
+      perTradeCost: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

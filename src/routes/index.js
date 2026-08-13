@@ -58,7 +58,16 @@ const {
 const {
   getOiFlowStatus,
   getOiFlowToday,
+  getOiFlowSignals,
 } = require('../controllers/oiFlowController');
+const {
+  getOiFlowPaperStatus,
+  getOiFlowPaperBook,
+  getOiFlowPaperTrades,
+  postOiFlowPaperEnabled,
+  patchOiFlowPaperSettings,
+  postOiFlowPaperClose,
+} = require('../controllers/oiFlowPaperController');
 const {
   getPatternResearch,
   getPatternResearchReport,
@@ -129,5 +138,12 @@ router.post('/manual-oi-auto/close', postManualOiAutoClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
+router.get('/oi-flow/signals', getOiFlowSignals);
+router.get('/oi-flow/paper/status', getOiFlowPaperStatus);
+router.get('/oi-flow/paper/book', getOiFlowPaperBook);
+router.get('/oi-flow/paper/trades', getOiFlowPaperTrades);
+router.post('/oi-flow/paper/enabled', postOiFlowPaperEnabled);
+router.patch('/oi-flow/paper/settings', patchOiFlowPaperSettings);
+router.post('/oi-flow/paper/close', postOiFlowPaperClose);
 
 module.exports = router;
