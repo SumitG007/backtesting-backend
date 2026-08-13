@@ -28,8 +28,10 @@ const {
   updateLiveSignalOnExit,
   updateLiveSignalOpenMark,
 } = require('./oiFlowLiveSignalStore');
+const { pushNotification } = require('./notificationHub');
 
 const STRATEGY_KEY = OI_FLOW_TRACKER_LIVE_KEY;
+const NOTIF_STRATEGY = 'OI Flow Tracker';
 const WALLET_KEY = 'paper_live_oi_flow';
 const LOOP_MS = 5000;
 const TICK_KEEP_MS = 5 * 60 * 1000;
@@ -454,6 +456,16 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
     engineState.lastExitAtMs = Date.now();
     // Do not re-enter on the same ongoing signal — wait until decision goes WAIT.
     engineState.entryArmed = false;
+
+    pushNotification({
+      type: 'EXIT',
+      strategy: NOTIF_STRATEGY,
+      title: `Closed ${trade.optionType || ''} ${trade.strike || ''}`.trim(),
+      body: `${reason} · P/L ₹${Number(pnl.toFixed(2))} · exit ₹${Number(safeExit.toFixed(2))}`,
+      meta: { tradeId: String(trade._id), reason, pnl },
+      dedupeKey: `oi-flow-exit:${trade._id}`,
+    });
+
     return trade;
   } finally {
     engineState.closingTrade = false;
@@ -833,6 +845,15 @@ async function tryEnter(signal) {
     } catch {
       /* signal history must not block the fill */
     }
+
+    pushNotification({
+      type: 'ENTRY',
+      strategy: NOTIF_STRATEGY,
+      title: `Entered ${optionType} ${strike}`,
+      body: `${signal.decision || ''} · ${signal.putAct || ''} · ₹${Number(entryPremium.toFixed(2))} · ${signal.time || ''}`.trim(),
+      meta: { tradeId: String(tradeDoc._id), optionType, strike, symbol },
+      dedupeKey: `oi-flow-entry:${tradeDoc._id}`,
+    });
 
     await saveOptionTick(tradeDoc, {
       optionLtp: entryPremium,
