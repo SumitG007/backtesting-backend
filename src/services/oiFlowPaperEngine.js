@@ -1,7 +1,7 @@
 /**
  * OI Flow Tracker paper engine.
  * Put writing ≥0.8L → LONG CE · Put buying ≥0.8L → LONG PE
- * Premium SL/TP (defaults −8 / +10) · 10 lots · 5m option tick buffer for fair fills.
+ * Premium SL/TP (defaults −8 / +10) · max hold 15m TIME_EXIT · 10 lots · 5m tick buffer.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS = {
   eodExitTime: '15:15',
   targetPoints: 10,
   stopLossPoints: 8,
+  maxHoldMinutes: 15,
   minPutOi: 80000,
   cooldownMinutes: 30,
   perTradeCost: 0,
@@ -91,6 +92,11 @@ function normalizeSettings(raw = {}) {
   s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.targetPoints = Math.max(1, Number(s.targetPoints) || 10);
   s.stopLossPoints = Math.max(1, Number(s.stopLossPoints) || 8);
+  // 0 = disabled; otherwise 1–240 minutes (default 15)
+  const holdRaw = Number(s.maxHoldMinutes);
+  s.maxHoldMinutes = Number.isFinite(holdRaw)
+    ? Math.max(0, Math.min(240, Math.floor(holdRaw)))
+    : 15;
   s.minPutOi = Math.max(10000, Number(s.minPutOi) || 80000);
   s.cooldownMinutes = Math.max(5, Math.floor(Number(s.cooldownMinutes) || 30));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
@@ -425,6 +431,16 @@ async function checkOpenTrade() {
       mark,
       reason: 'TARGET',
     });
+    return;
+  }
+
+  const maxHoldMin = Number(engineState.settings.maxHoldMinutes) || 0;
+  if (maxHoldMin > 0 && heldMs >= maxHoldMin * 60 * 1000) {
+    await finalizeTrade(open, {
+      exitPremium: optionLtp,
+      mark,
+      reason: 'TIME_EXIT',
+    });
   }
 }
 
@@ -646,6 +662,7 @@ async function updateSettings(body = {}) {
     'eodExitTime',
     'targetPoints',
     'stopLossPoints',
+    'maxHoldMinutes',
     'minPutOi',
     'cooldownMinutes',
     'perTradeCost',

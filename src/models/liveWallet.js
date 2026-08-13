@@ -133,6 +133,7 @@ const liveWalletSchema = new mongoose.Schema(
       eodExitTime: { type: String, default: '15:15' },
       targetPoints: { type: Number, default: 10 },
       stopLossPoints: { type: Number, default: 8 },
+      maxHoldMinutes: { type: Number, default: 15 },
       minPutOi: { type: Number, default: 80000 },
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 0 },
