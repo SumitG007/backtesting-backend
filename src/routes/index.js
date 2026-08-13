@@ -59,6 +59,7 @@ const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowSignals,
+  postOiFlowSignalsBackfill,
 } = require('../controllers/oiFlowController');
 const {
   getOiFlowPaperStatus,
@@ -139,6 +140,7 @@ router.post('/manual-oi-auto/close', postManualOiAutoClose);
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
 router.get('/oi-flow/signals', getOiFlowSignals);
+router.post('/oi-flow/signals/backfill', postOiFlowSignalsBackfill);
 router.get('/oi-flow/paper/status', getOiFlowPaperStatus);
 router.get('/oi-flow/paper/book', getOiFlowPaperBook);
 router.get('/oi-flow/paper/trades', getOiFlowPaperTrades);

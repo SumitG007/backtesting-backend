@@ -23,6 +23,11 @@ const {
   normalizeRows,
   buildIndex,
 } = require('./oiFlowSignalEngine');
+const {
+  saveLiveSignalFromEntry,
+  updateLiveSignalOnExit,
+  updateLiveSignalOpenMark,
+} = require('./oiFlowLiveSignalStore');
 
 const STRATEGY_KEY = OI_FLOW_TRACKER_LIVE_KEY;
 const WALLET_KEY = 'paper_live_oi_flow';
@@ -438,6 +443,11 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
       source: resolved?.source || 'exit',
       securityId: resolved?.securityId,
     });
+    try {
+      await updateLiveSignalOnExit(trade);
+    } catch {
+      /* signal history must not block exit */
+    }
 
     await recalcWalletFromTrades();
     engineState.openTradeId = null;
@@ -497,6 +507,11 @@ async function checkOpenTrade() {
     };
     open.openPositionMarkAt = new Date();
     await open.save();
+    try {
+      await updateLiveSignalOpenMark(open);
+    } catch {
+      /* ignore */
+    }
   }
   // Only persist ticks from live resolve (not held stale display) when fresh feed/chain.
   if (
@@ -812,6 +827,12 @@ async function tryEnter(signal) {
       entryPremium,
       entrySource,
     };
+
+    try {
+      await saveLiveSignalFromEntry(tradeDoc, signal);
+    } catch {
+      /* signal history must not block the fill */
+    }
 
     await saveOptionTick(tradeDoc, {
       optionLtp: entryPremium,
