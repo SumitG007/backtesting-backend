@@ -81,10 +81,6 @@ function initRealtime(httpServer) {
         let engine = null;
         if (strategyId === 'manual-console') {
           engine = require('./manualTradeEngine');
-        } else if (strategyId === 'strategy-10') {
-          engine = require('./liveMorningOiMultiEngine');
-        } else if (strategyId === 'strategy-9') {
-          engine = require('./liveMorningOiEngine');
         } else if (strategyId === 'strategy-14') {
           engine = require('./liveEodOiWallsEngine');
         } else {

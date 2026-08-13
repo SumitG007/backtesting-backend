@@ -694,7 +694,7 @@ async function onManualOptionTick(tradeId, ltp) {
   if (!Number.isFinite(n) || n <= 0) return;
   rememberTick(id, n);
 
-  // Instant UI path — no DB wait (same idea as OI Wall Entry).
+  // Instant UI path — no DB wait.
   const lite = liveSubs.get(id)?.tradeLite;
   if (lite) {
     const clock = getIstClock(new Date());
@@ -1870,7 +1870,7 @@ async function getChainAroundAtm({ symbol, expiry }) {
   };
 }
 
-/** Same Live OI Chain board shape as OI Wall Entry (FUT-anchored ATM + ΔOI). */
+/** Live OI Chain board shape (FUT-anchored ATM + ΔOI). */
 async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
   const clock = getIstClock(new Date());
   const raw = String(symbol || 'NIFTY').toUpperCase().trim() || 'NIFTY';

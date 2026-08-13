@@ -9,8 +9,6 @@ const { hydrateDhanTokenFromMongo } = require('./services/dhanTokenPersistence')
 const { scheduleNseHolidayRefresh } = require('./services/nseHolidayService');
 const { initRealtime } = require('./services/realtimeSocket');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
-const strategyTwelvePaperEngine = require('./services/liveMorningOiEngine');
-const strategyTwelveMultiPaperEngine = require('./services/liveMorningOiMultiEngine');
 const strategyFourteenPaperEngine = require('./services/liveEodOiWallsEngine');
 
 /** Legacy Strategy A reopen env — engine retired. */
@@ -25,8 +23,6 @@ async function bootBackgroundServices() {
   try {
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
     await s6.reconcileOpenTrades();
-    await require('./services/liveMorningOiEngine').reconcileOpenTrades();
-    await require('./services/liveMorningOiMultiEngine').reconcileOpenTrades();
     await require('./services/liveEodOiWallsEngine').reconcileOpenTrades();
   } catch (err) {
     console.warn('Paper-live open-trade reconcile:', err.message);
@@ -88,28 +84,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const boot = await strategyTwelvePaperEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('OI Wall Entry paper-live started (strategy-9)');
-    } else {
-      console.warn('OI Wall Entry paper-live boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('OI Wall Entry paper-live boot failed:', err.message);
-  }
-
-  try {
-    const boot = await strategyTwelveMultiPaperEngine.ensureEngineRunning();
-    if (boot.ok) {
-      console.log('OI Wall Multi paper-live started (strategy-10)');
-    } else {
-      console.warn('OI Wall Multi paper-live boot:', boot.error || 'unknown');
-    }
-  } catch (err) {
-    console.warn('OI Wall Multi paper-live boot failed:', err.message);
-  }
-
-  try {
     const boot = await strategyFourteenPaperEngine.ensureEngineRunning();
     if (boot.ok) {
       console.log('EOD OI Walls paper-live started (strategy-14)');
@@ -123,12 +97,7 @@ async function bootBackgroundServices() {
   try {
     const { notifyDhanConnectivityRestored } = require('./services/livePaperEngineRecovery');
     const resume = await notifyDhanConnectivityRestored();
-    if (
-      resume.strategy6?.resumed
-      || resume.strategy12?.resumed
-      || resume.strategy12Multi?.resumed
-      || resume.strategy14?.resumed
-    ) {
+    if (resume.strategy6?.resumed || resume.strategy14?.resumed) {
       console.log('Paper-live resumed open positions from MongoDB after boot', resume);
     }
   } catch (err) {

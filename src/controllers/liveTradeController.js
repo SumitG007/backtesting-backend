@@ -2,21 +2,15 @@ const ExcelJS = require('exceljs');
 const LiveWallet = require('../models/liveWallet');
 const LivePaperTrade = require('../models/livePaperTrade');
 const strategySixEngine = require('../services/liveShortStraddleEngineStrategy6');
-const strategyTwelveEngine = require('../services/liveMorningOiEngine');
-const strategyTwelveMultiEngine = require('../services/liveMorningOiMultiEngine');
 const strategyFourteenEngine = require('../services/liveEodOiWallsEngine');
 const {
   STRATEGY_SIX_KEY,
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
-  STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
-  STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
   STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY,
 } = require('../strategies/keys');
 
 const KNOWN_PAPER_LIVE_KEYS = [
   STRATEGY_SIX_SHORT_STRADDLE_LIVE_KEY,
-  STRATEGY_TWELVE_MORNING_OI_LIVE_KEY,
-  STRATEGY_TWELVE_MORNING_OI_MULTI_LIVE_KEY,
   STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY,
 ];
 
@@ -222,42 +216,6 @@ function isStraddleLiveStrategyId(strategyId) {
   return strategyId === 'strategy-6';
 }
 
-function morningOiPaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: strategyTwelveEngine.STRATEGY_KEY,
-    startEngine: strategyTwelveEngine.startEngine,
-    stopEngine: strategyTwelveEngine.stopEngine,
-    updateEngineSettings: strategyTwelveEngine.updateEngineSettings,
-    getEngineSnapshot: strategyTwelveEngine.getEngineSnapshot,
-    ensureWallet: strategyTwelveEngine.ensureWallet,
-    recalcWallet: strategyTwelveEngine.recalcWalletFromTrades,
-    ensureRunning: strategyTwelveEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyTwelveEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyTwelveEngine.closeOpenPosition,
-    refreshOpenMark: strategyTwelveEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategyTwelveEngine.clearDailySkipState,
-  };
-}
-
-function morningOiMultiPaperLiveCtx(strategyId) {
-  return {
-    strategyId,
-    strategyKey: strategyTwelveMultiEngine.STRATEGY_KEY,
-    startEngine: strategyTwelveMultiEngine.startEngine,
-    stopEngine: strategyTwelveMultiEngine.stopEngine,
-    updateEngineSettings: strategyTwelveMultiEngine.updateEngineSettings,
-    getEngineSnapshot: strategyTwelveMultiEngine.getEngineSnapshot,
-    ensureWallet: strategyTwelveMultiEngine.ensureWallet,
-    recalcWallet: strategyTwelveMultiEngine.recalcWalletFromTrades,
-    ensureRunning: strategyTwelveMultiEngine.ensureEngineRunning,
-    reconcileOpenTrades: strategyTwelveMultiEngine.reconcileOpenTrades,
-    closeOpenPosition: strategyTwelveMultiEngine.closeOpenPosition,
-    refreshOpenMark: strategyTwelveMultiEngine.refreshOpenPositionMarkForStatus,
-    clearDailySkip: strategyTwelveMultiEngine.clearDailySkipState,
-  };
-}
-
 function eodOiWallsPaperLiveCtx(strategyId) {
   return {
     strategyId,
@@ -276,14 +234,8 @@ function eodOiWallsPaperLiveCtx(strategyId) {
   };
 }
 
-function isMorningOiLiveStrategyId(strategyId) {
-  return strategyId === 'strategy-9' || strategyId === 'strategy-10';
-}
-
 const LIVE_STRATEGIES = {
   'strategy-6': straddlePaperLiveCtx('strategy-6', strategySixEngine),
-  'strategy-9': morningOiPaperLiveCtx('strategy-9'),
-  'strategy-10': morningOiMultiPaperLiveCtx('strategy-10'),
   'strategy-14': eodOiWallsPaperLiveCtx('strategy-14'),
 };
 
@@ -345,8 +297,7 @@ async function getStatus(req, res) {
       }
     }
     let openTrade = openTrades[0] || null;
-    // OI Wall Multi: multi-open. Other strategies keep single openTrade.
-    if (ctx.strategyId !== 'strategy-10' && openTrades.length > 1) {
+    if (openTrades.length > 1) {
       openTrades = openTrade ? [openTrade] : [];
     }
     const snapshot = ctx.getEngineSnapshot();
@@ -390,13 +341,9 @@ async function getStatus(req, res) {
       strategyLabel:
         ctx.strategyId === 'strategy-6'
           ? 'Short straddle'
-          : ctx.strategyId === 'strategy-10'
-            ? 'OI Wall Multi'
-            : ctx.strategyId === 'strategy-14'
-              ? 'EOD OI Walls'
-              : isMorningOiLiveStrategyId(ctx.strategyId)
-                ? 'OI Wall Entry'
-                : 'Paper-live',
+          : ctx.strategyId === 'strategy-14'
+            ? 'EOD OI Walls'
+            : 'Paper-live',
     });
     return res.json({
       ok: true,
@@ -447,15 +394,6 @@ function stopLive(req, res) {
   try {
     const ctx = getLiveContext(req);
     if (!ctx) return res.status(404).json({ ok: false, error: 'Unknown live strategy' });
-    // OI Wall engines are always-on — ignore stop requests.
-    if (isMorningOiLiveStrategyId(ctx.strategyId)) {
-      return res.json({
-        ok: true,
-        ignored: true,
-        message: 'This OI engine always runs — stop is disabled',
-        state: ctx.getEngineSnapshot(),
-      });
-    }
     return res.json(ctx.stopEngine());
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
