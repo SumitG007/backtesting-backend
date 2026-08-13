@@ -520,7 +520,7 @@ function readOiField(leg, keys) {
 
 /**
  * Live option-chain OI snapshot (not persisted). Parses Dhan `oc` CE/PE oi + previous_oi.
- * Returns nearby strikes ranked by Put vs Call dominance for morning OI strategies.
+ * Returns nearby strikes ranked by Put vs Call dominance for OI wall strategies.
  */
 async function getOptionChainOiSnapshot({
   symbol = 'NIFTY',

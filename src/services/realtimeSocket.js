@@ -74,7 +74,7 @@ function initRealtime(httpServer) {
       socket.emit('notification:day', listToday());
     });
 
-    // Paper-live MTM / live mark snapshot (OI Wall + Manual Console).
+    // Paper-live MTM / live mark snapshot (EOD OI Walls + Manual Console).
     socket.on('paper-live:subscribe', (msg = {}) => {
       const strategyId = String(msg?.strategyId || '').toLowerCase();
       try {

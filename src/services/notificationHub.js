@@ -84,7 +84,7 @@ function markAllRead() {
 
 /**
  * Remove today's notifications for a strategy (or all if strategy omitted).
- * Matches strategy label case-insensitively (e.g. "OI Wall").
+ * Matches strategy label case-insensitively (e.g. "EOD OI Walls").
  */
 function clearNotifications({ strategy = null } = {}) {
   ensureToday();
