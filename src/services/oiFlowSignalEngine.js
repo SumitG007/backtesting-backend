@@ -1,8 +1,9 @@
 /**
- * OI Flow paper signals — Put OI acts both ways:
- *   Put buying  + Put ΔOI ≥ 0.8L → PUT BUY
- *   Put writing + Put ΔOI ≥ 0.8L → CALL BUY
- * Window 09:30–14:30. Future used ONLY for +1/+5/+15 accuracy.
+ * OI Flow paper signals — ROBUST B defaults:
+ *   Put buying  + Put ΔOI ≥ 2.5L + spot ↓ → PUT BUY
+ *   Put writing + Put ΔOI ≥ 2.5L + spot ↑ → CALL BUY
+ *   Skip mega spike Put ΔOI > 30L
+ * Window 09:30–14:30. Future used ONLY for +1/+5/+15 accuracy (research), never for entry.
  */
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
 const { getIstClock } = require('../utils/dateTime');
@@ -10,7 +11,8 @@ const { getIstClock } = require('../utils/dateTime');
 const TRADE_FROM = 9 * 60 + 30;
 const TRADE_TO = 14 * 60 + 30;
 const MIN_HOLD_MIN = 30;
-const MIN_PUT_OI = 80000; // 0.8L
+const MIN_PUT_OI = 250000; // 2.5L (ROBUST B)
+const MAX_PUT_OI = 3000000; // 30L spike cap
 const PUT_BUY_MIN_OI = MIN_PUT_OI; // export alias
 
 function normalizeRows(raw) {
@@ -115,6 +117,14 @@ function decideRaw(ctx, minute, opts = {}) {
   if (!cur) return null;
 
   const minPutOi = Math.max(10000, Number(opts.minPutOi) || MIN_PUT_OI);
+  const maxPutOiRaw = opts.maxPutOi;
+  const maxPutOi =
+    maxPutOiRaw == null || maxPutOiRaw === '' || Number(maxPutOiRaw) <= 0
+      ? MAX_PUT_OI
+      : Math.max(minPutOi, Number(maxPutOiRaw));
+  const requireSpotAlign =
+    opts.requireSpotAlign == null ? true : Boolean(opts.requireSpotAlign);
+
   const flow = flowAt(ctx, minute);
   const base = {
     time: cur.time,
@@ -130,6 +140,8 @@ function decideRaw(ctx, minute, opts = {}) {
     callAct: flow.callAct,
     putAct: flow.putAct,
     minPutOi,
+    maxPutOi,
+    requireSpotAlign,
   };
 
   if (minute < TRADE_FROM || minute > TRADE_TO) {
@@ -137,22 +149,45 @@ function decideRaw(ctx, minute, opts = {}) {
   }
 
   const putChg = Number(flow.putChg) || 0;
+  const spotChg1 = Number(flow.spotChg1);
+
+  if (putChg > maxPutOi) {
+    return {
+      ...base,
+      decision: 'WAIT',
+      reason: `mega spike Put ΔOI ${putChg} > ${maxPutOi} (skip)`,
+    };
+  }
 
   if (flow.putAct === 'Put buying' && putChg >= minPutOi) {
+    if (requireSpotAlign && !(spotChg1 < 0)) {
+      return {
+        ...base,
+        decision: 'WAIT',
+        reason: `Put buying ≥ ${minPutOi} but spot not down (d1=${spotChg1})`,
+      };
+    }
     return {
       ...base,
       decision: 'PUT BUY',
-      matchedRule: `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`,
-      reason: `Put buying ≥ ${minPutOi} (got ${putChg})`,
+      matchedRule: `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`,
+      reason: `Put buying ≥ ${minPutOi} (got ${putChg}) · spot ↓`,
     };
   }
 
   if (flow.putAct === 'Put writing' && putChg >= minPutOi) {
+    if (requireSpotAlign && !(spotChg1 > 0)) {
+      return {
+        ...base,
+        decision: 'WAIT',
+        reason: `Put writing ≥ ${minPutOi} but spot not up (d1=${spotChg1})`,
+      };
+    }
     return {
       ...base,
       decision: 'CALL BUY',
-      matchedRule: `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`,
-      reason: `Put writing ≥ ${minPutOi} (got ${putChg})`,
+      matchedRule: `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`,
+      reason: `Put writing ≥ ${minPutOi} (got ${putChg}) · spot ↑`,
     };
   }
 
@@ -358,5 +393,7 @@ module.exports = {
   TRADE_FROM,
   TRADE_TO,
   MIN_HOLD_MIN,
+  MIN_PUT_OI,
+  MAX_PUT_OI,
   PUT_BUY_MIN_OI,
 };

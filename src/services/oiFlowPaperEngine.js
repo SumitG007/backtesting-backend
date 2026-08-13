@@ -1,7 +1,8 @@
 /**
- * OI Flow Tracker paper engine.
- * Put writing ≥0.8L → LONG CE · Put buying ≥0.8L → LONG PE
- * Premium SL/TP (defaults −8 / +10) · max hold 15m TIME_EXIT · 10 lots · 5m tick buffer.
+ * OI Flow Tracker paper engine — ROBUST B (always on).
+ * Put buying ≥2.5L + spot↓ → LONG PE · Put writing ≥2.5L + spot↑ → LONG CE
+ * Skip Put ΔOI > 30L · TP+10 / SL−8 · max hold 15m · cooldown 30m · 10 lots
+ * Auto entry/exit only — no manual start/stop/close required.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -31,7 +32,7 @@ const MIN_HOLD_MS = 15000;
 const EXIT_EPS = 0.15;
 
 const DEFAULT_SETTINGS = {
-  enabled: false,
+  enabled: true, // always-on paper engine
   symbol: 'NIFTY',
   lotCount: 10,
   tradeFromTime: '09:30',
@@ -40,7 +41,9 @@ const DEFAULT_SETTINGS = {
   targetPoints: 10,
   stopLossPoints: 8,
   maxHoldMinutes: 15,
-  minPutOi: 80000,
+  minPutOi: 250000, // 2.5L ROBUST B
+  maxPutOi: 3000000, // 30L spike cap
+  requireSpotAlign: true,
   cooldownMinutes: 30,
   perTradeCost: 0,
 };
@@ -89,7 +92,8 @@ function isEod(clockMinutes, eodStr) {
 
 function normalizeSettings(raw = {}) {
   const s = { ...DEFAULT_SETTINGS, ...(raw || {}) };
-  s.enabled = Boolean(s.enabled);
+  // Engine always runs — ignore stored false from older wallets.
+  s.enabled = true;
   s.symbol = String(s.symbol || 'NIFTY').toUpperCase();
   s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.targetPoints = Math.max(1, Number(s.targetPoints) || 10);
@@ -99,7 +103,10 @@ function normalizeSettings(raw = {}) {
   s.maxHoldMinutes = Number.isFinite(holdRaw)
     ? Math.max(0, Math.min(240, Math.floor(holdRaw)))
     : 15;
-  s.minPutOi = Math.max(10000, Number(s.minPutOi) || 80000);
+  s.minPutOi = Math.max(10000, Number(s.minPutOi) || 250000);
+  const maxRaw = Number(s.maxPutOi);
+  s.maxPutOi = Number.isFinite(maxRaw) && maxRaw > 0 ? Math.max(s.minPutOi, maxRaw) : 3000000;
+  s.requireSpotAlign = s.requireSpotAlign == null ? true : Boolean(s.requireSpotAlign);
   s.cooldownMinutes = Math.max(5, Math.floor(Number(s.cooldownMinutes) || 30));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:30');
@@ -124,7 +131,29 @@ async function ensureWallet() {
 
 async function loadSettingsFromDb() {
   const wallet = await ensureWallet();
-  engineState.settings = normalizeSettings(wallet.oiFlowEngineSettings || {});
+  const raw = wallet.oiFlowEngineSettings?.toObject?.() || wallet.oiFlowEngineSettings || {};
+  // One-time migrate older wallets onto ROBUST B always-on defaults.
+  const needsMigrate =
+    raw.enabled === false ||
+    raw.requireSpotAlign == null ||
+    raw.maxPutOi == null ||
+    Number(raw.minPutOi) === 80000 ||
+    !Number(raw.minPutOi);
+  if (needsMigrate) {
+    engineState.settings = await saveSettingsToDb({
+      enabled: true,
+      minPutOi: 250000,
+      maxPutOi: 3000000,
+      requireSpotAlign: true,
+      maxHoldMinutes: Number(raw.maxHoldMinutes) > 0 ? Number(raw.maxHoldMinutes) : 15,
+      cooldownMinutes: Number(raw.cooldownMinutes) || 30,
+      targetPoints: Number(raw.targetPoints) || 10,
+      stopLossPoints: Number(raw.stopLossPoints) || 8,
+      lotCount: Number(raw.lotCount) || 10,
+    });
+    return engineState.settings;
+  }
+  engineState.settings = normalizeSettings(raw);
   return engineState.settings;
 }
 
@@ -550,6 +579,8 @@ async function readLatestSignal() {
   const last = rows[rows.length - 1];
   const decision = decideRaw(ctx, last.minutes, {
     minPutOi: engineState.settings.minPutOi,
+    maxPutOi: engineState.settings.maxPutOi,
+    requireSpotAlign: engineState.settings.requireSpotAlign,
   });
   engineState.lastDecision = decision;
   // Re-arm only after signal clears (WAIT) — next BUY is a fresh setup.
@@ -564,7 +595,7 @@ async function readLatestSignal() {
 }
 
 async function tryEnter(signal) {
-  if (!engineState.settings.enabled) return;
+  // Always-on engine — enabled is forced true in normalizeSettings.
   if (!signal || engineState.openTradeId || engineState.enteringTrade || engineState.closingTrade) {
     return;
   }
@@ -682,7 +713,9 @@ async function tryEnter(signal) {
     const targetPoints = Number(engineState.settings.targetPoints) || 10;
     const stopLossPoints = Number(engineState.settings.stopLossPoints) || 8;
     const maxHoldMinutes = Number(engineState.settings.maxHoldMinutes) || 15;
-    const minPutOi = Number(engineState.settings.minPutOi) || 80000;
+    const minPutOi = Number(engineState.settings.minPutOi) || 250000;
+    const maxPutOi = Number(engineState.settings.maxPutOi) || 3000000;
+    const requireSpotAlign = engineState.settings.requireSpotAlign !== false;
     const targetPremium = entryPremium + targetPoints;
     const stopLossPremium = Math.max(0.05, entryPremium - stopLossPoints);
 
@@ -691,11 +724,13 @@ async function tryEnter(signal) {
       matchedRule:
         signal.matchedRule ||
         (signal.decision === 'PUT BUY'
-          ? `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`
-          : `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`),
+          ? `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`
+          : `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`),
       rules: [
-        `Put buying + Put ΔOI ≥ ${minPutOi} → PUT BUY (LONG PE)`,
-        `Put writing + Put ΔOI ≥ ${minPutOi} → CALL BUY (LONG CE)`,
+        `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`,
+        `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`,
+        `Skip mega spike Put ΔOI > ${maxPutOi}`,
+        `Spot align ${requireSpotAlign ? 'ON' : 'OFF'} · max hold ${maxHoldMinutes}m · cooldown ${engineState.settings.cooldownMinutes}m`,
       ],
       reason: signal.reason || null,
       time: signal.time,
@@ -711,6 +746,8 @@ async function tryEnter(signal) {
       callChg: signal.callChg,
       callChgL: signal.callChgL,
       minPutOi,
+      maxPutOi,
+      requireSpotAlign,
       targetPoints,
       stopLossPoints,
       maxHoldMinutes,
@@ -792,8 +829,11 @@ async function tickOnce() {
   engineState.tickInFlight = true;
   try {
     await loadSettingsFromDb();
+    // Persist always-on if wallet still has stale enabled:false
+    if (engineState.settings.enabled !== true) {
+      await saveSettingsToDb({ enabled: true });
+    }
     await checkOpenTrade();
-    if (!engineState.settings.enabled) return;
     if (engineState.openTradeId) return;
     const signal = await readLatestSignal();
     if (signal) await tryEnter(signal);
@@ -849,10 +889,11 @@ async function ensureEngineRunning() {
   return { ok: true, started: true };
 }
 
-async function setEnabled(enabled) {
+async function setEnabled(_enabled) {
   await ensureEngineRunning();
-  const next = await saveSettingsToDb({ enabled: Boolean(enabled) });
-  return { ok: true, settings: next, enabled: next.enabled };
+  // Always-on — ignore disable requests from older clients.
+  const next = await saveSettingsToDb({ enabled: true });
+  return { ok: true, settings: next, enabled: true };
 }
 
 async function updateSettings(body = {}) {
@@ -868,6 +909,8 @@ async function updateSettings(body = {}) {
     'stopLossPoints',
     'maxHoldMinutes',
     'minPutOi',
+    'maxPutOi',
+    'requireSpotAlign',
     'cooldownMinutes',
     'perTradeCost',
   ];
@@ -895,7 +938,7 @@ async function getStatus() {
     enabled: Boolean(engineState.settings.enabled),
     settings: engineState.settings,
     strategyKey: STRATEGY_KEY,
-    strategyLabel: 'Put writing → CALL · Put buying → PUT',
+    strategyLabel: 'ROBUST B · Put≥2.5L + spot align · cap 30L',
     openTrade: open || null,
     lastDecision: engineState.lastDecision,
     lastEntryDebug: engineState.lastEntryDebug,
@@ -971,7 +1014,7 @@ async function getBookSummary() {
   return {
     settings: engineState.settings,
     enabled: Boolean(engineState.settings.enabled),
-    strategyLabel: 'Put writing → CALL · Put buying → PUT',
+    strategyLabel: 'ROBUST B · Put≥2.5L + spot align · cap 30L',
     decision: engineState.lastDecision,
     entryArmed: Boolean(engineState.entryArmed),
     wallet: {
@@ -993,19 +1036,8 @@ async function getBookSummary() {
   };
 }
 
-async function closeOpenTradeManual(reason = 'MANUAL_CLOSE') {
-  const open = await LivePaperTrade.findOne({
-    strategyKey: STRATEGY_KEY,
-    status: 'OPEN',
-    exitTime: null,
-  }).sort({ entryTime: -1 });
-  if (!open) throw new Error('No open OI Flow paper trade');
-  const mark = await resolveOptionLtp(open);
-  return finalizeTrade(open, {
-    exitPremium: mark.optionLtp,
-    mark,
-    reason,
-  });
+async function closeOpenTradeManual(_reason = 'MANUAL_CLOSE') {
+  throw new Error('Manual close disabled — OI Flow ROBUST B exits only on Target / SL / Time / Day close');
 }
 
 module.exports = {
