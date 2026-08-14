@@ -69,6 +69,7 @@ const {
   patchOiFlowPaperSettings,
   postOiFlowPaperClose,
 } = require('../controllers/oiFlowPaperController');
+const { getOiFlowBbBounceBacktest } = require('../controllers/oiFlowBbBounceController');
 const {
   getPatternResearch,
   getPatternResearchReport,
@@ -147,5 +148,6 @@ router.get('/oi-flow/paper/trades', getOiFlowPaperTrades);
 router.post('/oi-flow/paper/enabled', postOiFlowPaperEnabled);
 router.patch('/oi-flow/paper/settings', patchOiFlowPaperSettings);
 router.post('/oi-flow/paper/close', postOiFlowPaperClose);
+router.get('/oi-flow/bb-bounce/backtest', getOiFlowBbBounceBacktest);
 
 module.exports = router;
