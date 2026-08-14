@@ -168,6 +168,7 @@ async function getManualTrades(req, res) {
       page: parsePage(req.query?.page),
       pageSize: parsePageSize(req.query?.pageSize, 50),
       status: req.query?.status,
+      book: req.query?.book,
     });
     return res.json({ ok: true, ...data });
   } catch (error) {

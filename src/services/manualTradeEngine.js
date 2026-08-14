@@ -56,6 +56,17 @@ const MAX_DEPOSIT_HISTORY = 100;
 /** Futures: lock ~12% of notional so ₹5k/10k/50k top-ups remain usable. */
 const FUTURE_MARGIN_PCT = 0.12;
 
+function parseIsTesting(value) {
+  return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
+}
+
+async function tagLegacyOpenAsTesting() {
+  await LivePaperTrade.updateMany(
+    { strategyKey: STRATEGY_KEY, exitTime: null, isTesting: { $exists: false } },
+    { $set: { isTesting: true } },
+  );
+}
+
 const engineState = {
   running: false,
   startedAt: null,
@@ -449,6 +460,7 @@ async function recalcWalletFromTrades() {
   let grossProfit = 0;
   let grossLoss = 0;
   for (const t of closed) {
+    if (t.isTesting === true) continue;
     const pnl = Number(t.pnl);
     if (!Number.isFinite(pnl)) continue;
     realizedPnl += pnl;
@@ -479,7 +491,7 @@ async function recalcWalletFromTrades() {
   wallet.realizedPnl = Number(realizedPnl.toFixed(2));
   wallet.grossProfit = Number(grossProfit.toFixed(2));
   wallet.grossLoss = Number(grossLoss.toFixed(2));
-  wallet.totalTrades = closed.length;
+  wallet.totalTrades = closed.filter((t) => t.isTesting !== true).length;
   wallet.wins = wins;
   wallet.losses = losses;
   wallet.balance = Number(Math.max(0, starting + realizedPnl - lockedOpen - heldPending).toFixed(2));
@@ -937,7 +949,8 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
       stopLossMode: stopLossPremium != null && slConfigured ? normalizeRiskMode(order.stopLossMode) : null,
       targetMode: targetPremium != null && tgConfigured ? normalizeRiskMode(order.targetMode) : null,
       legs: [{ optionType: product === 'FUTURE' ? 'FUT' : order.optionType, side, entryPremium: Number(entryPremium.toFixed(2)) }],
-      notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; capital=${capitalNeeded}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}`,
+      notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; capital=${capitalNeeded}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}${order.isTesting ? '; testing=1' : ''}`,
+      isTesting: Boolean(order.isTesting),
     });
   } catch (err) {
     await creditWallet(capitalNeeded);
@@ -1132,6 +1145,7 @@ async function createFutureOrder(payload, clock) {
     targetPct,
     status: 'PENDING',
     sessionDateKey: clock.dateKey,
+    isTesting: parseIsTesting(payload.isTesting),
   });
 
   await logAction({
@@ -1265,6 +1279,7 @@ async function createOrder(payload) {
     targetPct,
     status: 'PENDING',
     sessionDateKey: clock.dateKey,
+    isTesting: parseIsTesting(payload.isTesting),
   });
 
   await logAction({
@@ -1369,16 +1384,19 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   });
 
   const wallet = await ensureWallet();
-  // Release locked capital and apply net P/L.
-  wallet.balance = Number((Number(wallet.balance) + locked + pnl).toFixed(2));
-  wallet.realizedPnl = Number((Number(wallet.realizedPnl) + pnl).toFixed(2));
-  wallet.totalTrades += 1;
-  if (pnl > 0) {
-    wallet.wins += 1;
-    wallet.grossProfit = Number((Number(wallet.grossProfit || 0) + pnl).toFixed(2));
-  } else if (pnl < 0) {
-    wallet.losses += 1;
-    wallet.grossLoss = Number((Number(wallet.grossLoss || 0) + Math.abs(pnl)).toFixed(2));
+  const testing = trade.isTesting === true;
+  // Release locked capital. Testing P/L is recorded on the trade only — not wallet / calendar.
+  wallet.balance = Number((Number(wallet.balance) + locked + (testing ? 0 : pnl)).toFixed(2));
+  if (!testing) {
+    wallet.realizedPnl = Number((Number(wallet.realizedPnl) + pnl).toFixed(2));
+    wallet.totalTrades += 1;
+    if (pnl > 0) {
+      wallet.wins += 1;
+      wallet.grossProfit = Number((Number(wallet.grossProfit || 0) + pnl).toFixed(2));
+    } else if (pnl < 0) {
+      wallet.losses += 1;
+      wallet.grossLoss = Number((Number(wallet.grossLoss || 0) + Math.abs(pnl)).toFixed(2));
+    }
   }
   await wallet.save();
   lastClosedStatsSyncAt = Date.now();
@@ -1991,7 +2009,7 @@ async function syncClosedTradeStats(wallet) {
     strategyKey: STRATEGY_KEY,
     $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
   })
-    .select({ pnl: 1 })
+    .select({ pnl: 1, isTesting: 1 })
     .lean();
 
   let realizedPnl = 0;
@@ -1999,9 +2017,12 @@ async function syncClosedTradeStats(wallet) {
   let losses = 0;
   let grossProfit = 0;
   let grossLoss = 0;
+  let mainCount = 0;
   for (const t of closed) {
+    if (t.isTesting === true) continue;
     const pnl = Number(t.pnl);
     if (!Number.isFinite(pnl)) continue;
+    mainCount += 1;
     realizedPnl += pnl;
     if (pnl > 0) {
       wins += 1;
@@ -2015,7 +2036,7 @@ async function syncClosedTradeStats(wallet) {
   wallet.realizedPnl = Number(realizedPnl.toFixed(2));
   wallet.grossProfit = Number(grossProfit.toFixed(2));
   wallet.grossLoss = Number(grossLoss.toFixed(2));
-  wallet.totalTrades = closed.length;
+  wallet.totalTrades = mainCount;
   wallet.wins = wins;
   wallet.losses = losses;
   await wallet.save();
@@ -2024,6 +2045,7 @@ async function syncClosedTradeStats(wallet) {
 
 async function getStatus() {
   await ensureEngineRunning();
+  await tagLegacyOpenAsTesting();
   const clock = getIstClock(new Date());
   let wallet = await ensureWallet();
   // Repair wallet profit/loss from closed book occasionally (not every poll).
@@ -2064,7 +2086,7 @@ async function getStatus() {
       t.openPositionMarkAt = new Date(wsTick.ts);
       latestMarks.set(id, t.openPositionMark);
     }
-    unrealizedPnl += Number(t.openPositionMark?.unrealizedPnl) || 0;
+    unrealizedPnl += t.isTesting === true ? 0 : Number(t.openPositionMark?.unrealizedPnl) || 0;
   }
 
   return {
@@ -2088,15 +2110,18 @@ async function getStatus() {
   };
 }
 
-async function listTrades({ page = 1, pageSize = 50, status = 'ALL' }) {
+async function listTrades({ page = 1, pageSize = 50, status = 'ALL', book = 'all' } = {}) {
   const filter = { strategyKey: STRATEGY_KEY };
   const statusQ = String(status || 'ALL').toUpperCase();
+  const bookQ = String(book || 'all').toLowerCase();
   if (statusQ === 'OPEN') {
     filter.exitTime = null;
     filter.status = { $ne: 'CLOSED' };
   } else if (statusQ === 'CLOSED') {
     filter.$or = [{ exitTime: { $ne: null } }, { status: 'CLOSED' }];
   }
+  if (bookQ === 'testing') filter.isTesting = true;
+  else if (bookQ === 'main') filter.isTesting = { $ne: true };
   const totalRows = await LivePaperTrade.countDocuments(filter);
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -2107,7 +2132,20 @@ async function listTrades({ page = 1, pageSize = 50, status = 'ALL' }) {
     .limit(pageSize)
     .lean();
   const tradesWithSr = trades.map((t, i) => ({ ...t, srNo: skip + i + 1 }));
-  return { trades: tradesWithSr, pagination: { page: currentPage, pageSize, totalRows, totalPages } };
+  let bookPnl = null;
+  if (statusQ === 'CLOSED') {
+    const agg = await LivePaperTrade.aggregate([
+      { $match: filter },
+      { $group: { _id: null, pnl: { $sum: '$pnl' } } },
+    ]);
+    bookPnl = Number(agg[0]?.pnl) || 0;
+  }
+  return {
+    trades: tradesWithSr,
+    pagination: { page: currentPage, pageSize, totalRows, totalPages },
+    book: bookQ,
+    bookPnl,
+  };
 }
 
 async function listActions({ page = 1, pageSize = 50 }) {

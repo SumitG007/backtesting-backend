@@ -35,6 +35,8 @@ const manualPendingOrderSchema = new mongoose.Schema(
     sessionDateKey: { type: String, index: true },
     /** Paper cash held when a LIMIT order is placed (released on cancel / adjusted on fill). */
     heldAmount: { type: Number, default: null },
+    /** Testing paper fill — not counted in main P/L / calendar. */
+    isTesting: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

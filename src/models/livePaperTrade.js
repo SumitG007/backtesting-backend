@@ -54,6 +54,8 @@ const livePaperTradeSchema = new mongoose.Schema(
     openPositionMarkAt: { type: Date, default: null },
     /** OI Flow (and similar): matched rules / OI acts at entry for history eye popup. */
     signalSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+    /** Manual console: testing trades stay off calendar / wallet P/L / main history. */
+    isTesting: { type: Boolean, default: false, index: true },
   },
   { timestamps: true }
 );
