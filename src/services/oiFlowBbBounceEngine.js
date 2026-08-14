@@ -1,9 +1,8 @@
 /**
  * OI Flow BB Bounce — mean-reversion at Bollinger bands + 1-min OI pairs.
  *
- * CALL BUY: lower BB + green candle + bullish pair
- * PUT BUY:  upper BB + red candle + bearish pair
- * No 4-TF. Paper live later — this module is for JSON/Mongo backtest.
+ * Reclaim: previous bar at the band, this bar closes back inside + strong OI ≥ 1L.
+ * SL = 1.5 × last 5-min spot range (min 10 pts). TP +10. No 15m time exit.
  */
 const fs = require('fs');
 const path = require('path');
@@ -14,8 +13,12 @@ const DATES = ['2026-08-12', '2026-08-13', '2026-08-14'];
 const COOLDOWN_MIN = 30;
 const TARGET_PTS = 10;
 const PREMIUM_DELTA = 0.5;
+const MIN_OI_ABS = 100000;
+const SL_RANGE_BARS = 5;
+const SL_RANGE_MULT = 1.5;
+const SL_RANGE_MIN_SPOT = 10;
 
-const CALL_PAIRS = new Set(['long build|writing', 'long build|long unwind', 'short cover|long unwind']);
+const CALL_PAIRS = new Set(['long build|writing', 'long build|long unwind']);
 const PUT_PAIRS = new Set(['writing|buying', 'long unwind|buying']);
 
 function actTail(label) {
@@ -37,7 +40,7 @@ function pairFavours(callAct, putAct) {
   return null;
 }
 
-function decideBbBounce(ctx, minute) {
+function decideBbBounce(ctx, minute, prevBb = null) {
   const i = ctx.idxOf.get(minute);
   const cur = ctx.byMin.get(minute);
   if (i == null || i < 1 || !cur) return null;
@@ -46,6 +49,7 @@ function decideBbBounce(ctx, minute) {
   const bb = bbAt(ctx, minute);
   const candle = Number(f.spotChg1) > 0 ? 'green' : Number(f.spotChg1) < 0 ? 'red' : 'doji';
   const favour = pairFavours(f.callAct, f.putAct);
+  const oiMag = Math.max(Math.abs(Number(f.callChg) || 0), Math.abs(Number(f.putChg) || 0));
   const base = {
     time: cur.time,
     minutes: minute,
@@ -68,25 +72,31 @@ function decideBbBounce(ctx, minute) {
   if (!bb?.ok) {
     return { ...base, decision: 'WAIT', reason: bb?.reason || 'BB not ready' };
   }
+  if (oiMag < MIN_OI_ABS) {
+    return { ...base, decision: 'WAIT', reason: `OI mag ${oiMag} < 1L` };
+  }
 
-  if (bb.atLower && candle === 'green' && favour === 'CALL') {
+  const reclaimLower = Boolean(prevBb?.atLower) && !bb.atLower;
+  const reclaimUpper = Boolean(prevBb?.atUpper) && !bb.atUpper;
+
+  if (reclaimLower && candle === 'green' && favour === 'CALL') {
     return {
       ...base,
       decision: 'CALL BUY',
-      matchedRule: `Lower BB + green + ${base.pair} → CALL BUY`,
-      reason: `Lower BB bounce · ${base.pair}`,
+      matchedRule: `Reclaim lower BB + green + ${base.pair} ≥1L → CALL BUY`,
+      reason: `Reclaim lower · ${base.pair}`,
     };
   }
-  if (bb.atUpper && candle === 'red' && favour === 'PUT') {
+  if (reclaimUpper && candle === 'red' && favour === 'PUT') {
     return {
       ...base,
       decision: 'PUT BUY',
-      matchedRule: `Upper BB + red + ${base.pair} → PUT BUY`,
-      reason: `Upper BB reject · ${base.pair}`,
+      matchedRule: `Reclaim upper BB + red + ${base.pair} ≥1L → PUT BUY`,
+      reason: `Reclaim upper · ${base.pair}`,
     };
   }
 
-  return { ...base, decision: 'WAIT', reason: 'no BB+OI bounce' };
+  return { ...base, decision: 'WAIT', reason: 'no BB reclaim + strong OI' };
 }
 
 function fmtLakh(n) {
@@ -162,19 +172,24 @@ function flowAtLocal(ctx, minute) {
   };
 }
 
-function prevCandleRange(rows, entryIdx) {
-  const prev = rows[entryIdx - 1];
-  if (!prev || !Number.isFinite(Number(prev.spot))) return null;
-  const close = Number(prev.spot);
-  const openSrc = rows[entryIdx - 2];
-  const open = openSrc && Number.isFinite(Number(openSrc.spot)) ? Number(openSrc.spot) : close;
-  return {
-    time: prev.time,
-    open,
-    close,
-    high: Math.max(open, close),
-    low: Math.min(open, close),
-  };
+function swingSpot(rows, endIdx, n) {
+  let hi = -Infinity;
+  let lo = Infinity;
+  const from = Math.max(0, endIdx - n + 1);
+  for (let k = from; k <= endIdx; k += 1) {
+    const s = Number(rows[k]?.spot);
+    if (!Number.isFinite(s)) continue;
+    if (s > hi) hi = s;
+    if (s < lo) lo = s;
+  }
+  if (!Number.isFinite(hi) || !Number.isFinite(lo)) return null;
+  return { hi, lo, range: hi - lo };
+}
+
+function slFromSwing(rows, entryIdx, entrySpot, side) {
+  const s = swingSpot(rows, Math.max(0, entryIdx - 1), SL_RANGE_BARS);
+  const r = Math.max(SL_RANGE_MIN_SPOT, (s?.range || SL_RANGE_MIN_SPOT) * SL_RANGE_MULT);
+  return side === 'CE' ? entrySpot - r : entrySpot + r;
 }
 
 function simulateExit(rows, entryIdx, entrySpot, side, slSpot) {
@@ -251,7 +266,6 @@ async function loadDayRows(dateKey) {
 function runDay(dateKey, rows, source) {
   const taken = [];
   const rawSetups = [];
-  let armed = true;
   let openUntil = null;
   let cooldownUntil = null;
   let lastEntryMin = null;
@@ -259,7 +273,7 @@ function runDay(dateKey, rows, source) {
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i];
     const minutes = row.minutes;
-    const { ctx } = { ctx: buildIndex(rows.filter((r) => r.minutes <= minutes)) };
+    const ctx = buildIndex(rows.filter((r) => r.minutes <= minutes));
 
     if (openUntil != null && minutes < openUntil) continue;
     if (openUntil != null && minutes >= openUntil) {
@@ -267,13 +281,11 @@ function runDay(dateKey, rows, source) {
       openUntil = null;
     }
 
-    const decision = decideBbBounce(ctx, minutes);
+    const prev = rows[i - 1];
+    const ctxPrev = prev ? buildIndex(rows.filter((r) => r.minutes <= prev.minutes)) : null;
+    const prevBb = ctxPrev && prev ? bbAt(ctxPrev, prev.minutes) : null;
+    const decision = decideBbBounce(ctx, minutes, prevBb);
     if (!decision) continue;
-
-    if (decision.decision === 'WAIT') {
-      armed = true;
-      continue;
-    }
     if (decision.decision !== 'PUT BUY' && decision.decision !== 'CALL BUY') continue;
 
     rawSetups.push({
@@ -284,21 +296,21 @@ function runDay(dateKey, rows, source) {
       bbZone: decision.bb?.zone,
     });
 
-    if (!armed) continue;
-    if (cooldownUntil != null && minutes < cooldownUntil) continue;
+    const inCooldown = cooldownUntil != null && minutes < cooldownUntil;
+    if (openUntil != null || inCooldown) continue;
     if (lastEntryMin != null && minutes <= lastEntryMin) continue;
 
     const spotNow = Number(row.spot);
     const strike = Number.isFinite(spotNow) ? Math.round(spotNow / 50) * 50 : null;
     const optionType = decision.decision === 'PUT BUY' ? 'PE' : 'CE';
-    const prevBar = prevCandleRange(rows, i);
-    const slSpot = prevBar ? (optionType === 'PE' ? prevBar.high : prevBar.low) : null;
+    const slSpot = slFromSwing(rows, i, spotNow, optionType);
     const exit = simulateExit(rows, i, spotNow, optionType, slSpot);
-
     taken.push({
       dateKey,
-      time: decision.time,
+      time: row.time,
       minutes,
+      signalTime: prev?.time || null,
+      signalMinutes: prev?.minutes || null,
       spot: spotNow,
       strike,
       strikeLabel: strike ? `BUY NIFTY ${strike} ${optionType}` : null,
@@ -319,18 +331,15 @@ function runDay(dateKey, rows, source) {
       candle: decision.candle,
       matchedRule: decision.matchedRule,
       slSpot,
-      slOn: optionType === 'PE' ? 'prev high' : 'prev low',
-      prevCandleTime: prevBar?.time || null,
+      slOn: '1.5× 5m range',
       favorPts: exit.favorPts,
       hold: exit.hold,
       exitTime: exit.exitTime,
       exitReason: exit.exitReason,
       grade: exit.grade,
     });
-
     lastEntryMin = minutes;
     openUntil = exit.exitMinutes;
-    armed = false;
   }
 
   const excellent = taken.filter((s) => s.grade === 'Excellent').length;
@@ -400,13 +409,13 @@ async function runBbBounceBacktest(dateKeys = DATES) {
     strategy: 'OI Flow BB Bounce',
     rules: {
       bb: 'BB(20, 2) SMA · touch within 5 pts',
-      callBuy: 'Lower band + green + (long build/writing | long build/long unwind | short cover/long unwind)',
-      putBuy: 'Upper band + red + (writing/buying | long unwind/buying)',
-      skippedPair: 'writing / short cover',
+      callBuy: 'Prev bar at lower BB, this bar closes back inside + green + strong4 OI ≥ 1L',
+      putBuy: 'Prev bar at upper BB, this bar closes back inside + red + strong4 OI ≥ 1L',
+      skippedPair: 'short cover / long unwind · writing / short cover · OI mag < 1L',
       window: '09:30–14:30',
-      book: '1 open · WAIT re-arm · 30m cooldown · TP +10 · SL = prev candle high (PE) / low (CE) on NIFTY spot · hold until TP/SL/EOD',
+      book: '1 open · 30m cooldown · TP +10 · SL = 1.5× last 5-min spot range (min 10 pts) · hold until TP/SL/EOD',
       ptsNote:
-        'JSON/Mongo has no option LTP. Final pts = 0.5 × spot move (premium proxy). Entry uses current + past bars only.',
+        'Do not buy the touch. Buy the reclaim (close back inside). Entry uses current+past only. Pts = 0.5 × spot.',
     },
     dates: dateKeys,
     days,
@@ -419,4 +428,8 @@ module.exports = {
   decideBbBounce,
   runBbBounceBacktest,
   pairFavours,
+  loadDayRows,
+  prevCandleRange: slFromSwing,
+  slFromSwing,
+  simulateExit,
 };
