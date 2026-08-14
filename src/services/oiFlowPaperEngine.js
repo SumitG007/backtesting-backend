@@ -1,7 +1,8 @@
 /**
  * OI Flow Tracker paper engine — ROBUST B (always on).
- * Put buying ≥2.5L + spot↓ → LONG PE · Put writing ≥2.5L + spot↑ → LONG CE
- * Skip Put ΔOI > 30L · TP+10 / SL−8 · max hold 15m · cooldown 30m · 10 lots
+ * Put buying ≥2.5L + spot↓ + 15/5/3/1 Bear → LONG PE
+ * Put writing ≥2.5L + spot↑ + 15/5/3/1 Bull → LONG CE
+ * Else no trade. Skip Put ΔOI > 30L · TP+10 / SL−8 · max hold 15m · cooldown 30m · 10 lots
  * Auto entry/exit only — no manual start/stop/close required.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
@@ -751,11 +752,12 @@ async function tryEnter(signal) {
       matchedRule:
         signal.matchedRule ||
         (signal.decision === 'PUT BUY'
-          ? `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`
-          : `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`),
+          ? `Put buying + Put ΔOI ≥ ${minPutOi} + red + 4 Bear → PUT BUY (LONG PE)`
+          : `Put writing + Put ΔOI ≥ ${minPutOi} + green + 4 Bull → CALL BUY (LONG CE)`),
       rules: [
-        `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`,
-        `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`,
+        `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ + 15/5/3/1 Bear → PUT BUY (LONG PE)`,
+        `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ + 15/5/3/1 Bull → CALL BUY (LONG CE)`,
+        `Skip unless all four TFs match the side (4 Bull = CE, 4 Bear = PE)`,
         `Skip mega spike Put ΔOI > ${maxPutOi}`,
         `Spot align ${requireSpotAlign ? 'ON' : 'OFF'} · max hold ${maxHoldMinutes}m · cooldown ${engineState.settings.cooldownMinutes}m`,
       ],
@@ -980,7 +982,7 @@ async function getStatus() {
     enabled: Boolean(engineState.settings.enabled),
     settings: engineState.settings,
     strategyKey: STRATEGY_KEY,
-    strategyLabel: 'ROBUST B · Put≥2.5L + spot align · cap 30L',
+    strategyLabel: 'ROBUST B · 4 TF align · Put≥2.5L · cap 30L',
     openTrade: open || null,
     lastDecision: engineState.lastDecision,
     lastEntryDebug: engineState.lastEntryDebug,
@@ -1056,7 +1058,7 @@ async function getBookSummary() {
   return {
     settings: engineState.settings,
     enabled: Boolean(engineState.settings.enabled),
-    strategyLabel: 'ROBUST B · Put≥2.5L + spot align · cap 30L',
+    strategyLabel: 'ROBUST B · 4 TF align · Put≥2.5L · cap 30L',
     decision: engineState.lastDecision,
     entryArmed: Boolean(engineState.entryArmed),
     wallet: {

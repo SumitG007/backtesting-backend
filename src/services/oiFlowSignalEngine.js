@@ -1,8 +1,8 @@
 /**
  * OI Flow paper signals — ROBUST B defaults:
- *   Put buying  + Put ΔOI ≥ 2.5L + spot ↓ → PUT BUY
- *   Put writing + Put ΔOI ≥ 2.5L + spot ↑ → CALL BUY
- *   Skip mega spike Put ΔOI > 30L
+ *   Put buying  + Put ΔOI ≥ 2.5L + red candle + 4 Bear → PUT BUY
+ *   Put writing + Put ΔOI ≥ 2.5L + green candle + 4 Bull → CALL BUY
+ *   4-TF align is compulsory. No BB filter. Skip mega spike Put ΔOI > 30L
  * Window 09:30–14:30. Future used ONLY for +1/+5/+15 accuracy (research), never for entry.
  */
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
@@ -15,6 +15,45 @@ const MIN_HOLD_MIN = 30;
 const MIN_PUT_OI = 250000; // 2.5L (ROBUST B)
 const MAX_PUT_OI = 3000000; // 30L spike cap
 const PUT_BUY_MIN_OI = MIN_PUT_OI; // export alias
+const BB_LEN = 20;
+const BB_MULT = 2;
+const BB_TOUCH_PTS = 5; // “at the line” = touch / outside / within 5 pts
+
+function bbAt(ctx, minute) {
+  const i = ctx.idxOf.get(minute);
+  if (i == null || i + 1 < BB_LEN) {
+    return { ok: false, zone: 'na', reason: `need ${BB_LEN} bars for BB` };
+  }
+  const spots = [];
+  for (let j = i - (BB_LEN - 1); j <= i; j += 1) {
+    const s = Number(ctx.rows[j]?.spot);
+    if (!Number.isFinite(s)) {
+      return { ok: false, zone: 'na', reason: 'BB spot gap' };
+    }
+    spots.push(s);
+  }
+  const n = spots.length;
+  const mid = spots.reduce((a, x) => a + x, 0) / n;
+  const variance = spots.reduce((a, x) => a + (x - mid) ** 2, 0) / n;
+  const sd = Math.sqrt(variance);
+  const upper = mid + BB_MULT * sd;
+  const lower = mid - BB_MULT * sd;
+  const spot = Number(ctx.rows[i].spot);
+  const width = upper - lower;
+  const pctB = width > 0 ? (spot - lower) / width : 0.5;
+  const atLower = spot <= lower + BB_TOUCH_PTS;
+  const atUpper = spot >= upper - BB_TOUCH_PTS;
+  return {
+    ok: true,
+    mid: Number(mid.toFixed(2)),
+    upper: Number(upper.toFixed(2)),
+    lower: Number(lower.toFixed(2)),
+    pctB: Number(pctB.toFixed(3)),
+    atLower,
+    atUpper,
+    zone: atLower ? 'lower' : atUpper ? 'upper' : 'mid',
+  };
+}
 
 function normalizeRows(raw) {
   const rows = (Array.isArray(raw) ? raw : [])
@@ -73,6 +112,47 @@ function rowAt(ctx, m) {
   return ctx.byMin.get(m) || null;
 }
 
+function lookbackSpot(ctx, minutes, ago) {
+  const target = minutes - ago;
+  if (ctx.byMin.has(target)) return Number(ctx.byMin.get(target).spot);
+  for (let m = target; m >= target - 3; m -= 1) {
+    if (m < minutes && ctx.byMin.has(m)) return Number(ctx.byMin.get(m).spot);
+  }
+  return null;
+}
+
+function tfFromLookback(spotNow, spotThen) {
+  if (!Number.isFinite(spotNow) || !Number.isFinite(spotThen)) {
+    return { label: '—', tone: 'flat' };
+  }
+  const d = spotNow - spotThen;
+  if (d > 0.5) return { label: 'Bull', tone: 'bull' };
+  if (d < -0.5) return { label: 'Bear', tone: 'bear' };
+  return { label: 'Flat', tone: 'flat' };
+}
+
+function tfsAt(ctx, minute, spotNow) {
+  const tf15 = tfFromLookback(spotNow, lookbackSpot(ctx, minute, 15));
+  const tf5 = tfFromLookback(spotNow, lookbackSpot(ctx, minute, 5));
+  const tf3 = tfFromLookback(spotNow, lookbackSpot(ctx, minute, 3));
+  const tf1 = tfFromLookback(spotNow, lookbackSpot(ctx, minute, 1));
+  const all = [tf15, tf5, tf3, tf1];
+  return {
+    tf15,
+    tf5,
+    tf3,
+    tf1,
+    allBull: all.every((t) => t.tone === 'bull'),
+    allBear: all.every((t) => t.tone === 'bear'),
+  };
+}
+
+function spotChgLabel(d1) {
+  const n = Number(d1);
+  if (!Number.isFinite(n) || n === 0) return 'doji';
+  return n > 0 ? 'green' : 'red';
+}
+
 function forwardRow(ctx, minute, ahead) {
   const target = minute + ahead;
   if (ctx.byMin.has(target)) return ctx.byMin.get(target);
@@ -98,9 +178,27 @@ function flowAt(ctx, minute) {
   }
   const prev = rowAt(ctx, ctx.mins[i - 1]);
   const dSpot = Number(cur.spot) - Number(prev.spot);
+  const hasStrikes =
+    Array.isArray(cur.strikes) &&
+    cur.strikes.length > 0 &&
+    Array.isArray(prev.strikes) &&
+    prev.strikes.length > 0;
   const interval = intervalOiFromRows(cur, prev);
-  const c = Number(interval.callsChgOi) || 0;
-  const p = Number(interval.putsChgOi) || 0;
+  // No strike overlap → use this bar's stored interval (JSON/recorder tape), not a later bar.
+  const c = Number(
+    hasStrikes
+      ? interval.callsChgOi
+      : Number.isFinite(Number(cur.callsChgOi))
+        ? cur.callsChgOi
+        : interval.callsChgOi,
+  ) || 0;
+  const p = Number(
+    hasStrikes
+      ? interval.putsChgOi
+      : Number.isFinite(Number(cur.putsChgOi))
+        ? cur.putsChgOi
+        : interval.putsChgOi,
+  ) || 0;
   const past5 = i >= 5 ? rowAt(ctx, ctx.mins[i - 5]) : null;
   return {
     priceDir: dSpot > 0 ? '↑' : dSpot < 0 ? '↓' : '→',
@@ -127,8 +225,13 @@ function decideRaw(ctx, minute, opts = {}) {
       : Math.max(minPutOi, Number(maxPutOiRaw));
   const requireSpotAlign =
     opts.requireSpotAlign == null ? true : Boolean(opts.requireSpotAlign);
+  // 4 Bull (CE) / 4 Bear (PE) is compulsory — cannot be turned off.
+  const requireAllTfAlign = true;
 
   const flow = flowAt(ctx, minute);
+  const tfs = tfsAt(ctx, minute, cur.spot);
+  const tfLabel = `${tfs.tf15.label}/${tfs.tf5.label}/${tfs.tf3.label}/${tfs.tf1.label}`;
+  const candle = spotChgLabel(flow.spotChg1);
   const base = {
     time: cur.time,
     minutes: minute,
@@ -142,9 +245,17 @@ function decideRaw(ctx, minute, opts = {}) {
     putChgL: fmtLakh(flow.putChg),
     callAct: flow.callAct,
     putAct: flow.putAct,
+    tf15: tfs.tf15,
+    tf5: tfs.tf5,
+    tf3: tfs.tf3,
+    tf1: tfs.tf1,
+    allBull: tfs.allBull,
+    allBear: tfs.allBear,
+    candle,
     minPutOi,
     maxPutOi,
     requireSpotAlign,
+    requireAllTfAlign,
   };
 
   if (minute < TRADE_FROM || minute > TRADE_TO) {
@@ -170,11 +281,18 @@ function decideRaw(ctx, minute, opts = {}) {
         reason: `Put buying ≥ ${minPutOi} but spot not down (d1=${spotChg1})`,
       };
     }
+    if (requireAllTfAlign && !tfs.allBear) {
+      return {
+        ...base,
+        decision: 'WAIT',
+        reason: `Put buying ≥ ${minPutOi} but TFs not 4 Bear (${tfLabel})`,
+      };
+    }
     return {
       ...base,
       decision: 'PUT BUY',
-      matchedRule: `Put buying + Put ΔOI ≥ ${minPutOi} + spot ↓ → PUT BUY (LONG PE)`,
-      reason: `Put buying ≥ ${minPutOi} (got ${putChg}) · spot ↓`,
+      matchedRule: `Red + Put buying ≥ ${minPutOi} + 4 Bear → PUT BUY (LONG PE)`,
+      reason: `Put buying ≥ ${minPutOi} · red candle · 4 Bear`,
     };
   }
 
@@ -186,11 +304,18 @@ function decideRaw(ctx, minute, opts = {}) {
         reason: `Put writing ≥ ${minPutOi} but spot not up (d1=${spotChg1})`,
       };
     }
+    if (requireAllTfAlign && !tfs.allBull) {
+      return {
+        ...base,
+        decision: 'WAIT',
+        reason: `Put writing ≥ ${minPutOi} but TFs not 4 Bull (${tfLabel})`,
+      };
+    }
     return {
       ...base,
       decision: 'CALL BUY',
-      matchedRule: `Put writing + Put ΔOI ≥ ${minPutOi} + spot ↑ → CALL BUY (LONG CE)`,
-      reason: `Put writing ≥ ${minPutOi} (got ${putChg}) · spot ↑`,
+      matchedRule: `Green + Put writing ≥ ${minPutOi} + 4 Bull → CALL BUY (LONG CE)`,
+      reason: `Put writing ≥ ${minPutOi} · green candle · 4 Bull`,
     };
   }
 
@@ -393,6 +518,8 @@ module.exports = {
   decideRaw,
   normalizeRows,
   buildIndex,
+  tfsAt,
+  bbAt,
   TRADE_FROM,
   TRADE_TO,
   MIN_HOLD_MIN,
