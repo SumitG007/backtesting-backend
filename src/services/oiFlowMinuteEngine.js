@@ -5,7 +5,7 @@
  *
  * Focus = Change in OI (ΔOI), not absolute standing OI.
  * dayCallChgOi / dayPutChgOi = ATM ± 3 day-so-far ΔOI (our "total OI")
- * callsChgOi / putsChgOi     = vs previous 1-minute DB row
+ * callsChgOi / putsChgOi     = interval ΔOI on overlapping strikes (ignores ATM window hops)
  * chngInDir                  = Puts chng − Calls chng (interval)
  * diffInOi                   = day Put Δ − day Call Δ (+ when Puts building more)
  * dirOfChng                  = up / down / flat from chngInDir
@@ -18,6 +18,7 @@ const {
   getNearestWeeklyExpiry,
   getOptionChainOiSnapshot,
 } = require('./dhanLiveService');
+const { compactStrikes, intervalOiFromRows } = require('../utils/oiFlowIntervalOi');
 
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
@@ -60,24 +61,14 @@ function sentimentFromDiff(chngInDir) {
 }
 
 function deriveFields({
-  callOiTotal,
-  putOiTotal,
   dayCallChgOi,
   dayPutChgOi,
+  strikes,
   prev,
 }) {
-  let callsChgOi = null;
-  let putsChgOi = null;
-  if (prev && Number.isFinite(callOiTotal) && Number.isFinite(prev.callOiTotal)) {
-    callsChgOi = callOiTotal - prev.callOiTotal;
-  } else if (!prev && Number.isFinite(callOiTotal)) {
-    callsChgOi = 0;
-  }
-  if (prev && Number.isFinite(putOiTotal) && Number.isFinite(prev.putOiTotal)) {
-    putsChgOi = putOiTotal - prev.putOiTotal;
-  } else if (!prev && Number.isFinite(putOiTotal)) {
-    putsChgOi = 0;
-  }
+  const interval = intervalOiFromRows({ dayCallChgOi, dayPutChgOi, strikes }, prev);
+  const callsChgOi = interval.callsChgOi;
+  const putsChgOi = interval.putsChgOi;
 
   // Chng in dir = interval Calls/Puts Δ (Puts − Calls).
   const chngInDir =
@@ -152,13 +143,13 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
       const putOiTotal = snapshot?.totals?.putOi;
       const dayCallChgOi = snapshot?.totals?.callChgOi;
       const dayPutChgOi = snapshot?.totals?.putChgOi;
+      const strikes = compactStrikes(snapshot?.strikes);
       const spotPrice = Number.isFinite(snapshot?.spot) ? snapshot.spot : null;
       const prev = await getPreviousRow(engineState.symbol, dateKey, minutes);
       const derived = deriveFields({
-        callOiTotal,
-        putOiTotal,
         dayCallChgOi,
         dayPutChgOi,
+        strikes,
         prev,
       });
 
@@ -170,6 +161,7 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
         spotPrice,
         atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
         lookaroundStrikes: LOOKAROUND_STRIKES,
+        strikes,
         callOiTotal: Number.isFinite(callOiTotal) ? callOiTotal : null,
         putOiTotal: Number.isFinite(putOiTotal) ? putOiTotal : null,
         dayCallChgOi: Number.isFinite(dayCallChgOi) ? dayCallChgOi : null,
@@ -207,6 +199,7 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
     spotPrice: null,
     atm: null,
     lookaroundStrikes: LOOKAROUND_STRIKES,
+    strikes: [],
     callOiTotal: null,
     putOiTotal: null,
     dayCallChgOi: null,
@@ -296,12 +289,12 @@ function buildRowFromSnapshot(snapshot, clock, prev, { livePreview = false, afte
   const putOiTotal = snapshot?.totals?.putOi;
   const dayCallChgOi = snapshot?.totals?.callChgOi;
   const dayPutChgOi = snapshot?.totals?.putChgOi;
+  const strikes = compactStrikes(snapshot?.strikes);
   const spotPrice = Number.isFinite(snapshot?.spot) ? snapshot.spot : null;
   const derived = deriveFields({
-    callOiTotal,
-    putOiTotal,
     dayCallChgOi,
     dayPutChgOi,
+    strikes,
     prev,
   });
   return {
@@ -312,6 +305,7 @@ function buildRowFromSnapshot(snapshot, clock, prev, { livePreview = false, afte
     spotPrice,
     atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
     lookaroundStrikes: LOOKAROUND_STRIKES,
+    strikes,
     callOiTotal: Number.isFinite(callOiTotal) ? callOiTotal : null,
     putOiTotal: Number.isFinite(putOiTotal) ? putOiTotal : null,
     dayCallChgOi: Number.isFinite(dayCallChgOi) ? dayCallChgOi : null,

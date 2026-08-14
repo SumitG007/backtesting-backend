@@ -7,6 +7,7 @@
  */
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
 const { getIstClock } = require('../utils/dateTime');
+const { intervalOiFromRows } = require('../utils/oiFlowIntervalOi');
 
 const TRADE_FROM = 9 * 60 + 30;
 const TRADE_TO = 14 * 60 + 30;
@@ -25,6 +26,7 @@ function normalizeRows(raw) {
       dayPutChgOi: Number(r.dayPutChgOi),
       callsChgOi: Number(r.callsChgOi),
       putsChgOi: Number(r.putsChgOi),
+      strikes: Array.isArray(r.strikes) ? r.strikes : [],
       diffInOi: Number(r.diffInOi),
       chngInDir: Number(r.chngInDir),
       dirOfChng: r.dirOfChng,
@@ -96,8 +98,9 @@ function flowAt(ctx, minute) {
   }
   const prev = rowAt(ctx, ctx.mins[i - 1]);
   const dSpot = Number(cur.spot) - Number(prev.spot);
-  const c = Number(cur.callsChgOi) || 0;
-  const p = Number(cur.putsChgOi) || 0;
+  const interval = intervalOiFromRows(cur, prev);
+  const c = Number(interval.callsChgOi) || 0;
+  const p = Number(interval.putsChgOi) || 0;
   const past5 = i >= 5 ? rowAt(ctx, ctx.mins[i - 5]) : null;
   return {
     priceDir: dSpot > 0 ? '↑' : dSpot < 0 ? '↓' : '→',

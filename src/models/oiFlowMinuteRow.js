@@ -6,7 +6,7 @@ const mongoose = require('mongoose');
  *
  * Focus = Change in OI (ΔOI), not absolute standing OI.
  * dayCallChgOi / dayPutChgOi = ATM ± 3 day-so-far ΔOI (our "total OI")
- * callsChgOi / putsChgOi     = vs previous 1-minute DB row
+ * callsChgOi / putsChgOi     = interval ΔOI on overlapping strikes only
  * chngInDir                  = Puts chng − Calls chng
  * diffInOi                   = day Put Δ − day Call Δ (+ when Puts building more)
  * callOiTotal / putOiTotal   = absolute OI (reference only)
@@ -28,9 +28,23 @@ const oiFlowMinuteRowSchema = new mongoose.Schema(
     /** Day-so-far Call / Put ΔOI — our "total OI" for decisions. */
     dayCallChgOi: { type: Number, default: null },
     dayPutChgOi: { type: Number, default: null },
-    /** Vs previous 1-minute entry. */
+    /** Vs previous 1-minute entry, overlapping ATM-window strikes only. */
     callsChgOi: { type: Number, default: null },
     putsChgOi: { type: Number, default: null },
+    /** ATM ± lookaround strike snapshot used for overlap ΔOI. */
+    strikes: {
+      type: [
+        {
+          _id: false,
+          strike: { type: Number },
+          callOi: { type: Number, default: null },
+          putOi: { type: Number, default: null },
+          callChgOi: { type: Number, default: null },
+          putChgOi: { type: Number, default: null },
+        },
+      ],
+      default: undefined,
+    },
     /** Day Put Δ − day Call Δ */
     diffInOi: { type: Number, default: null },
     /** up | down | flat from chngInDir */
