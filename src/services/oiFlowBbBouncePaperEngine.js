@@ -500,6 +500,10 @@ async function checkOpenTrade() {
       pts: Number.isFinite(Number(open.entryPremium))
         ? Number((Number(mark.optionLtp) - Number(open.entryPremium)).toFixed(2))
         : null,
+      slSpot: Number.isFinite(Number(open.combinedStopSpot))
+        ? Number(open.combinedStopSpot)
+        : Number(open.signalSnapshot?.slSpot) || null,
+      targetPremium: Number.isFinite(Number(open.targetPremium)) ? Number(open.targetPremium) : null,
     };
     open.openPositionMarkAt = new Date();
     await open.save();
