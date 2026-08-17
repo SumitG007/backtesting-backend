@@ -25,6 +25,8 @@ const STRATEGY_KEY = OI_FLOW_BB_BOUNCE_LIVE_KEY;
 const NOTIF_STRATEGY = 'OI Flow BB Bounce';
 const WALLET_KEY = 'paper_live_oi_flow_bb';
 const LOOP_MS = 5000;
+/** Open-position LTP/spot mark only — does not change entry rules. */
+const OPEN_MARK_MS = 1000;
 const TICK_KEEP_MS = 5 * 60 * 1000;
 const MIN_HOLD_MS = 15000;
 const EXIT_EPS = 0.15;
@@ -51,6 +53,7 @@ const engineState = {
   startedAt: null,
   settings: { ...DEFAULT_SETTINGS },
   loopTimer: null,
+  markTimer: null,
   tickInFlight: false,
   openTradeId: null,
   lastExitAtMs: 0,
@@ -169,37 +172,43 @@ async function recalcWalletFromTrades() {
   return wallet;
 }
 
-async function resolveOptionLtp(trade) {
+async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } = {}) {
   const optionType = String(trade.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
   let futSpot = null;
   let securityId = null;
-  try {
-    const fut = await getFutureLtp({
-      symbol: trade.symbol,
-      expiry: trade.expiryDate,
-      maxWaitMs: 1200,
-    });
-    if (Number.isFinite(fut?.ltp) && fut.ltp > 0) futSpot = fut.ltp;
-  } catch {
-    /* optional */
-  }
 
-  try {
-    const inst = await resolveOptionInstrument({
-      symbol: trade.symbol,
-      strike: trade.strike,
-      expiry: trade.expiryDate,
-      optionType,
-    });
-    if (inst) {
+  const futP = getFutureLtp({
+    symbol: trade.symbol,
+    expiry: trade.expiryDate,
+    maxWaitMs: Math.min(600, maxWaitMs),
+    forceFresh: false,
+  })
+    .then((fut) => {
+      if (Number.isFinite(fut?.ltp) && fut.ltp > 0) futSpot = fut.ltp;
+    })
+    .catch(() => {});
+
+  let optionLtp = null;
+  const optP = (async () => {
+    try {
+      const inst = await resolveOptionInstrument({
+        symbol: trade.symbol,
+        strike: trade.strike,
+        expiry: trade.expiryDate,
+        optionType,
+      });
+      if (!inst) return;
       securityId = inst.securityId || inst.SecurityId || null;
-      const ltp = await fetchInstrumentLtp(inst, { maxWaitMs: 2000, forceFresh: true });
-      if (Number.isFinite(ltp) && ltp > 0) {
-        return { optionLtp: ltp, spot: futSpot, source: 'marketfeed', securityId };
-      }
+      const ltp = await fetchInstrumentLtp(inst, { maxWaitMs, forceFresh });
+      if (Number.isFinite(ltp) && ltp > 0) optionLtp = ltp;
+    } catch {
+      /* fall through to chain */
     }
-  } catch {
-    /* fall through */
+  })();
+
+  await Promise.all([futP, optP]);
+  if (Number.isFinite(optionLtp) && optionLtp > 0) {
+    return { optionLtp, spot: futSpot, source: 'marketfeed', securityId };
   }
   try {
     const prem = await getAtmPremiums({
@@ -328,12 +337,21 @@ function computeOpenMtm(trade, optionLtp) {
 
 function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
   if (!Number.isFinite(nextMark?.optionLtp) || nextMark.optionLtp <= 0) return false;
-  if (nextMark.source === 'marketfeed') return true;
+  if (nextMark.source === 'marketfeed') {
+    if (
+      prevMark &&
+      Number(prevMark.optionLtp) === Number(nextMark.optionLtp) &&
+      Number(prevMark.spot || 0) === Number(nextMark.spot || 0)
+    ) {
+      return false;
+    }
+    return true;
+  }
   if (!prevMark || !Number.isFinite(prevMark.optionLtp) || prevMark.optionLtp <= 0) return true;
-  // Never overwrite a recent marketfeed mark with chain/none (causes MTM flicker).
+  // Don't let a stale chain print overwrite a fresh marketfeed mark.
   if (String(prevMark.source || '').startsWith('marketfeed')) {
     const ageMs = prevAt ? Date.now() - new Date(prevAt).getTime() : Infinity;
-    if (ageMs < 45000) return false;
+    if (ageMs < 8000) return false;
   }
   return nextMark.source === 'chain';
 }
@@ -352,7 +370,7 @@ async function resolveDisplayMark(trade, liveMark) {
     const ageMs = trade.openPositionMarkAt
       ? Date.now() - new Date(trade.openPositionMarkAt).getTime()
       : Infinity;
-    if (ageMs < 45000) {
+    if (ageMs < 8000) {
       return {
         optionLtp: Number(prev.optionLtp),
         spot: Number.isFinite(liveMark?.spot) ? liveMark.spot : prev.spot,
@@ -893,7 +911,6 @@ async function tickOnce() {
   engineState.tickInFlight = true;
   try {
     await loadSettingsFromDb();
-    // Persist always-on if wallet still has stale enabled:false
     if (engineState.settings.enabled !== true) {
       await saveSettingsToDb({ enabled: true });
     }
@@ -901,6 +918,19 @@ async function tickOnce() {
     if (engineState.openTradeId) return;
     const signal = await readLatestSignal();
     if (signal) await tryEnter(signal);
+  } catch (err) {
+    engineState.lastError = err?.message || String(err);
+  } finally {
+    engineState.tickInFlight = false;
+  }
+}
+
+/** Fast open-mark refresh. Same SL/TP checks as the 5s loop; no new entries. */
+async function markOnce() {
+  if (!engineState.openTradeId || engineState.tickInFlight) return;
+  engineState.tickInFlight = true;
+  try {
+    await checkOpenTrade();
   } catch (err) {
     engineState.lastError = err?.message || String(err);
   } finally {
@@ -949,6 +979,9 @@ async function ensureEngineRunning() {
   engineState.loopTimer = setInterval(() => {
     tickOnce().catch(() => {});
   }, LOOP_MS);
+  engineState.markTimer = setInterval(() => {
+    markOnce().catch(() => {});
+  }, OPEN_MARK_MS);
   tickOnce().catch(() => {});
   return { ok: true, started: true };
 }
@@ -1045,7 +1078,7 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
 }
 
 async function getBookSummary() {
-  const wallet = await recalcWalletFromTrades();
+  const wallet = await ensureWallet();
   const clock = getIstClock(new Date());
   const open = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
