@@ -1,14 +1,12 @@
 /**
- * OI Flow Tracker paper engine — ROBUST B (always on).
- * Put buying ≥2.5L + spot↓ + 15/5/3/1 Bear → LONG PE
- * Put writing ≥2.5L + spot↑ + 15/5/3/1 Bull → LONG CE
- * Else no trade. Skip Put ΔOI > 30L · TP+10 / SL−8 · max hold 15m · cooldown 30m · 10 lots
- * Auto entry/exit only — no manual start/stop/close required.
+ * OI Flow Tracker paper engine — RETIRED.
+ * Robust B auto-trade is permanently off. Minute OI recorder is separate.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
 const OiFlowOptionTick = require('../models/oiFlowOptionTick');
+const OiFlowLiveSignal = require('../models/oiFlowLiveSignal');
 const { OI_FLOW_TRACKER_LIVE_KEY } = require('../strategies/keys');
 const { getIstClock } = require('../utils/dateTime');
 const {
@@ -38,9 +36,11 @@ const LOOP_MS = 5000;
 const TICK_KEEP_MS = 5 * 60 * 1000;
 const MIN_HOLD_MS = 15000;
 const EXIT_EPS = 0.15;
+/** Robust B auto paper is permanently removed from OI Flow Tracker. */
+const RETIRED = true;
 
 const DEFAULT_SETTINGS = {
-  enabled: true, // always-on paper engine
+  enabled: false,
   symbol: 'NIFTY',
   lotCount: 10,
   tradeFromTime: '09:30',
@@ -140,16 +140,15 @@ async function ensureWallet() {
 async function loadSettingsFromDb() {
   const wallet = await ensureWallet();
   const raw = wallet.oiFlowEngineSettings?.toObject?.() || wallet.oiFlowEngineSettings || {};
-  // One-time migrate older wallets onto ROBUST B always-on defaults.
+  // One-time migrate older wallets onto ROBUST B defaults (engine itself is retired).
   const needsMigrate =
-    raw.enabled === false ||
     raw.requireSpotAlign == null ||
     raw.maxPutOi == null ||
     Number(raw.minPutOi) === 80000 ||
     !Number(raw.minPutOi);
   if (needsMigrate) {
     engineState.settings = await saveSettingsToDb({
-      enabled: true,
+      enabled: false,
       minPutOi: 250000,
       maxPutOi: 3000000,
       requireSpotAlign: true,
@@ -869,14 +868,12 @@ async function tryEnter(signal) {
 }
 
 async function tickOnce() {
+  if (RETIRED) return;
   if (engineState.tickInFlight) return;
   engineState.tickInFlight = true;
   try {
     await loadSettingsFromDb();
-    // Persist always-on if wallet still has stale enabled:false
-    if (engineState.settings.enabled !== true) {
-      await saveSettingsToDb({ enabled: true });
-    }
+    if (engineState.settings.enabled !== true) return;
     await checkOpenTrade();
     if (engineState.openTradeId) return;
     const signal = await readLatestSignal();
@@ -920,73 +917,85 @@ async function hydrateEntryGateFromDb() {
   }
 }
 
+function stopLoop() {
+  if (engineState.loopTimer) {
+    clearInterval(engineState.loopTimer);
+    engineState.loopTimer = null;
+  }
+  engineState.running = false;
+}
+
+let retiredCleanupDone = false;
+
+/** Stop the loop, delete Robust B paper trades/signals, reset wallet. Minute OI rows stay. */
+async function retireStrategy() {
+  stopLoop();
+  engineState.settings = { ...engineState.settings, enabled: false };
+  if (retiredCleanupDone) return { ok: true, retired: true, already: true };
+  const trades = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select({ _id: 1 }).lean();
+  const ids = trades.map((t) => t._id);
+  const tickDel = ids.length
+    ? await OiFlowOptionTick.deleteMany({ tradeId: { $in: ids } })
+    : { deletedCount: 0 };
+  const sigDel = await OiFlowLiveSignal.deleteMany({});
+  const tradeDel = await LivePaperTrade.deleteMany({ strategyKey: STRATEGY_KEY });
+  const wallet = await LiveWallet.findOne({ walletKey: WALLET_KEY });
+  if (wallet) {
+    wallet.realizedPnl = 0;
+    wallet.balance = 0;
+    wallet.totalTrades = 0;
+    wallet.wins = 0;
+    wallet.losses = 0;
+    const next = {
+      ...(wallet.oiFlowEngineSettings?.toObject?.() || wallet.oiFlowEngineSettings || {}),
+      enabled: false,
+    };
+    wallet.oiFlowEngineSettings = next;
+    await wallet.save();
+  }
+  retiredCleanupDone = true;
+  return {
+    ok: true,
+    retired: true,
+    deleted: {
+      trades: tradeDel.deletedCount,
+      signals: sigDel.deletedCount,
+      ticks: tickDel.deletedCount,
+    },
+  };
+}
+
 async function ensureEngineRunning() {
-  if (engineState.running) return { ok: true, already: true };
-  await loadSettingsFromDb();
-  await hydrateEntryGateFromDb();
-  engineState.running = true;
-  engineState.startedAt = new Date().toISOString();
-  engineState.loopTimer = setInterval(() => {
-    tickOnce().catch(() => {});
-  }, LOOP_MS);
-  tickOnce().catch(() => {});
-  return { ok: true, started: true };
+  return retireStrategy();
 }
 
 async function setEnabled(_enabled) {
-  await ensureEngineRunning();
-  // Always-on — ignore disable requests from older clients.
-  const next = await saveSettingsToDb({ enabled: true });
-  return { ok: true, settings: next, enabled: true };
+  await retireStrategy();
+  return { ok: true, retired: true, enabled: false, error: 'OI Flow Tracker auto-trade (Robust B) is permanently removed' };
 }
 
-async function updateSettings(body = {}) {
-  await ensureEngineRunning();
-  const allowed = [
-    'enabled',
-    'symbol',
-    'lotCount',
-    'tradeFromTime',
-    'tradeToTime',
-    'eodExitTime',
-    'targetPoints',
-    'stopLossPoints',
-    'maxHoldMinutes',
-    'minPutOi',
-    'maxPutOi',
-    'requireSpotAlign',
-    'cooldownMinutes',
-    'perTradeCost',
-  ];
-  const partial = {};
-  for (const k of allowed) {
-    if (body[k] !== undefined) partial[k] = body[k];
-  }
-  const next = await saveSettingsToDb(partial);
-  return { ok: true, settings: next };
+async function updateSettings(_body = {}) {
+  await retireStrategy();
+  return {
+    ok: true,
+    retired: true,
+    enabled: false,
+    error: 'OI Flow Tracker auto-trade (Robust B) is permanently removed',
+  };
 }
 
 async function getStatus() {
-  await ensureEngineRunning();
-  const open = await LivePaperTrade.findOne({
-    strategyKey: STRATEGY_KEY,
-    status: 'OPEN',
-    exitTime: null,
-  })
-    .sort({ entryTime: -1 })
-    .lean();
+  await retireStrategy();
   const wallet = await ensureWallet();
   return {
-    running: engineState.running,
-    startedAt: engineState.startedAt,
-    enabled: Boolean(engineState.settings.enabled),
-    settings: engineState.settings,
+    ok: true,
+    retired: true,
+    running: false,
+    enabled: false,
+    settings: { ...engineState.settings, enabled: false },
     strategyKey: STRATEGY_KEY,
-    strategyLabel: 'ROBUST B · 4 TF align · Put≥2.5L · cap 30L',
-    openTrade: open || null,
-    lastDecision: engineState.lastDecision,
-    lastEntryDebug: engineState.lastEntryDebug,
-    lastError: engineState.lastError,
+    walletKey: WALLET_KEY,
+    strategyLabel: 'OI Flow Tracker auto (Robust B) — removed',
     wallet: {
       walletKey: WALLET_KEY,
       realizedPnl: wallet.realizedPnl,
@@ -995,6 +1004,7 @@ async function getStatus() {
       wins: wallet.wins,
       losses: wallet.losses,
     },
+    lastError: engineState.lastError,
   };
 }
 
@@ -1025,6 +1035,7 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
 }
 
 async function getBookSummary() {
+  await retireStrategy();
   const wallet = await recalcWalletFromTrades();
   const clock = getIstClock(new Date());
   const open = await LivePaperTrade.find({
@@ -1081,11 +1092,13 @@ async function getBookSummary() {
 }
 
 async function closeOpenTradeManual(_reason = 'MANUAL_CLOSE') {
-  throw new Error('Manual close disabled — OI Flow ROBUST B exits only on Target / SL / Time / Day close');
+  await retireStrategy();
+  return { ok: true, retired: true };
 }
 
 module.exports = {
   ensureEngineRunning,
+  retireStrategy,
   setEnabled,
   updateSettings,
   getStatus,

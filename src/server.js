@@ -66,10 +66,10 @@ async function bootBackgroundServices() {
 
   try {
     const oiFlowPaper = require('./services/oiFlowPaperEngine');
-    await oiFlowPaper.ensureEngineRunning();
-    console.log('OI Flow paper trade engine started');
+    const retired = await oiFlowPaper.retireStrategy();
+    console.log('OI Flow Tracker Robust B paper engine retired', retired.deleted || '');
   } catch (err) {
-    console.warn('OI Flow paper engine boot:', err.message);
+    console.warn('OI Flow paper engine retire:', err.message);
   }
 
   try {
