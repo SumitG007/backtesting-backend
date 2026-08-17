@@ -1,12 +1,12 @@
 /**
  * Manual Console — Live Signal auto scalp.
  * Separate strategyKey + wallet from manual console entries.
- * Rules: 1 open trade at a time · TAKE_ENTRY signal · +5 / −15 · OI flip exit.
+ * Rules: 1 open trade at a time · TAKE_ENTRY signal · +5 / −15 · first SL stops day.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
 const { MANUAL_OI_AUTO_LIVE_KEY } = require('../strategies/keys');
-const { getIstClock } = require('../utils/dateTime');
+const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
 const {
   getAtmPremiums,
   getCurrentLotSize,
@@ -65,6 +65,9 @@ const engineState = {
   oiFlipTicks: 0,
   lotSize: null,
   expiry: null,
+  /** IST dateKey (YYYY-MM-DD) once first STOP_LOSS of the session closes — no new entries until next day. */
+  dailySlStopDateKey: null,
+  dailySlStopAt: null,
 };
 
 function parseHhmmToMinutes(raw) {
@@ -535,6 +538,33 @@ function pickExitSpot(mark, trade, futFallback = null) {
   return null;
 }
 
+function resetDailySlStopIfNewDay(dateKey) {
+  if (engineState.dailySlStopDateKey && engineState.dailySlStopDateKey !== dateKey) {
+    engineState.dailySlStopDateKey = null;
+    engineState.dailySlStopAt = null;
+  }
+}
+
+/** True when today's first STOP_LOSS already hit — block new entries until next IST trading day. */
+async function isDailySlStopActive(dateKey) {
+  resetDailySlStopIfNewDay(dateKey);
+  if (engineState.dailySlStopDateKey === dateKey) return true;
+  const firstSl = await LivePaperTrade.findOne({
+    strategyKey: STRATEGY_KEY,
+    reason: 'STOP_LOSS',
+    exitDateKey: dateKey,
+  })
+    .sort({ exitTime: 1 })
+    .select({ exitTime: 1 })
+    .lean();
+  if (firstSl?.exitTime) {
+    engineState.dailySlStopDateKey = dateKey;
+    engineState.dailySlStopAt = firstSl.exitTime;
+    return true;
+  }
+  return false;
+}
+
 async function secondsSinceLastExit() {
   if (engineState.lastExitAtMs > 0) {
     return (Date.now() - engineState.lastExitAtMs) / 1000;
@@ -599,6 +629,10 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
     engineState.lastExitAtMs = Date.now();
     engineState.entryArmed = false;
     engineState.oiFlipTicks = 0;
+    if (reason === 'STOP_LOSS') {
+      engineState.dailySlStopDateKey = clock.dateKey;
+      engineState.dailySlStopAt = trade.exitTime;
+    }
     return trade;
   } finally {
     engineState.closingTrade = false;
@@ -701,6 +735,18 @@ async function tryEnter(signal, board) {
   }
 
   const clock = getIstClock(new Date());
+  if (isWeekendDateKey(clock.dateKey)) {
+    engineState.lastEntryDebug = { skip: 'weekend', dateKey: clock.dateKey };
+    return;
+  }
+  if (await isDailySlStopActive(clock.dateKey)) {
+    engineState.lastEntryDebug = {
+      skip: 'daily_sl_stop',
+      dateKey: clock.dateKey,
+      stoppedAt: engineState.dailySlStopAt,
+    };
+    return;
+  }
   if (!inWindow(clock.minutes, engineState.settings.tradeFromTime, engineState.settings.tradeToTime)) {
     return;
   }
@@ -846,6 +892,8 @@ async function tickOnce() {
   engineState.tickInFlight = true;
   try {
     await loadSettingsFromDb();
+    const clock = getIstClock(new Date());
+    resetDailySlStopIfNewDay(clock.dateKey);
     const board = await fetchBoard();
     engineState.lastBoardAt = board?.at || new Date().toISOString();
     const signal = buildSignalFromBoard(board, engineState.settings);
@@ -893,6 +941,8 @@ async function ensureEngineRunning() {
     await syncOpenTradeId();
     await recalcWalletFromTrades();
     await secondsSinceLastExit(); // hydrate lastExitAtMs from DB
+    const bootClock = getIstClock(new Date());
+    await isDailySlStopActive(bootClock.dateKey);
     engineState.running = true;
     engineState.startedAt = new Date();
     engineState.entryArmed = true;
@@ -937,6 +987,12 @@ async function getStatus() {
     lastEntryDebug: engineState.lastEntryDebug,
     lastBoardAt: engineState.lastBoardAt,
     startedAt: engineState.startedAt,
+    dailySlStop: engineState.dailySlStopDateKey
+      ? {
+        dateKey: engineState.dailySlStopDateKey,
+        stoppedAt: engineState.dailySlStopAt,
+      }
+      : null,
   };
 }
 
