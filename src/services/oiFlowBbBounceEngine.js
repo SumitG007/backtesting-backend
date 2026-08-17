@@ -40,7 +40,7 @@ function pairFavours(callAct, putAct) {
   return null;
 }
 
-function decideBbBounce(ctx, minute, prevBb = null) {
+function decideBbBounce(ctx, minute, prevBb = null, opts = {}) {
   const i = ctx.idxOf.get(minute);
   const cur = ctx.byMin.get(minute);
   if (i == null || i < 1 || !cur) return null;
@@ -50,6 +50,7 @@ function decideBbBounce(ctx, minute, prevBb = null) {
   const candle = Number(f.spotChg1) > 0 ? 'green' : Number(f.spotChg1) < 0 ? 'red' : 'doji';
   const favour = pairFavours(f.callAct, f.putAct);
   const oiMag = Math.max(Math.abs(Number(f.callChg) || 0), Math.abs(Number(f.putChg) || 0));
+  const minOi = Math.max(10000, Number(opts.minOiAbs) || MIN_OI_ABS);
   const base = {
     time: cur.time,
     minutes: minute,
@@ -72,8 +73,8 @@ function decideBbBounce(ctx, minute, prevBb = null) {
   if (!bb?.ok) {
     return { ...base, decision: 'WAIT', reason: bb?.reason || 'BB not ready' };
   }
-  if (oiMag < MIN_OI_ABS) {
-    return { ...base, decision: 'WAIT', reason: `OI mag ${oiMag} < 1L` };
+  if (oiMag < minOi) {
+    return { ...base, decision: 'WAIT', reason: `OI mag ${oiMag} < ${minOi}` };
   }
 
   const reclaimLower = Boolean(prevBb?.atLower) && !bb.atLower;

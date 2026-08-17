@@ -71,6 +71,14 @@ const {
 } = require('../controllers/oiFlowPaperController');
 const { getOiFlowBbBounceBacktest } = require('../controllers/oiFlowBbBounceController');
 const {
+  getOiFlowBbBouncePaperStatus,
+  getOiFlowBbBouncePaperBook,
+  getOiFlowBbBouncePaperTrades,
+  postOiFlowBbBouncePaperEnabled,
+  patchOiFlowBbBouncePaperSettings,
+  postOiFlowBbBouncePaperClose,
+} = require('../controllers/oiFlowBbBouncePaperController');
+const {
   getPatternResearch,
   getPatternResearchReport,
   getMultiScenarioResearch,
@@ -149,5 +157,11 @@ router.post('/oi-flow/paper/enabled', postOiFlowPaperEnabled);
 router.patch('/oi-flow/paper/settings', patchOiFlowPaperSettings);
 router.post('/oi-flow/paper/close', postOiFlowPaperClose);
 router.get('/oi-flow/bb-bounce/backtest', getOiFlowBbBounceBacktest);
+router.get('/oi-flow/bb-bounce/paper/status', getOiFlowBbBouncePaperStatus);
+router.get('/oi-flow/bb-bounce/paper/book', getOiFlowBbBouncePaperBook);
+router.get('/oi-flow/bb-bounce/paper/trades', getOiFlowBbBouncePaperTrades);
+router.post('/oi-flow/bb-bounce/paper/enabled', postOiFlowBbBouncePaperEnabled);
+router.patch('/oi-flow/bb-bounce/paper/settings', patchOiFlowBbBouncePaperSettings);
+router.post('/oi-flow/bb-bounce/paper/close', postOiFlowBbBouncePaperClose);
 
 module.exports = router;

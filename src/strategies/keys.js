@@ -13,6 +13,7 @@ const MANUAL_CONSOLE_LIVE_KEY = 'manual_console_live';
 const MANUAL_OI_AUTO_LIVE_KEY = 'manual_oi_auto_live';
 /** OI Flow Tracker paper — Put writing→CE / Put buying→PE. */
 const OI_FLOW_TRACKER_LIVE_KEY = 'oi_flow_tracker_live';
+const OI_FLOW_BB_BOUNCE_LIVE_KEY = 'oi_flow_bb_bounce_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -23,4 +24,5 @@ module.exports = {
   MANUAL_CONSOLE_LIVE_KEY,
   MANUAL_OI_AUTO_LIVE_KEY,
   OI_FLOW_TRACKER_LIVE_KEY,
+  OI_FLOW_BB_BOUNCE_LIVE_KEY,
 };

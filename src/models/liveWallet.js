@@ -99,6 +99,23 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** OI Flow BB Bounce reclaim paper (spot BB + OI, ATM options). */
+    oiFlowBbBounceEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:30' },
+      tradeToTime: { type: String, default: '14:30' },
+      eodExitTime: { type: String, default: '15:15' },
+      targetPoints: { type: Number, default: 10 },
+      slRangeBars: { type: Number, default: 5 },
+      slRangeMult: { type: Number, default: 1.5 },
+      slMinSpot: { type: Number, default: 10 },
+      minOiAbs: { type: Number, default: 100000 },
+      maxHoldMinutes: { type: Number, default: 0 },
+      cooldownMinutes: { type: Number, default: 30 },
+      perTradeCost: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );
