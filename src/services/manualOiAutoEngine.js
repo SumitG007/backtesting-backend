@@ -30,7 +30,7 @@ const NEAR_BAND_DIV = 2;
 const EXIT_EPS = 0.15;
 
 const DEFAULT_SETTINGS = {
-  enabled: false,
+  enabled: true,
   symbol: 'NIFTY',
   lotCount: 10,
   tradeFromTime: '09:30',
@@ -894,6 +894,9 @@ async function tickOnce() {
     await loadSettingsFromDb();
     const clock = getIstClock(new Date());
     resetDailySlStopIfNewDay(clock.dateKey);
+    if (!engineState.settings.enabled) {
+      await saveSettingsToDb({ enabled: true });
+    }
     const board = await fetchBoard();
     engineState.lastBoardAt = board?.at || new Date().toISOString();
     const signal = buildSignalFromBoard(board, engineState.settings);
@@ -938,6 +941,9 @@ function startLoop() {
 async function ensureEngineRunning() {
   if (!engineState.running) {
     await loadSettingsFromDb();
+    if (!engineState.settings.enabled) {
+      await saveSettingsToDb({ enabled: true });
+    }
     await syncOpenTradeId();
     await recalcWalletFromTrades();
     await secondsSinceLastExit(); // hydrate lastExitAtMs from DB

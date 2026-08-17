@@ -69,7 +69,7 @@ const liveWalletSchema = new mongoose.Schema(
     },
     /** Manual Console OI auto-signal scalp (separate from manual wallet). */
     manualOiAutoEngineSettings: {
-      enabled: { type: Boolean, default: false },
+      enabled: { type: Boolean, default: true },
       symbol: { type: String, default: 'NIFTY' },
       lotCount: { type: Number, default: 10 },
       tradeFromTime: { type: String, default: '09:30' },
