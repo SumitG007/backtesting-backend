@@ -2,7 +2,7 @@
  * OI Flow BB Bounce — mean-reversion at Bollinger bands + 1-min OI pairs.
  *
  * Reclaim: previous bar at the band, this bar closes back inside + strong OI ≥ 1L.
- * SL = 1.5 × last 5-min spot range (min 10 pts). TP +10. No 15m time exit.
+ * SL = 1.5 × last 5-min spot range (min 10 pts). TP +10 synth + 4 pt gap. No 15m time exit.
  */
 const fs = require('fs');
 const path = require('path');
@@ -12,6 +12,9 @@ const { normalizeRows, buildIndex, bbAt, TRADE_FROM, TRADE_TO } = require('./oiF
 const DATES = ['2026-08-12', '2026-08-13', '2026-08-14'];
 const COOLDOWN_MIN = 30;
 const TARGET_PTS = 10;
+/** Extra NIFTY synth pts required beyond base TP (closer to real option +10). */
+const TARGET_GAP = 4;
+const TP_TRIGGER_PTS = TARGET_PTS + TARGET_GAP;
 const PREMIUM_DELTA = 0.5;
 const MIN_OI_ABS = 100000;
 const SL_RANGE_BARS = 5;
@@ -217,10 +220,10 @@ function simulateExit(rows, entryIdx, entrySpot, side, slSpot) {
         exitSpot: laterSpot,
       };
     }
-    if (pts >= TARGET_PTS) {
+    if (pts >= TP_TRIGGER_PTS) {
       return {
         exitReason: 'TP',
-        favorPts: TARGET_PTS,
+        favorPts: Number(pts.toFixed(1)),
         hold: held,
         exitTime: later.time,
         exitMinutes: later.minutes,
@@ -414,9 +417,9 @@ async function runBbBounceBacktest(dateKeys = DATES) {
       putBuy: 'Prev bar at upper BB, this bar closes back inside + red + strong4 OI ≥ 1L',
       skippedPair: 'short cover / long unwind · writing / short cover · OI mag < 1L',
       window: '09:30–14:30',
-      book: '1 open · 30m cooldown · TP +10 · SL = 1.5× last 5-min spot range (min 10 pts) · hold until TP/SL/EOD',
+      book: `1 open · 30m cooldown · TP +${TARGET_PTS} + ${TARGET_GAP} gap synth pts · SL = 1.5× last 5-min spot range (min 10 pts) · hold until TP/SL/EOD`,
       ptsNote:
-        'Do not buy the touch. Buy the reclaim (close back inside). Entry uses current+past only. Pts = 0.5 × spot.',
+        `NIFTY synth only (0.5× spot). TP fires at +${TP_TRIGGER_PTS} synth pts (~${TP_TRIGGER_PTS * 2} spot pts). Do not buy the touch — buy the reclaim.`,
     },
     dates: dateKeys,
     days,

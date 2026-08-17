@@ -339,6 +339,16 @@ async function buildAfterCloseLastEntry(clock, prev) {
   }
 }
 
+/** API payload — omit per-strike snapshots (large; table uses precomputed ΔOI). */
+const OI_FLOW_TODAY_SELECT =
+  '-strikes -createdAt -updatedAt -__v';
+
+function stripStrikes(row) {
+  if (!row || typeof row !== 'object') return row;
+  const { strikes: _s, ...rest } = row;
+  return rest;
+}
+
 async function getStatus() {
   const clock = getIstClock(new Date());
   const count = await OiFlowMinuteRow.countDocuments({
@@ -390,9 +400,40 @@ async function listTodayRows() {
     symbol: engineState.symbol,
     dateKey: clock.dateKey,
   })
+    .select(OI_FLOW_TODAY_SELECT)
     .sort({ minutes: -1 })
     .lean();
-  const status = await getStatus();
+
+  const lastRowFromDb = rows.find((r) => r.fetchOk) || rows[0] || null;
+  let lastRow = engineState.lastRow;
+  if (
+    lastRowFromDb
+    && (!lastRow?.minutes || lastRowFromDb.minutes >= lastRow.minutes)
+  ) {
+    lastRow = lastRowFromDb;
+  }
+  if (lastRow) lastRow = stripStrikes(lastRow);
+
+  const status = {
+    running: engineState.running,
+    startedAt: engineState.startedAt,
+    symbol: engineState.symbol,
+    dateKey: clock.dateKey,
+    nowTime: formatHhmm(clock.minutes),
+    sessionFrom: formatHhmm(SESSION_FROM),
+    sessionTo: formatHhmm(SESSION_TO),
+    inSession: clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO,
+    isTradingDay: !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey),
+    rowCount: rows.length,
+    expectedRows: SESSION_TO - SESSION_FROM + 1,
+    lastMinutes: lastRow?.minutes ?? null,
+    lastTime: lastRow?.time || null,
+    lastFetchedAt: lastRow?.fetchedAt || null,
+    lastError: engineState.lastError,
+    lastRow,
+    expiry: engineState.expiry,
+    lookaroundStrikes: LOOKAROUND_STRIKES,
+  };
 
   let displayRow = status.lastRow || rows[0] || null;
 

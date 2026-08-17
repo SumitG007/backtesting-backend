@@ -20,7 +20,7 @@ async function main() {
     );
     for (const s of d.signals) {
       console.log(
-        `    ${s.time} ${s.strikeLabel} ${s.bbZone} ${s.candle} ${s.pair} ${s.favorPts} ${s.exitReason} ${s.grade}`,
+        `    ${s.time} → ${s.exitTime || '—'} ${s.strikeLabel} ${s.bbZone} ${s.candle} ${s.pair} ${s.favorPts} ${s.exitReason} ${s.grade}`,
       );
     }
   }
