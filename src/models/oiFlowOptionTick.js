@@ -16,7 +16,7 @@ const oiFlowOptionTickSchema = new mongoose.Schema(
     ltp: { type: Number, required: true },
     spot: { type: Number, default: null },
     source: { type: String, default: null },
-    at: { type: Date, required: true, index: true },
+    at: { type: Date, required: true },
     dateKey: { type: String, required: true, index: true },
   },
   { timestamps: true },
