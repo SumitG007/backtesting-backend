@@ -1,5 +1,5 @@
 /**
- * Dump OI Flow minute rows for one IST date to data/oi-flow-YYYY-MM-DD.json
+ * Dump OI Flow minute rows for one IST date to data/oi-flow/oi-flow-YYYY-MM-DD.json
  * Same tape shape as 12/13 dumps (no future, one row per minute).
  *
  * Usage: node scripts/exportOiFlowDayJson.js
@@ -7,10 +7,10 @@
  */
 require('dotenv').config();
 const fs = require('fs');
-const path = require('path');
 const mongoose = require('mongoose');
 const OiFlowMinuteRow = require('../src/models/oiFlowMinuteRow');
 const { getIstClock } = require('../src/utils/dateTime');
+const { ensureOiFlowDumpDir, oiFlowDayDumpPath } = require('../src/utils/oiFlowDayDump');
 
 function dirOfChng(v) {
   if (!Number.isFinite(v) || v === 0) return 'flat';
@@ -62,7 +62,8 @@ async function main() {
       };
     });
 
-  const out = path.join(__dirname, '..', 'data', `oi-flow-${dateKey}.json`);
+  ensureOiFlowDumpDir();
+  const out = oiFlowDayDumpPath(dateKey);
   fs.writeFileSync(out, `${JSON.stringify(rows, null, 2)}\n`);
   console.log(`Wrote ${rows.length} rows → ${out}`);
   if (rows.length) {

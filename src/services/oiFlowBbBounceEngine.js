@@ -4,9 +4,8 @@
  * Reclaim: previous bar at the band, this bar closes back inside + strong OI ≥ 1L.
  * SL = 1.5 × last 5-min spot range (min 10 pts). TP +10 synth + 4 pt gap. No 15m time exit.
  */
-const fs = require('fs');
-const path = require('path');
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
+const { readOiFlowDayDump } = require('../utils/oiFlowDayDump');
 const { normalizeRows, buildIndex, bbAt, TRADE_FROM, TRADE_TO } = require('./oiFlowSignalEngine');
 
 const DATES = ['2026-08-12', '2026-08-13', '2026-08-14'];
@@ -258,11 +257,9 @@ async function loadDayRows(dateKey) {
   if (mongo.length >= 50) {
     return { source: 'mongo', rows: normalizeRows(mongo) };
   }
-  const file = path.join(__dirname, '../../data', `oi-flow-${dateKey}.json`);
-  if (fs.existsSync(file)) {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const list = Array.isArray(raw) ? raw : raw.rows || [];
-    return { source: 'json', file: `data/oi-flow-${dateKey}.json`, rows: normalizeRows(list) };
+  const dump = readOiFlowDayDump(dateKey);
+  if (dump?.rows?.length) {
+    return { source: 'json', file: dump.file, rows: normalizeRows(dump.rows) };
   }
   return { source: 'none', rows: [] };
 }
