@@ -162,9 +162,9 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
     const t = closedToday[0];
     const reason = t.reason || 'CLOSED';
     if (reason === 'MANUAL_CLOSE') {
-      return `Position closed manually. Realized P/L is in the Closed tab. ${label} will not auto-enter again today (one entry per day).`;
+      return `Position closed manually. Realized P/L is in Trade history. ${label} will not auto-enter again today (one entry per day).`;
     }
-    return `Today's paper-live entry is closed (${reason}). See the Closed tab.`;
+    return `Today's paper-live entry is closed (${reason}). See Trade history.`;
   }
   if ((todayTrades || []).length > 0) {
     return null;
@@ -190,7 +190,7 @@ function buildPaperLiveHint({ openTrade, todayTrades, latestTrade, engine, strat
     return `No trade today — direction skipped (${why}). PE score ${pe}, CE score ${ce}. One evaluation per day in ${entryWindowLabel} IST.`;
   }
   if (dbg?.reason === 'ALREADY_TRADED_TODAY' || dbg?.reason === 'ALREADY_TRADED_TODAY_IN_DB') {
-    return 'Engine will not enter again today (one entry per day). No open row in DB — check Closed tab or wallet reset.';
+    return 'Engine will not enter again today (one entry per day). No open row in DB — check Trade history or wallet reset.';
   }
   return `No paper-live trade recorded for today. Auto-entry runs only Mon–Fri ${entryWindowLabel} IST with backend + Dhan connected. Backtest entries are separate and do not appear here.`;
 }

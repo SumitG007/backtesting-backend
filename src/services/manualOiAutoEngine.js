@@ -1049,13 +1049,6 @@ async function getBookSummary() {
   })
     .sort({ entryTime: -1 })
     .lean();
-  const closed = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
-    $or: [{ status: 'CLOSED' }, { exitTime: { $ne: null } }],
-  })
-    .sort({ exitTime: -1 })
-    .limit(100)
-    .lean();
 
   let openMtm = 0;
   for (const t of open) {
@@ -1078,7 +1071,7 @@ async function getBookSummary() {
       losses: wallet.losses,
     },
     openTrades: open,
-    closedTrades: closed,
+    closedTrades: [],
     openCount: open.length,
     closedCount: wallet.totalTrades,
     openMtm: Number(openMtm.toFixed(2)),
