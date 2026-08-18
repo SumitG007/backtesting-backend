@@ -2,7 +2,7 @@
  * Matrix test via running backend (uses in-memory Dhan token + cache).
  * Usage: npm run dev  (then) node scripts/runCatalogMatrixViaApi.js
  */
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { getLotSize } = require('../src/utils/market');
 
 const BASE = process.env.API_BASE || 'http://localhost:3001/api';

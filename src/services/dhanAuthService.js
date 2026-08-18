@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { getAccessToken, setAccessToken, getDhanClientId, setDhanClientId } = require('./dhanTokenStore');
 const {
   persistDhanTokenToMongo,

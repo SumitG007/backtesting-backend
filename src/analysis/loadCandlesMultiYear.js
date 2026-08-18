@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { getCandlesWithCache } = require('../services/dhanDataService');
 
 const DEFAULT_YEARS = [2022, 2023, 2024, 2025, 2026];

@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const WebSocket = require('ws');
 const { readLatestAccessToken, isLikelyDhanAuthError, ensureValidDhanAccessToken } = require('./tokenService');
 const { getDhanClientId } = require('./dhanTokenStore');

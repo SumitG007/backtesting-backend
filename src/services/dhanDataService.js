@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { CACHE_TTL_MS } = require('../config/constants');
 const {
   toIntradayDateTime,

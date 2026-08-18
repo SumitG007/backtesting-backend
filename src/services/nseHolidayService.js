@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { isWeekendDateKey, getIstClock } = require('../utils/dateTime');
 
 const NSE_HOME_URL = 'https://www.nseindia.com';

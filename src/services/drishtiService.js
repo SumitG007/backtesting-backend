@@ -1,4 +1,4 @@
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const { listOptionStockUnderlyings } = require('./dhanLiveService');
 const { getIstClock } = require('../utils/dateTime');
 

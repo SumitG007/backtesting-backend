@@ -1,5 +1,5 @@
 require('dotenv').config({ path: require('path').resolve(__dirname, '..', '..', '.env') });
-const axios = require('axios');
+const axios = require('axios/dist/node/axios.cjs');
 const mongoose = require('mongoose');
 const DhanTokenCache = require('../models/DhanTokenCache');
 
