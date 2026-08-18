@@ -1055,13 +1055,13 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
   await ensureEngineRunning();
   const clock = getIstClock(new Date());
   const filter = { strategyKey: STRATEGY_KEY };
-  if (status === 'OPEN') {
+  const statusKey = String(status || 'ALL').toUpperCase();
+  if (statusKey === 'OPEN') {
     filter.status = 'OPEN';
     filter.exitTime = null;
-  } else if (status === 'CLOSED') {
+  } else if (statusKey === 'CLOSED') {
     filter.$or = [{ status: 'CLOSED' }, { exitTime: { $ne: null } }];
-  } else {
-    // TODAY / default — today's entries + still-open
+  } else if (statusKey === 'TODAY') {
     filter.$or = [
       { entryDateKey: clock.dateKey },
       { exitDateKey: clock.dateKey },
@@ -1069,12 +1069,26 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
     ];
   }
   const lim = Math.min(100, Math.max(1, Number(pageSize) || 50));
-  const skip = Math.max(0, (Math.max(1, Number(page) || 1) - 1) * lim);
+  const p = Math.max(1, Number(page) || 1);
+  const skip = (p - 1) * lim;
+  const sort = statusKey === 'CLOSED' ? { exitTime: -1, entryTime: -1 } : { entryTime: -1 };
   const [rows, total] = await Promise.all([
-    LivePaperTrade.find(filter).sort({ entryTime: -1 }).skip(skip).limit(lim).lean(),
+    LivePaperTrade.find(filter).sort(sort).skip(skip).limit(lim).lean(),
     LivePaperTrade.countDocuments(filter),
   ]);
-  return { trades: rows, total, page: Number(page) || 1, pageSize: lim, dateKey: clock.dateKey };
+  return {
+    trades: rows,
+    total,
+    page: p,
+    pageSize: lim,
+    dateKey: clock.dateKey,
+    pagination: {
+      page: p,
+      pageSize: lim,
+      totalRows: total,
+      totalPages: Math.max(1, Math.ceil(total / lim)),
+    },
+  };
 }
 
 async function getBookSummary() {
