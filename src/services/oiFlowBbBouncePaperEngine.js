@@ -541,6 +541,9 @@ async function checkOpenTrade() {
   }
 
   // Missed SL/TP from 5m buffer (fast candles between polls)
+  const heldMs = Date.now() - new Date(open.entryTime).getTime();
+  if (heldMs < MIN_HOLD_MS) return;
+
   const ticks = await loadRecentTicks(open._id);
   const buffered = findBufferedExit(ticks, open);
   if (buffered) {
@@ -562,9 +565,6 @@ async function checkOpenTrade() {
     });
     return;
   }
-
-  const heldMs = Date.now() - new Date(open.entryTime).getTime();
-  if (heldMs < MIN_HOLD_MS) return;
 
   const optionLtp = Number(mark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
