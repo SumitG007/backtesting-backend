@@ -1,7 +1,8 @@
 /**
  * OI Flow BB Bounce paper — reclaim (always on).
  * Prev bar at BB, this bar closes inside + strong OI ≥ 1L → ATM CE/PE.
- * TP +10 option pts · SL on NIFTY spot 1.5× last 5-min range (min 10 pts).
+ * TP +10 option pts · SL on NIFTY INDEX (IDX_I) 1.5× last 5-min range (min 10 pts).
+ * Never mix index BB/SL with NIFTY futures LTP.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -15,7 +16,7 @@ const {
   getNearestWeeklyExpiry,
   resolveOptionInstrument,
   fetchInstrumentLtp,
-  getFutureLtp,
+  getIndexLtp,
 } = require('./dhanLiveService');
 const { normalizeRows, buildIndex, bbAt } = require('./oiFlowSignalEngine');
 const { decideBbBounce } = require('./oiFlowBbBounceEngine');
@@ -172,19 +173,29 @@ async function recalcWalletFromTrades() {
   return wallet;
 }
 
+function isIndexSpotSource(source) {
+  return String(source || '').startsWith('index');
+}
+
+function indexSpotSlHit(optionType, liveSpot, slSpot) {
+  const sl = Number(slSpot);
+  const spot = Number(liveSpot);
+  if (!Number.isFinite(sl) || !Number.isFinite(spot) || spot <= 0) return false;
+  return String(optionType || '').toUpperCase() === 'PE' ? spot >= sl : spot <= sl;
+}
+
 async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } = {}) {
   const optionType = String(trade.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
-  let futSpot = null;
+  let indexSpot = null;
   let securityId = null;
 
-  const futP = getFutureLtp({
+  const idxP = getIndexLtp({
     symbol: trade.symbol,
-    expiry: trade.expiryDate,
     maxWaitMs: Math.min(600, maxWaitMs),
     forceFresh: false,
   })
-    .then((fut) => {
-      if (Number.isFinite(fut?.ltp) && fut.ltp > 0) futSpot = fut.ltp;
+    .then((idx) => {
+      if (Number.isFinite(idx?.ltp) && idx.ltp > 0) indexSpot = idx.ltp;
     })
     .catch(() => {});
 
@@ -206,9 +217,14 @@ async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } =
     }
   })();
 
-  await Promise.all([futP, optP]);
+  await Promise.all([idxP, optP]);
   if (Number.isFinite(optionLtp) && optionLtp > 0) {
-    return { optionLtp, spot: futSpot, source: 'marketfeed', securityId };
+    return {
+      optionLtp,
+      spot: indexSpot,
+      source: Number.isFinite(indexSpot) ? 'index-feed' : 'marketfeed',
+      securityId,
+    };
   }
   try {
     const prem = await getAtmPremiums({
@@ -217,24 +233,20 @@ async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } =
       expiry: trade.expiryDate,
     });
     const ltp = optionType === 'PE' ? Number(prem.peLtp) : Number(prem.ceLtp);
-    const spot =
-      Number.isFinite(futSpot) && futSpot > 0
-        ? futSpot
-        : Number(prem.spot) > 0
-          ? Number(prem.spot)
-          : Number(prem.chainSpot);
+    const chainSpot = Number(prem.spot) > 0 ? Number(prem.spot) : Number(prem.chainSpot);
+    const spot = Number.isFinite(indexSpot) && indexSpot > 0 ? indexSpot : chainSpot;
     if (Number.isFinite(ltp) && ltp > 0) {
       return {
         optionLtp: ltp,
         spot: Number.isFinite(spot) && spot > 0 ? spot : null,
-        source: 'chain',
+        source: Number.isFinite(indexSpot) ? 'index-feed' : 'index-chain',
         securityId,
       };
     }
   } catch {
     /* fall through */
   }
-  return { optionLtp: null, spot: futSpot, source: 'none', securityId };
+  return { optionLtp: null, spot: indexSpot, source: 'none', securityId };
 }
 
 async function saveOptionTick(trade, mark) {
@@ -271,13 +283,20 @@ function findBufferedExit(ticks, trade) {
   const sl = Number(trade.stopLossPremium);
   const tp = Number(trade.targetPremium);
   const slSpot = Number(trade.combinedStopSpot);
+  const entryMs = new Date(trade.entryTime).getTime();
   for (const t of ticks) {
+    const atMs = new Date(t.at).getTime();
+    if (Number.isFinite(entryMs) && atMs <= entryMs + 400) continue;
     const ltp = Number(t.ltp);
     const spot = Number(t.spot);
-    if (Number.isFinite(slSpot) && Number.isFinite(spot) && spot > 0) {
-      const side = String(trade.optionType || '').toUpperCase();
-      const hitSpotSl = side === 'PE' ? spot >= slSpot : spot <= slSpot;
-      if (hitSpotSl && Number.isFinite(ltp) && ltp > 0) {
+    if (
+      isIndexSpotSource(t.source) &&
+      Number.isFinite(slSpot) &&
+      Number.isFinite(spot) &&
+      spot > 0 &&
+      indexSpotSlHit(trade.optionType, spot, slSpot)
+    ) {
+      if (Number.isFinite(ltp) && ltp > 0) {
         return {
           reason: 'STOP_LOSS',
           exitPremium: ltp,
@@ -568,8 +587,8 @@ async function checkOpenTrade() {
 
   const optionLtp = Number(mark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
-  // Avoid acting on chain prints early; prefer marketfeed / held feed.
-  if (mark.source === 'chain' && heldMs < MIN_HOLD_MS * 2) return;
+  // Avoid acting on chain prints early; prefer live index + option feed.
+  if ((mark.source === 'chain' || mark.source === 'index-chain') && heldMs < MIN_HOLD_MS * 2) return;
 
   if (open.stopLossPremium != null && optionLtp <= Number(open.stopLossPremium) - EXIT_EPS) {
     await finalizeTrade(open, {
@@ -581,17 +600,19 @@ async function checkOpenTrade() {
   }
   const slSpot = Number(open.combinedStopSpot);
   const liveSpot = Number(mark.spot);
-  if (Number.isFinite(slSpot) && Number.isFinite(liveSpot) && liveSpot > 0) {
-    const side = String(open.optionType || '').toUpperCase();
-    const hitSpotSl = side === 'PE' ? liveSpot >= slSpot : liveSpot <= slSpot;
-    if (hitSpotSl) {
-      await finalizeTrade(open, {
-        exitPremium: optionLtp,
-        mark,
-        reason: 'STOP_LOSS',
-      });
-      return;
-    }
+  if (
+    isIndexSpotSource(mark.source) &&
+    Number.isFinite(slSpot) &&
+    Number.isFinite(liveSpot) &&
+    liveSpot > 0 &&
+    indexSpotSlHit(open.optionType, liveSpot, slSpot)
+  ) {
+    await finalizeTrade(open, {
+      exitPremium: optionLtp,
+      mark,
+      reason: 'STOP_LOSS',
+    });
+    return;
   }
   if (open.targetPremium != null && optionLtp >= Number(open.targetPremium) + EXIT_EPS) {
     await finalizeTrade(open, {
@@ -612,7 +633,7 @@ async function checkOpenTrade() {
   }
 }
 
-function liveSlSpot(rows, entryIdx, entrySpot, side) {
+function slRangePts(rows, entryIdx) {
   const n = Math.max(2, Number(engineState.settings.slRangeBars) || 5);
   const mult = Number(engineState.settings.slRangeMult) || 1.5;
   const minPts = Number(engineState.settings.slMinSpot) || 10;
@@ -627,7 +648,11 @@ function liveSlSpot(rows, entryIdx, entrySpot, side) {
     if (s < lo) lo = s;
   }
   const range = Number.isFinite(hi) && Number.isFinite(lo) ? hi - lo : minPts;
-  const r = Math.max(minPts, range * mult);
+  return Math.max(minPts, range * mult);
+}
+
+function liveSlSpot(rows, entryIdx, entrySpot, side) {
+  const r = slRangePts(rows, entryIdx);
   return side === 'PE' ? entrySpot + r : entrySpot - r;
 }
 
@@ -658,6 +683,7 @@ async function readLatestSignal() {
     return null;
   }
   const optionType = decision.decision === 'PUT BUY' ? 'PE' : 'CE';
+  decision.slRangePts = slRangePts(rows, rows.length - 1);
   decision.slSpot = liveSlSpot(rows, rows.length - 1, Number(last.spot), optionType);
   decision.prevTime = prev?.time || null;
   return decision;
@@ -731,11 +757,22 @@ async function tryEnter(signal) {
 
     let strike = null;
     let entrySpot = Number(signal.spot);
+    let liveIndex = null;
+    try {
+      const idx = await getIndexLtp({ symbol, maxWaitMs: 800, forceFresh: true });
+      if (Number.isFinite(idx?.ltp) && idx.ltp > 0) {
+        liveIndex = idx.ltp;
+        entrySpot = liveIndex;
+      }
+    } catch {
+      /* chain / 1-min bar fallback — still index, never futures */
+    }
     try {
       const prem = await getAtmPremiums({ symbol, expiry });
       if (Number.isFinite(prem?.atm)) strike = prem.atm;
-      if (Number.isFinite(prem?.spot) && prem.spot > 0) entrySpot = prem.spot;
-      else if (Number.isFinite(prem?.fut) && prem.fut > 0) entrySpot = prem.fut;
+      if (liveIndex == null && Number.isFinite(prem?.spot) && prem.spot > 0) {
+        entrySpot = prem.spot;
+      }
     } catch {
       /* optional */
     }
@@ -783,7 +820,24 @@ async function tryEnter(signal) {
     const maxHoldMinutes = Number(engineState.settings.maxHoldMinutes) || 0;
     const minOiAbs = Number(engineState.settings.minOiAbs) || 100000;
     const targetPremium = entryPremium + targetPoints;
-    const slSpot = Number(signal.slSpot);
+    const rangePts = Number.isFinite(Number(signal.slRangePts)) && Number(signal.slRangePts) > 0
+      ? Number(signal.slRangePts)
+      : Math.abs(Number(signal.slSpot) - Number(signal.spot));
+    if (indexSpotSlHit(optionType, entrySpot, signal.slSpot)) {
+      engineState.lastEntryDebug = {
+        skip: 'already_through_index_sl',
+        entrySpot,
+        signalSl: signal.slSpot,
+        liveIndex,
+        rangePts,
+      };
+      return;
+    }
+    const slSpot = Number.isFinite(rangePts) && rangePts > 0
+      ? optionType === 'PE'
+        ? entrySpot + rangePts
+        : entrySpot - rangePts
+      : Number(signal.slSpot);
     const stopLossPremium = null;
 
     const signalSnapshot = {
@@ -793,7 +847,7 @@ async function tryEnter(signal) {
         'Prev 1-min at BB, this 1-min closes back inside + strong OI ≥ 1L',
         'CALL: green + long build/writing or long build/long unwind → ATM CE',
         'PUT: red + writing/buying or long unwind/buying → ATM PE',
-        `SL = ${engineState.settings.slRangeMult}× last ${engineState.settings.slRangeBars}m NIFTY range (min ${engineState.settings.slMinSpot} pts)`,
+        `SL = NIFTY INDEX (not futures) ${engineState.settings.slRangeMult}× last ${engineState.settings.slRangeBars}m range (min ${engineState.settings.slMinSpot} pts)`,
         `TP +${targetPoints} option pts · cooldown ${engineState.settings.cooldownMinutes}m · no 15m time cut`,
       ],
       reason: signal.reason || null,
@@ -815,7 +869,7 @@ async function tryEnter(signal) {
       minOiAbs,
       targetPoints,
       slSpot,
-      slOn: `${engineState.settings.slRangeMult}× ${engineState.settings.slRangeBars}m range`,
+      slOn: `NIFTY index ${engineState.settings.slRangeMult}× ${engineState.settings.slRangeBars}m range`,
       maxHoldMinutes,
       lots,
       lotSize,
@@ -853,12 +907,12 @@ async function tryEnter(signal) {
       investedAmount: Number((entryPremium * qty + charges).toFixed(2)),
       capitalLocked: Number((entryPremium * qty + charges).toFixed(2)),
       charges,
-      notes: `entryMark=${entrySource}; signal=${signal.time}; slSpot=${slSpot}`,
+      notes: `entryMark=${entrySource}; signal=${signal.time}; slSpot=${slSpot}; slOn=NIFTY-index; liveIndex=${liveIndex ?? 'n/a'}`,
       signalSnapshot,
       openPositionMark: {
         optionLtp: Number(entryPremium.toFixed(2)),
         spot: Number.isFinite(entrySpot) ? Number(entrySpot.toFixed(2)) : null,
-        source: entrySource,
+        source: liveIndex != null ? 'index-feed' : 'index-chain',
         at: new Date().toISOString(),
         mtm: 0,
         qty,
@@ -898,7 +952,7 @@ async function tryEnter(signal) {
     await saveOptionTick(tradeDoc, {
       optionLtp: entryPremium,
       spot: entrySpot,
-      source: entrySource,
+      source: liveIndex != null ? 'index-feed' : 'index-chain',
       securityId,
     });
   } finally {
@@ -1035,7 +1089,7 @@ async function getStatus() {
     enabled: Boolean(engineState.settings.enabled),
     settings: engineState.settings,
     strategyKey: STRATEGY_KEY,
-    strategyLabel: 'BB Bounce · reclaim · OI≥1L · spot SL 1.5×5m · TP+10',
+    strategyLabel: 'BB Bounce · reclaim · OI≥1L · index SL 1.5×5m · TP+10',
     openTrade: open || null,
     lastDecision: engineState.lastDecision,
     lastEntryDebug: engineState.lastEntryDebug,
@@ -1125,7 +1179,7 @@ async function getBookSummary() {
   return {
     settings: engineState.settings,
     enabled: Boolean(engineState.settings.enabled),
-    strategyLabel: 'BB Bounce · reclaim · OI≥1L · spot SL 1.5×5m · TP+10',
+    strategyLabel: 'BB Bounce · reclaim · OI≥1L · index SL 1.5×5m · TP+10',
     decision: engineState.lastDecision,
     entryArmed: Boolean(engineState.entryArmed),
     wallet: {
@@ -1148,7 +1202,7 @@ async function getBookSummary() {
 }
 
 async function closeOpenTradeManual(_reason = 'MANUAL_CLOSE') {
-  throw new Error('Manual close disabled — BB Bounce exits only on Target / spot SL / Day close');
+  throw new Error('Manual close disabled — BB Bounce exits only on Target / NIFTY index SL / Day close');
 }
 
 module.exports = {

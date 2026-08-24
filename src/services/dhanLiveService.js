@@ -1194,6 +1194,24 @@ async function getFutureLtp({ symbol, expiry, maxWaitMs, forceFresh = false } = 
 }
 
 /**
+ * Cash/index LTP (NIFTY IDX_I id 13, not the future).
+ * BB Bounce SL/BB must use this series — futures basis is 50–150 pts away.
+ */
+async function getIndexLtp({ symbol = 'NIFTY', maxWaitMs = 800, forceFresh = false } = {}) {
+  const cfg = resolveSymbolConfig(symbol);
+  if (!cfg?.securityId) throw new Error(`No cash/index mapping for ${symbol}`);
+  const inst = {
+    securityId: String(cfg.securityId),
+    exchangeSegment: cfg.exchangeSegment || 'IDX_I',
+  };
+  const ltp = await fetchInstrumentLtp(inst, {
+    ...(maxWaitMs != null ? { maxWaitMs } : {}),
+    forceFresh: Boolean(forceFresh),
+  });
+  return { ltp, instrument: inst, source: 'index' };
+}
+
+/**
  * Quote for the futures order ticket: nearest tradable expiry, LTP, lot size and
  * the full expiry list so the UI can let the user roll to the next month.
  */
@@ -1465,6 +1483,7 @@ module.exports = {
   fetchMarketLtp,
   fetchInstrumentLtp,
   getFutureLtp,
+  getIndexLtp,
   getFutureQuote,
   resolveOptionInstrument,
   listOptionExpiriesFromMaster,
