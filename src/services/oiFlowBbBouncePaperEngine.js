@@ -66,6 +66,8 @@ const engineState = {
   lastError: null,
   lastEntryDebug: null,
   lastTickSavedAt: 0,
+  /** Latest open mark in RAM so the book API is not stuck on a stale Mongo row. */
+  liveOpenMark: null,
   closingTrade: false,
   enteringTrade: false,
   lotSize: null,
@@ -358,9 +360,15 @@ function computeOpenMtm(trade, optionLtp) {
   return Number((mark - entry) * qty - (Number(trade.charges) || 0));
 }
 
+/** Live option LTP from WS/index — same as scalp, not chain-only. */
+function isLiveOptionSource(source) {
+  const s = String(source || '');
+  return s === 'marketfeed' || s === 'index-feed' || s.startsWith('marketfeed') || s.startsWith('index-feed');
+}
+
 function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
   if (!Number.isFinite(nextMark?.optionLtp) || nextMark.optionLtp <= 0) return false;
-  if (nextMark.source === 'marketfeed') {
+  if (isLiveOptionSource(nextMark.source)) {
     if (
       prevMark &&
       Number(prevMark.optionLtp) === Number(nextMark.optionLtp) &&
@@ -371,22 +379,22 @@ function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
     return true;
   }
   if (!prevMark || !Number.isFinite(prevMark.optionLtp) || prevMark.optionLtp <= 0) return true;
-  // Don't let a stale chain print overwrite a fresh marketfeed mark.
-  if (String(prevMark.source || '').startsWith('marketfeed')) {
+  // Don't let a stale chain print overwrite a fresh live mark.
+  if (isLiveOptionSource(prevMark.source)) {
     const ageMs = prevAt ? Date.now() - new Date(prevAt).getTime() : Infinity;
     if (ageMs < 8000) return false;
   }
-  return nextMark.source === 'chain';
+  return nextMark.source === 'chain' || String(nextMark.source || '').includes('chain');
 }
 
 async function resolveDisplayMark(trade, liveMark) {
-  if (liveMark?.source === 'marketfeed' && Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0) {
+  if (isLiveOptionSource(liveMark?.source) && Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0) {
     return liveMark;
   }
   const prev = trade.openPositionMark;
   if (
     prev &&
-    String(prev.source || '').startsWith('marketfeed') &&
+    isLiveOptionSource(prev.source) &&
     Number.isFinite(prev.optionLtp) &&
     prev.optionLtp > 0
   ) {
@@ -521,6 +529,7 @@ async function checkOpenTrade() {
   }).sort({ entryTime: -1 });
   if (!open) {
     engineState.openTradeId = null;
+    engineState.liveOpenMark = null;
     return;
   }
   engineState.openTradeId = String(open._id);
@@ -529,9 +538,9 @@ async function checkOpenTrade() {
   const liveMark = await resolveOptionLtp(open);
   const mark = await resolveDisplayMark(open, liveMark);
 
-  if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
+  if (Number.isFinite(mark?.optionLtp) && mark.optionLtp > 0) {
     const mtm = computeOpenMtm(open, mark.optionLtp);
-    open.openPositionMark = {
+    const packed = {
       optionLtp: Number(Number(mark.optionLtp).toFixed(2)),
       spot: Number.isFinite(mark.spot) && mark.spot > 0 ? Number(Number(mark.spot).toFixed(2)) : null,
       source: mark.source,
@@ -546,19 +555,18 @@ async function checkOpenTrade() {
         : Number(open.signalSnapshot?.slSpot) || null,
       targetPremium: Number.isFinite(Number(open.targetPremium)) ? Number(open.targetPremium) : null,
     };
-    open.openPositionMarkAt = new Date();
-    await open.save();
-    try {
-      /* no tracker signal mark */
-    } catch {
-      /* ignore */
+    engineState.liveOpenMark = { tradeId: String(open._id), mark: packed };
+    if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
+      open.openPositionMark = packed;
+      open.openPositionMarkAt = new Date();
+      await open.save();
     }
   }
   // Only persist ticks from live resolve (not held stale display) when fresh feed/chain.
   if (
     Number.isFinite(liveMark.optionLtp) &&
     liveMark.optionLtp > 0 &&
-    (liveMark.source === 'marketfeed' || liveMark.source === 'chain')
+    (isLiveOptionSource(liveMark.source) || String(liveMark.source || '').includes('chain'))
   ) {
     await saveOptionTick(open, liveMark);
   }
@@ -1167,6 +1175,14 @@ async function getBookSummary() {
     .sort({ exitTime: -1 })
     .limit(100)
     .lean();
+
+  const live = engineState.liveOpenMark;
+  for (const t of open) {
+    if (live && String(t._id) === String(live.tradeId) && live.mark) {
+      t.openPositionMark = live.mark;
+      t.openPositionMarkAt = live.mark.at;
+    }
+  }
 
   let openMtm = 0;
   for (const t of open) {
