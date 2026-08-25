@@ -21,7 +21,6 @@ const {
   exportTradesExcel: exportLiveTradesExcel,
   getLiveMeta,
   closeLivePosition,
-  reopenLiveTrade,
 } = require('../controllers/liveTradeController');
 const { getDrishtiDashboard } = require('../controllers/drishtiDashboardController');
 const { getTodayNotifications, clearTodayNotifications } = require('../controllers/notificationController');
@@ -63,14 +62,6 @@ const {
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
 } = require('../controllers/oiFlowController');
-const {
-  getOiFlowPaperStatus,
-  getOiFlowPaperBook,
-  getOiFlowPaperTrades,
-  postOiFlowPaperEnabled,
-  patchOiFlowPaperSettings,
-  postOiFlowPaperClose,
-} = require('../controllers/oiFlowPaperController');
 const { getOiFlowBbBounceBacktest } = require('../controllers/oiFlowBbBounceController');
 const {
   getOiFlowBbBouncePaperStatus,
@@ -80,11 +71,6 @@ const {
   patchOiFlowBbBouncePaperSettings,
   postOiFlowBbBouncePaperClose,
 } = require('../controllers/oiFlowBbBouncePaperController');
-const {
-  getPatternResearch,
-  getPatternResearchReport,
-  getMultiScenarioResearch,
-} = require('../controllers/patternResearchController');
 
 const router = express.Router();
 
@@ -100,9 +86,6 @@ router.get('/data/candles/day', getCandlesDay);
 router.get('/data/option-stocks.csv', exportOptionStocksCsv);
 router.get('/data/future-stocks.csv', exportFutureStocksCsv);
 router.get('/data/instrument-summary', getInstrumentSummary);
-router.get('/research/patterns', getPatternResearch);
-router.get('/research/patterns/report.txt', getPatternResearchReport);
-router.get('/research/patterns/multi', getMultiScenarioResearch);
 router.get('/results/drishti', getDrishtiDashboard);
 router.get('/dashboard/drishti', getDrishtiDashboard);
 router.get('/notifications/today', getTodayNotifications);
@@ -123,7 +106,6 @@ router.post('/live/:strategyId/wallet/reset', resetLiveWallet);
 router.get('/live/:strategyId/trades', listLiveTrades);
 router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 router.post('/live/:strategyId/close', closeLivePosition);
-router.post('/live/:strategyId/reopen-trade', reopenLiveTrade);
 // Manual trading console (paper — Dhan LTP, simulated fills)
 router.get('/manual-console/status', getManualConsoleStatus);
 router.get('/manual-console/expiries', getManualExpiries);
@@ -154,12 +136,6 @@ router.get('/oi-flow/today', getOiFlowToday);
 router.get('/oi-flow/header-signal', getOiFlowHeaderSignal);
 router.get('/oi-flow/signals', getOiFlowSignals);
 router.post('/oi-flow/signals/backfill', postOiFlowSignalsBackfill);
-router.get('/oi-flow/paper/status', getOiFlowPaperStatus);
-router.get('/oi-flow/paper/book', getOiFlowPaperBook);
-router.get('/oi-flow/paper/trades', getOiFlowPaperTrades);
-router.post('/oi-flow/paper/enabled', postOiFlowPaperEnabled);
-router.patch('/oi-flow/paper/settings', patchOiFlowPaperSettings);
-router.post('/oi-flow/paper/close', postOiFlowPaperClose);
 router.get('/oi-flow/bb-bounce/backtest', getOiFlowBbBounceBacktest);
 router.get('/oi-flow/bb-bounce/paper/status', getOiFlowBbBouncePaperStatus);
 router.get('/oi-flow/bb-bounce/paper/book', getOiFlowBbBouncePaperBook);

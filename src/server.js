@@ -11,14 +11,6 @@ const { initRealtime } = require('./services/realtimeSocket');
 const strategySixPaperEngine = require('./services/liveShortStraddleEngineStrategy6');
 const strategyFourteenPaperEngine = require('./services/liveEodOiWallsEngine');
 
-/** Legacy Strategy A reopen env — engine retired. */
-async function runPendingStrategyAReopenFromEnv() {
-  const tradeId = String(process.env.REOPEN_STRATEGY_A_TRADE_ID || '').trim();
-  if (!tradeId) return;
-  console.warn('[REOPEN] Strategy A paper-live was removed; ignoring REOPEN_STRATEGY_A_TRADE_ID=', tradeId);
-  delete process.env.REOPEN_STRATEGY_A_TRADE_ID;
-}
-
 async function bootBackgroundServices() {
   try {
     const s6 = require('./services/liveShortStraddleEngineStrategy6');
@@ -62,14 +54,6 @@ async function bootBackgroundServices() {
     }
   } catch (err) {
     console.warn('OI flow minute engine boot:', err.message);
-  }
-
-  try {
-    const oiFlowPaper = require('./services/oiFlowPaperEngine');
-    const retired = await oiFlowPaper.retireStrategy();
-    console.log('OI Flow Tracker Robust B paper engine retired', retired.deleted || '');
-  } catch (err) {
-    console.warn('OI Flow paper engine retire:', err.message);
   }
 
   try {
@@ -124,8 +108,6 @@ async function start() {
 
   await mongoose.connect(mongoUri);
   console.log('MongoDB connected');
-
-  await runPendingStrategyAReopenFromEnv();
 
   try {
     const { syncAdminFromEnv } = require('./services/adminAuthService');

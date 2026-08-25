@@ -497,13 +497,6 @@ async function resetWallet(req, res) {
   }
 }
 
-async function reopenLiveTrade(req, res) {
-  return res.status(400).json({
-    ok: false,
-    error: 'Reopen was only for retired Strategy A (left straddle). Use Short straddle paper live (strategy-6).',
-  });
-}
-
 async function listTrades(req, res) {
   try {
     const ctx = getLiveContext(req);
@@ -671,5 +664,4 @@ module.exports = {
   exportTradesExcel,
   getLiveMeta,
   closeLivePosition,
-  reopenLiveTrade,
 };
