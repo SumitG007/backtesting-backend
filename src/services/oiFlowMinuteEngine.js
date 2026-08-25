@@ -54,6 +54,35 @@ function dirArrow(value) {
   return value > 0 ? 'up' : 'down';
 }
 
+/** Strike numbers only from an ATM-window snapshot (sorted). */
+function strikeNamesFromRow(row) {
+  if (!Array.isArray(row?.strikes)) return [];
+  const names = [];
+  const seen = new Set();
+  for (const s of row.strikes) {
+    const n = Number(s?.strike);
+    if (!Number.isFinite(n) || seen.has(n)) continue;
+    seen.add(n);
+    names.push(n);
+  }
+  names.sort((a, b) => a - b);
+  return names;
+}
+
+async function latestSavedStrikeNames(dateKey) {
+  const row = await OiFlowMinuteRow.findOne({
+    symbol: engineState.symbol,
+    dateKey,
+    fetchOk: true,
+  })
+    .select({ strikes: 1, _id: 0 })
+    .sort({ minutes: -1 })
+    .lean();
+  const fromDb = strikeNamesFromRow(row);
+  if (fromDb.length) return fromDb;
+  return strikeNamesFromRow(engineState.lastRow);
+}
+
 function sentimentFromDiff(chngInDir) {
   if (!Number.isFinite(chngInDir) || chngInDir === 0) return 'Neutral';
   // Chng in dir = Puts chng − Calls chng → Put-heavy = Bull, Call-heavy = Bear
@@ -391,6 +420,7 @@ async function getStatus() {
     lastRow: lastRow || null,
     expiry: engineState.expiry,
     lookaroundStrikes: LOOKAROUND_STRIKES,
+    savedStrikes: await latestSavedStrikeNames(clock.dateKey),
   };
 }
 
@@ -412,6 +442,7 @@ async function listTodayRows() {
   ) {
     lastRow = lastRowFromDb;
   }
+  const savedStrikes = await latestSavedStrikeNames(clock.dateKey);
   if (lastRow) lastRow = stripStrikes(lastRow);
 
   const status = {
@@ -433,6 +464,7 @@ async function listTodayRows() {
     lastRow,
     expiry: engineState.expiry,
     lookaroundStrikes: LOOKAROUND_STRIKES,
+    savedStrikes,
   };
 
   let displayRow = status.lastRow || rows[0] || null;
