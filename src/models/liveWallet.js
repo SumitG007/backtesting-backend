@@ -116,6 +116,27 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** Liquidity OI Chase paper (sweep+break + OI fuel). */
+    liquidityOiChaseEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 1 },
+      tradeFromTime: { type: String, default: '09:30' },
+      tradeToTime: { type: String, default: '14:00' },
+      eodExitTime: { type: String, default: '15:15' },
+      swingLength: { type: Number, default: 14 },
+      oiWindowMins: { type: Number, default: 15 },
+      minStreak: { type: Number, default: 2 },
+      slBufferPts: { type: Number, default: 8 },
+      breakBufferPts: { type: Number, default: 0 },
+      maxDeltaPcrFight: { type: Number, default: 0.08 },
+      maxSlAtrMult: { type: Number, default: 1.5 },
+      fallbackTargetPts: { type: Number, default: 40 },
+      softTargetOptionPts: { type: Number, default: 15 },
+      maxTradesPerDay: { type: Number, default: 2 },
+      cooldownSeconds: { type: Number, default: 300 },
+      perTradeCost: { type: Number, default: 0 },
+    },
   },
   { timestamps: true }
 );

@@ -71,6 +71,14 @@ const {
   patchOiFlowBbBouncePaperSettings,
   postOiFlowBbBouncePaperClose,
 } = require('../controllers/oiFlowBbBouncePaperController');
+const {
+  getLiquidityOiChaseStatus,
+  getLiquidityOiChaseBook,
+  getLiquidityOiChaseTrades,
+  postLiquidityOiChaseEnabled,
+  patchLiquidityOiChaseSettings,
+  postLiquidityOiChaseClose,
+} = require('../controllers/liquidityOiChaseController');
 
 const router = express.Router();
 
@@ -143,5 +151,12 @@ router.get('/oi-flow/bb-bounce/paper/trades', getOiFlowBbBouncePaperTrades);
 router.post('/oi-flow/bb-bounce/paper/enabled', postOiFlowBbBouncePaperEnabled);
 router.patch('/oi-flow/bb-bounce/paper/settings', patchOiFlowBbBouncePaperSettings);
 router.post('/oi-flow/bb-bounce/paper/close', postOiFlowBbBouncePaperClose);
+
+router.get('/liquidity-oi-chase/status', getLiquidityOiChaseStatus);
+router.get('/liquidity-oi-chase/book', getLiquidityOiChaseBook);
+router.get('/liquidity-oi-chase/trades', getLiquidityOiChaseTrades);
+router.post('/liquidity-oi-chase/enabled', postLiquidityOiChaseEnabled);
+router.patch('/liquidity-oi-chase/settings', patchLiquidityOiChaseSettings);
+router.post('/liquidity-oi-chase/close', postLiquidityOiChaseClose);
 
 module.exports = router;
