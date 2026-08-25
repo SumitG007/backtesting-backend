@@ -23,6 +23,15 @@ async function getOiFlowToday(_req, res) {
   }
 }
 
+async function getOiFlowHeaderSignal(_req, res) {
+  try {
+    const data = await oiFlowEngine.getHeaderSignal();
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 async function getOiFlowSignals(req, res) {
   try {
     const clock = getIstClock(new Date());
@@ -50,6 +59,7 @@ async function postOiFlowSignalsBackfill(req, res) {
 module.exports = {
   getOiFlowStatus,
   getOiFlowToday,
+  getOiFlowHeaderSignal,
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
 };

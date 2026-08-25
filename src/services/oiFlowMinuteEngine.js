@@ -498,10 +498,131 @@ async function listTodayRows() {
   return { ...status, rows, displayRow };
 }
 
+function computeHeaderSignal(rows, displayRow) {
+  const byMin = new Map();
+  for (const row of rows || []) {
+    if (!row || row.fetchOk === false) continue;
+    const m = Number(row.minutes);
+    if (!Number.isFinite(m)) continue;
+    byMin.set(m, row);
+  }
+  if (displayRow && displayRow.fetchOk !== false) {
+    const m = Number(displayRow.minutes);
+    if (Number.isFinite(m)) byMin.set(m, displayRow);
+  }
+  const ordered = [...byMin.values()].sort((a, b) => Number(a.minutes) - Number(b.minutes));
+  if (!ordered.length) {
+    return {
+      decision: 'WAIT',
+      tone: 'flat',
+      bias: 'Sideways',
+      emoji: '😢',
+      mood: 'Sad',
+      dirMark: '⚪ →',
+      reason: 'Waiting for 09:15 candles…',
+      line: '😢 Sad · Sideways · Waiting for 09:15 candles…',
+      asOf: null,
+      minutesUsed: 0,
+    };
+  }
+
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const spotOpen = Number(first.spotPrice);
+  const spotNow = Number(last.spotPrice);
+  const dayCall = Number(last.dayCallChgOi);
+  const dayPut = Number(last.dayPutChgOi);
+  const dayDiff =
+    Number.isFinite(dayPut) && Number.isFinite(dayCall) ? dayPut - dayCall : null;
+
+  let bullMins = 0;
+  let bearMins = 0;
+  for (const row of ordered) {
+    const calls = Number(row.callsChgOi);
+    const puts = Number(row.putsChgOi);
+    const chng =
+      Number.isFinite(calls) && Number.isFinite(puts) ? puts - calls : null;
+    if (!Number.isFinite(chng) || chng === 0) continue;
+    if (chng > 0) bullMins += 1;
+    else bearMins += 1;
+  }
+
+  const spotChg =
+    Number.isFinite(spotNow) && Number.isFinite(spotOpen) ? spotNow - spotOpen : null;
+  const spotScore = Number.isFinite(spotChg) ? (spotChg > 0.5 ? 1 : spotChg < -0.5 ? -1 : 0) : 0;
+  const oiScore = Number.isFinite(dayDiff) ? (dayDiff > 0 ? 1 : dayDiff < 0 ? -1 : 0) : 0;
+  const pathScore = bullMins === bearMins ? 0 : bullMins > bearMins ? 1 : -1;
+  const score = spotScore + oiScore + pathScore;
+
+  let decision = 'WAIT';
+  let bias = 'Sideways';
+  let tone = 'flat';
+  let emoji = '😢';
+  let mood = 'Sad';
+  if (score >= 2) {
+    decision = 'CALL BUY';
+    bias = 'Bullish';
+    tone = 'call';
+    emoji = '🥳';
+    mood = 'Woo';
+  } else if (score <= -2) {
+    decision = 'PUT BUY';
+    bias = 'Bearish';
+    tone = 'put';
+    emoji = '🥳';
+    mood = 'Woo';
+  } else if (score === 1) {
+    bias = 'Not very bullish';
+    tone = 'callSoft';
+  } else if (score === -1) {
+    bias = 'Not very bearish';
+    tone = 'putSoft';
+  }
+
+  const parts = [`09:15→${last.time || 'now'} · ${ordered.length}m`];
+  if (Number.isFinite(spotChg)) {
+    parts.push(`spot ${spotChg > 0 ? '+' : ''}${spotChg.toFixed(1)}`);
+  }
+  if (Number.isFinite(dayDiff)) {
+    parts.push(dayDiff > 0 ? 'Puts lead ΔOI' : dayDiff < 0 ? 'Calls lead ΔOI' : 'ΔOI even');
+  }
+  parts.push(`${bullMins} Bull / ${bearMins} Bear`);
+  const reason = parts.join(' · ');
+
+  return {
+    decision,
+    tone,
+    bias,
+    emoji,
+    mood,
+    dirMark: score > 0 ? '🟢 ↑' : score < 0 ? '🔴 ↓' : '⚪ →',
+    reason,
+    line: `${emoji} ${mood} · ${bias} · ${reason}`,
+    asOf: last.time,
+    minutesUsed: ordered.length,
+    score,
+  };
+}
+
+async function getHeaderSignal() {
+  const data = await listTodayRows();
+  return {
+    dateKey: data.dateKey,
+    nowTime: data.nowTime,
+    lastTime: data.lastTime,
+    inSession: data.inSession,
+    isTradingDay: data.isTradingDay,
+    rowCount: data.rowCount,
+    savedStrikes: data.savedStrikes,
+    signal: computeHeaderSignal(data.rows, data.displayRow),
+  };
+}
+
 module.exports = {
   ensureEngineRunning,
   getStatus,
   listTodayRows,
+  getHeaderSignal,
   captureMinute,
   SESSION_FROM,
   SESSION_TO,

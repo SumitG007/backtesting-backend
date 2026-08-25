@@ -35,6 +35,28 @@ function broadcast(event, payload) {
   }
 }
 
+const PAPER_LIVE_ROOMS = {
+  'manual-console': 'paper-live:manual-console',
+  'strategy-14': 'paper-live:strategy-14',
+};
+
+function paperLiveRoom(strategyId) {
+  return PAPER_LIVE_ROOMS[String(strategyId || '').toLowerCase()] || null;
+}
+
+/** Live marks go only to pages that subscribed — not every open tab. */
+function broadcastPaperLive(strategyId, payload) {
+  const room = paperLiveRoom(strategyId);
+  if (!ioRef || !room) return false;
+  try {
+    ioRef.to(room).emit('paper-live:mark', payload);
+    return true;
+  } catch (err) {
+    console.warn('[Realtime] paper-live emit failed:', err.message);
+    return false;
+  }
+}
+
 /**
  * Attach Socket.IO to the HTTP server without changing Express routes.
  * Uses polling + websocket so AWS ALB / reverse proxies stay compatible.
@@ -77,6 +99,8 @@ function initRealtime(httpServer) {
     // Paper-live MTM / live mark snapshot (EOD OI Walls + Manual Console).
     socket.on('paper-live:subscribe', (msg = {}) => {
       const strategyId = String(msg?.strategyId || '').toLowerCase();
+      const room = paperLiveRoom(strategyId);
+      if (room) socket.join(room);
       try {
         let engine = null;
         if (strategyId === 'manual-console') {
@@ -102,4 +126,4 @@ function initRealtime(httpServer) {
   return io;
 }
 
-module.exports = { initRealtime, broadcast };
+module.exports = { initRealtime, broadcast, broadcastPaperLive };

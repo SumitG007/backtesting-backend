@@ -65,6 +65,7 @@ const engineState = {
   lastDecision: null,
   lastError: null,
   lastEntryDebug: null,
+  lastTickSavedAt: 0,
   closingTrade: false,
   enteringTrade: false,
   lotSize: null,
@@ -251,6 +252,9 @@ async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } =
 
 async function saveOptionTick(trade, mark) {
   if (!trade?._id || !Number.isFinite(mark?.optionLtp) || mark.optionLtp <= 0) return;
+  const now = Date.now();
+  if (now - (engineState.lastTickSavedAt || 0) < 2500) return;
+  engineState.lastTickSavedAt = now;
   const clock = getIstClock(new Date());
   const at = new Date();
   await OiFlowOptionTick.create({

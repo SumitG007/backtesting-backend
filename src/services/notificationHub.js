@@ -69,7 +69,6 @@ function pushNotification({
   if (io) {
     try {
       io.emit('notification:new', item);
-      io.emit('notification:day', listToday());
     } catch (err) {
       console.warn('[Notifications] emit failed:', err.message);
     }

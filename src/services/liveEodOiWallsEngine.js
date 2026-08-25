@@ -27,7 +27,7 @@ const {
 } = require('./dhanLiveService');
 const { STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY } = require('../strategies/keys');
 const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
-const { broadcast } = require('./realtimeSocket');
+const { broadcastPaperLive } = require('./realtimeSocket');
 
 const STRATEGY_KEY = STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY;
 
@@ -43,7 +43,7 @@ const OPEN_MARK_CHAIN_MIN_GAP_MS = 4000;
 const TICK_FRESH_MAX_AGE_MS = 20000;
 const STATUS_MARK_REFRESH_MIN_GAP_MS = 750;
 const MARK_DB_PERSIST_MIN_GAP_MS = 2000;
-const LIVE_MARK_EMIT_MIN_GAP_MS = 100;
+const LIVE_MARK_EMIT_MIN_GAP_MS = 400;
 const MIN_HOLD_MS = 2000;
 const OI_REFRESH_MIN_GAP_MS = 5000;
 const FUT_PRICE_REFRESH_MIN_GAP_MS = 2000;
@@ -457,14 +457,14 @@ function publishLiveMarkSnapshot(extra = {}) {
   const gap = now - engineState.lastLiveMarkEmitAt;
   if (gap >= LIVE_MARK_EMIT_MIN_GAP_MS) {
     engineState.lastLiveMarkEmitAt = now;
-    broadcast('paper-live:mark', payload);
+    broadcastPaperLive('strategy-14', payload);
     return;
   }
   if (engineState.liveMarkEmitTimer) return;
   engineState.liveMarkEmitTimer = setTimeout(() => {
     engineState.liveMarkEmitTimer = null;
     engineState.lastLiveMarkEmitAt = Date.now();
-    broadcast('paper-live:mark', getLiveMarkSnapshot());
+    broadcastPaperLive('strategy-14', getLiveMarkSnapshot());
   }, Math.max(20, LIVE_MARK_EMIT_MIN_GAP_MS - gap));
 }
 

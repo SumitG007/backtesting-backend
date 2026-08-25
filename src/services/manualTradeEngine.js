@@ -44,7 +44,7 @@ const MIN_HOLD_MS = 5000;
 const WS_FRESH_MS = 12000;
 const CLOSED_STATS_SYNC_MS = 5 * 60 * 1000;
 let lastClosedStatsSyncAt = 0;
-const LIVE_MARK_EMIT_MIN_GAP_MS = 80;
+const LIVE_MARK_EMIT_MIN_GAP_MS = 400;
 const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY']);
 const MANUAL_STRATEGY_ID = 'manual-console';
 /** Virtual top-up presets (paper only — not real money). */
@@ -83,9 +83,11 @@ const tickExitInflight = new Set();
 const markPersistAt = new Map();
 /** tradeId -> latest openPositionMark (in-memory for instant UI) */
 const latestMarks = new Map();
-const MARK_PERSIST_MIN_MS = 400;
+const MARK_PERSIST_MIN_MS = 2000;
+const OI_BOARD_CACHE_MS = 3500;
+const oiBoardMemo = new Map();
 
-const { broadcast } = require('./realtimeSocket');
+const { broadcastPaperLive } = require('./realtimeSocket');
 
 function istLabel(clock) {
   const h = Math.floor(clock.minutes / 60);
@@ -599,14 +601,14 @@ function publishManualMarkSnapshot(extra = {}) {
       clearTimeout(engineState.liveMarkEmitTimer);
       engineState.liveMarkEmitTimer = null;
     }
-    broadcast('paper-live:mark', payload);
+    broadcastPaperLive('manual-console', payload);
     return;
   }
   if (engineState.liveMarkEmitTimer) return;
   engineState.liveMarkEmitTimer = setTimeout(() => {
     engineState.liveMarkEmitTimer = null;
     engineState.lastLiveMarkEmitAt = Date.now();
-    broadcast('paper-live:mark', getLiveMarkSnapshot());
+    broadcastPaperLive('manual-console', getLiveMarkSnapshot());
   }, Math.max(20, LIVE_MARK_EMIT_MIN_GAP_MS - gap));
 }
 
@@ -1889,7 +1891,7 @@ async function getChainAroundAtm({ symbol, expiry }) {
 }
 
 /** Live OI Chain board shape (FUT-anchored ATM + ΔOI). */
-async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
+async function buildLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
   const clock = getIstClock(new Date());
   const raw = String(symbol || 'NIFTY').toUpperCase().trim() || 'NIFTY';
   let sym = 'NIFTY';
@@ -2001,6 +2003,49 @@ async function getLiveOiBoard({ symbol, expiry, lookaroundStrikes = 10 } = {}) {
       maxCallStrike: maxCall?.strike ?? null,
       maxTotalStrike: maxTotal?.strike ?? null,
     },
+  };
+}
+
+async function getLiveOiBoard(opts = {}) {
+  const lookaround = Math.max(5, Math.min(20, Math.floor(Number(opts.lookaroundStrikes) || 10)));
+  const raw = String(opts.symbol || 'NIFTY').toUpperCase().trim() || 'NIFTY';
+  const expHint = String(opts.expiry || '').slice(0, 10);
+  const key = `${raw}|${expHint}|${lookaround}`;
+  const hit = oiBoardMemo.get(key);
+  if (hit?.board && Date.now() - hit.at < OI_BOARD_CACHE_MS) return hit.board;
+  if (hit?.pending) return hit.pending;
+  const pending = buildLiveOiBoard({ ...opts, lookaroundStrikes: lookaround })
+    .then((board) => {
+      const rec = { at: Date.now(), board, pending: null };
+      oiBoardMemo.set(key, rec);
+      const exact = `${board.symbol}|${String(board.expiry || '').slice(0, 10)}|${lookaround}`;
+      if (exact !== key) oiBoardMemo.set(exact, rec);
+      return board;
+    })
+    .catch((err) => {
+      const prev = oiBoardMemo.get(key);
+      oiBoardMemo.set(key, { at: prev?.at || 0, board: prev?.board || null, pending: null });
+      throw err;
+    });
+  oiBoardMemo.set(key, { at: hit?.at || 0, board: hit?.board || null, pending });
+  return pending;
+}
+
+async function getOiBoardTotals(opts = {}) {
+  const board = await getLiveOiBoard({ ...opts, lookaroundStrikes: 15 });
+  const totals = board?.totals || {};
+  const putOi = Number(Number.isFinite(Number(totals.allPutOi)) ? totals.allPutOi : totals.putOi);
+  const callOi = Number(Number.isFinite(Number(totals.allCallOi)) ? totals.allCallOi : totals.callOi);
+  const pcr = Number.isFinite(callOi) && callOi > 0 && Number.isFinite(putOi) ? putOi / callOi : null;
+  return {
+    at: board.at,
+    symbol: board.symbol,
+    atm: board.atm,
+    fut: board.fut ?? board.spot,
+    spot: board.chainSpot ?? board.spot,
+    putOi: Number.isFinite(putOi) ? putOi : null,
+    callOi: Number.isFinite(callOi) ? callOi : null,
+    pcr: Number.isFinite(pcr) ? pcr : null,
   };
 }
 
@@ -2207,6 +2252,7 @@ module.exports = {
   getFuture,
   getChainAroundAtm,
   getLiveOiBoard,
+  getOiBoardTotals,
   listTrades,
   listActions,
   resetWallet,
