@@ -360,15 +360,9 @@ function computeOpenMtm(trade, optionLtp) {
   return Number((mark - entry) * qty - (Number(trade.charges) || 0));
 }
 
-/** Live option LTP from WS/index — same as scalp, not chain-only. */
-function isLiveOptionSource(source) {
-  const s = String(source || '');
-  return s === 'marketfeed' || s === 'index-feed' || s.startsWith('marketfeed') || s.startsWith('index-feed');
-}
-
 function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
   if (!Number.isFinite(nextMark?.optionLtp) || nextMark.optionLtp <= 0) return false;
-  if (isLiveOptionSource(nextMark.source)) {
+  if (nextMark.source === 'marketfeed') {
     if (
       prevMark &&
       Number(prevMark.optionLtp) === Number(nextMark.optionLtp) &&
@@ -379,22 +373,22 @@ function shouldUpdateOpenMark(prevMark, prevAt, nextMark) {
     return true;
   }
   if (!prevMark || !Number.isFinite(prevMark.optionLtp) || prevMark.optionLtp <= 0) return true;
-  // Don't let a stale chain print overwrite a fresh live mark.
-  if (isLiveOptionSource(prevMark.source)) {
+  // Don't let a stale chain print overwrite a fresh marketfeed mark.
+  if (String(prevMark.source || '').startsWith('marketfeed')) {
     const ageMs = prevAt ? Date.now() - new Date(prevAt).getTime() : Infinity;
     if (ageMs < 8000) return false;
   }
-  return nextMark.source === 'chain' || String(nextMark.source || '').includes('chain');
+  return nextMark.source === 'chain';
 }
 
 async function resolveDisplayMark(trade, liveMark) {
-  if (isLiveOptionSource(liveMark?.source) && Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0) {
+  if (liveMark?.source === 'marketfeed' && Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0) {
     return liveMark;
   }
   const prev = trade.openPositionMark;
   if (
     prev &&
-    isLiveOptionSource(prev.source) &&
+    String(prev.source || '').startsWith('marketfeed') &&
     Number.isFinite(prev.optionLtp) &&
     prev.optionLtp > 0
   ) {
@@ -538,9 +532,33 @@ async function checkOpenTrade() {
   const liveMark = await resolveOptionLtp(open);
   const mark = await resolveDisplayMark(open, liveMark);
 
-  if (Number.isFinite(mark?.optionLtp) && mark.optionLtp > 0) {
+  // Screen-only overlay. SL/TP still use `mark` from resolveDisplayMark (unchanged rules).
+  const uiMark = Number.isFinite(liveMark?.optionLtp) && liveMark.optionLtp > 0 ? liveMark : mark;
+  if (Number.isFinite(uiMark?.optionLtp) && uiMark.optionLtp > 0) {
+    const mtm = computeOpenMtm(open, uiMark.optionLtp);
+    engineState.liveOpenMark = {
+      tradeId: String(open._id),
+      mark: {
+        optionLtp: Number(Number(uiMark.optionLtp).toFixed(2)),
+        spot: Number.isFinite(uiMark.spot) && uiMark.spot > 0 ? Number(Number(uiMark.spot).toFixed(2)) : null,
+        source: uiMark.source,
+        at: new Date().toISOString(),
+        mtm: mtm != null ? Number(mtm.toFixed(2)) : null,
+        qty: tradeQty(open),
+        pts: Number.isFinite(Number(open.entryPremium))
+          ? Number((Number(uiMark.optionLtp) - Number(open.entryPremium)).toFixed(2))
+          : null,
+        slSpot: Number.isFinite(Number(open.combinedStopSpot))
+          ? Number(open.combinedStopSpot)
+          : Number(open.signalSnapshot?.slSpot) || null,
+        targetPremium: Number.isFinite(Number(open.targetPremium)) ? Number(open.targetPremium) : null,
+      },
+    };
+  }
+
+  if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
     const mtm = computeOpenMtm(open, mark.optionLtp);
-    const packed = {
+    open.openPositionMark = {
       optionLtp: Number(Number(mark.optionLtp).toFixed(2)),
       spot: Number.isFinite(mark.spot) && mark.spot > 0 ? Number(Number(mark.spot).toFixed(2)) : null,
       source: mark.source,
@@ -555,18 +573,14 @@ async function checkOpenTrade() {
         : Number(open.signalSnapshot?.slSpot) || null,
       targetPremium: Number.isFinite(Number(open.targetPremium)) ? Number(open.targetPremium) : null,
     };
-    engineState.liveOpenMark = { tradeId: String(open._id), mark: packed };
-    if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
-      open.openPositionMark = packed;
-      open.openPositionMarkAt = new Date();
-      await open.save();
-    }
+    open.openPositionMarkAt = new Date();
+    await open.save();
   }
   // Only persist ticks from live resolve (not held stale display) when fresh feed/chain.
   if (
     Number.isFinite(liveMark.optionLtp) &&
     liveMark.optionLtp > 0 &&
-    (isLiveOptionSource(liveMark.source) || String(liveMark.source || '').includes('chain'))
+    (liveMark.source === 'marketfeed' || liveMark.source === 'chain')
   ) {
     await saveOptionTick(open, liveMark);
   }
