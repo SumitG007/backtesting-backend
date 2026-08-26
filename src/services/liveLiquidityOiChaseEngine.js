@@ -106,8 +106,8 @@ function normalizeSettings(raw = {}) {
   s.swingLength = Math.max(3, Math.min(30, Math.floor(Number(s.swingLength) || 5)));
   s.oiWindowMins = Math.max(5, Math.min(60, Math.floor(Number(s.oiWindowMins) || 10)));
   s.minStreak = Math.max(1, Math.min(10, Math.floor(Number(s.minStreak) || 1)));
-  s.requireLead = raw.requireLead === true;
-  s.requireTopAct = raw.requireTopAct === true;
+  s.requireLead = false;
+  s.requireTopAct = false;
   s.slBufferPts = Math.max(2, Math.min(30, Number(s.slBufferPts) || 8));
   s.breakBufferPts = Math.max(0, Math.min(10, Number(s.breakBufferPts) || 0));
   s.maxDeltaPcrFight = Math.max(0.02, Math.min(0.4, Number(s.maxDeltaPcrFight) || 0.15));
@@ -504,7 +504,7 @@ async function checkOpenTrade() {
         mtm: mtm != null ? Number(mtm.toFixed(2)) : null,
         qty: tradeQty(open),
         stopSpot: Number(open.combinedStopSpot) || null,
-        targetSpot: Number(open.signalSnapshot?.targetSpot) || null,
+        targetSpot: Number(open.signalSnapshot?.targetSpot) || Number(open.targetSpot) || null,
         targetPremium: Number(open.targetPremium) || null,
       },
     };
@@ -622,7 +622,7 @@ async function tryEnter(signal) {
 
     const lots = engineState.settings.lotCount;
     const qty = (engineState.lotSize || 65) * lots;
-    const softTg = livePremium + (Number(engineState.settings.softTargetOptionPts) || 15);
+    const softTg = livePremium + (Number(engineState.settings.softTargetOptionPts) || 12);
     const charges = Math.max(0, Number(engineState.settings.perTradeCost) || 0);
 
     const trade = await LivePaperTrade.create({

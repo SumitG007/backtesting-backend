@@ -132,7 +132,7 @@ const liveWalletSchema = new mongoose.Schema(
       maxDeltaPcrFight: { type: Number, default: 0.08 },
       maxSlAtrMult: { type: Number, default: 1.5 },
       fallbackTargetPts: { type: Number, default: 40 },
-      softTargetOptionPts: { type: Number, default: 15 },
+      softTargetOptionPts: { type: Number, default: 12 },
       maxTradesPerDay: { type: Number, default: 2 },
       cooldownSeconds: { type: Number, default: 300 },
       perTradeCost: { type: Number, default: 0 },
