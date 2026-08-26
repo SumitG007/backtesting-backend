@@ -770,7 +770,19 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
     LivePaperTrade.find(filter).sort({ entryTime: -1 }).skip((p - 1) * lim).limit(lim).lean(),
     LivePaperTrade.countDocuments(filter),
   ]);
-  return { trades: rows, total, page: p, pageSize: lim, dateKey: clock.dateKey };
+  return {
+    trades: rows,
+    total,
+    page: p,
+    pageSize: lim,
+    dateKey: clock.dateKey,
+    pagination: {
+      page: p,
+      pageSize: lim,
+      totalRows: total,
+      totalPages: Math.max(1, Math.ceil(total / lim)),
+    },
+  };
 }
 
 async function getBookSummary() {
