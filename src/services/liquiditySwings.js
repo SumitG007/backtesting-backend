@@ -41,6 +41,7 @@ function buildLiquiditySwings(rows, opts = {}) {
       lastHigh: toNum(rows?.[rows.length - 1]?.[2]),
       lastLow: toNum(rows?.[rows.length - 1]?.[3]),
       length,
+      barCount: Array.isArray(rows) ? rows.length : 0,
     };
   }
 
@@ -133,14 +134,39 @@ function buildLiquiditySwings(rows, opts = {}) {
  * Detect sweep+break on the last closed 5m bar vs nearest unbroken pool.
  * CE chase: wick into buy-side zone, close above zone top.
  * PE chase: wick into sell-side zone, close below zone bottom.
+ * Also surfaces WATCHING / NEAR when price is probing a pool (for live tape ticks).
  */
 function detectSweepBreak(swings, opts = {}) {
   const buffer = Math.max(0, Number(opts.breakBufferPts) || 0);
   const close = swings?.lastClose;
   const high = swings?.lastHigh;
   const low = swings?.lastLow;
+  const length = Math.max(3, Number(swings?.length) || 14);
+  const barCount = Number(swings?.barCount) || 0;
+  const needBars = length * 2 + 1;
+  const swingsReady = barCount >= needBars && (
+    (Array.isArray(swings?.highs) && swings.highs.length > 0)
+    || (Array.isArray(swings?.lows) && swings.lows.length > 0)
+  );
+
   if (close == null || high == null || low == null) {
-    return { status: 'WAIT', detail: 'No candle close' };
+    return {
+      status: 'WAIT',
+      detail: 'No candle close',
+      swingsReady: false,
+      barCount,
+      needBars,
+    };
+  }
+
+  if (!swingsReady) {
+    return {
+      status: 'WAIT',
+      detail: `Building swings (${barCount}/${needBars} 5m bars)`,
+      swingsReady: false,
+      barCount,
+      needBars,
+    };
   }
 
   const highs = Array.isArray(swings.highs) ? swings.highs : [];
@@ -148,29 +174,61 @@ function detectSweepBreak(swings, opts = {}) {
 
   // Prefer nearest unbroken pools above/below price; also allow freshly broken on this bar
   let cePool = null;
+  let ceProbe = null;
   for (let i = highs.length - 1; i >= 0; i -= 1) {
     const z = highs[i];
-    const swept = high >= z.bottom && high <= z.top + 5;
+    const inZone = high >= z.bottom && low <= z.top + 8;
+    const swept = high >= z.bottom - 8 && high <= z.top + 12;
     const broke = close > z.top + buffer;
     if (swept && broke) {
       cePool = z;
       break;
     }
+    if (!ceProbe && inZone) {
+      ceProbe = {
+        pool: z,
+        swept,
+        broke,
+        detail: swept
+          ? `Buy-side wick · need close > ${z.top.toFixed(1)}`
+          : `Probing buy-side pool @ ${z.top.toFixed(1)}`,
+      };
+    }
   }
 
   let pePool = null;
+  let peProbe = null;
   for (let i = lows.length - 1; i >= 0; i -= 1) {
     const z = lows[i];
-    const swept = low <= z.top && low >= z.bottom - 5;
+    const inZone = low <= z.top && high >= z.bottom - 8;
+    const swept = low <= z.top + 8 && low >= z.bottom - 12;
     const broke = close < z.bottom - buffer;
     if (swept && broke) {
       pePool = z;
       break;
     }
+    if (!peProbe && inZone) {
+      peProbe = {
+        pool: z,
+        swept,
+        broke,
+        detail: swept
+          ? `Sell-side wick · need close < ${z.bottom.toFixed(1)}`
+          : `Probing sell-side pool @ ${z.bottom.toFixed(1)}`,
+      };
+    }
   }
 
   if (cePool && pePool) {
-    return { status: 'CONFLICT', detail: 'Both sides swept', cePool, pePool };
+    return {
+      status: 'CONFLICT',
+      detail: 'Both sides swept',
+      cePool,
+      pePool,
+      swingsReady: true,
+      barCount,
+      needBars,
+    };
   }
   if (cePool) {
     const nextTarget = nextOppositePool(highs, lows, 'CE', close);
@@ -182,6 +240,9 @@ function detectSweepBreak(swings, opts = {}) {
       targetSpot: nextTarget?.mid ?? null,
       nextPool: nextTarget,
       detail: `Buy-side sweep+break @ ${cePool.top.toFixed(1)}`,
+      swingsReady: true,
+      barCount,
+      needBars,
     };
   }
   if (pePool) {
@@ -194,9 +255,35 @@ function detectSweepBreak(swings, opts = {}) {
       targetSpot: nextTarget?.mid ?? null,
       nextPool: nextTarget,
       detail: `Sell-side sweep+break @ ${pePool.bottom.toFixed(1)}`,
+      swingsReady: true,
+      barCount,
+      needBars,
     };
   }
-  return { status: 'WAIT', detail: 'No sweep+break on last bar' };
+
+  const probe = ceProbe || peProbe;
+  if (probe) {
+    return {
+      status: probe.swept ? 'NEAR' : 'WATCHING',
+      side: ceProbe ? 'CE' : 'PE',
+      pool: probe.pool,
+      detail: probe.detail,
+      swingsReady: true,
+      barCount,
+      needBars,
+      probe: true,
+    };
+  }
+
+  return {
+    status: 'WAIT',
+    detail: 'No sweep+break on last bar',
+    swingsReady: true,
+    barCount,
+    needBars,
+    highCount: highs.length,
+    lowCount: lows.length,
+  };
 }
 
 function nextOppositePool(highs, lows, side, close) {

@@ -26,7 +26,16 @@ function enrichOiWindow(minuteRows, windowMins = 15) {
     ? [...minuteRows].filter((r) => r?.fetchOk !== false).sort((a, b) => Number(a.minutes) - Number(b.minutes))
     : [];
   if (!rows.length) {
-    return { lead: 'flat', streak: 0, streakSide: null, deltaPcr: null, pcr: null, topAct: null, bars: { bull: 0, bear: 0 } };
+    return {
+      lead: 'flat',
+      streak: 0,
+      streakSide: null,
+      deltaPcr: null,
+      pcr: null,
+      topAct: null,
+      bars: { bull: 0, bear: 0 },
+      rowCount: 0,
+    };
   }
   const lastMinutes = Number(rows[rows.length - 1].minutes);
   const cutoff = Number(windowMins) > 0 ? lastMinutes - Number(windowMins) : -Infinity;
@@ -125,116 +134,308 @@ function enrichOiWindow(minuteRows, windowMins = 15) {
     bars: { bull, bear },
     callAbs,
     putAbs,
+    rowCount: rows.length,
   };
+}
+
+function buildChaseChecks({
+  sweep,
+  oiFuel,
+  settings = {},
+  swingsReady,
+  barCount,
+  needBars,
+  streakOk,
+  leadOk,
+  pcrOk,
+  topOk,
+  inWindow = true,
+}) {
+  const minStreak = Math.max(1, Math.floor(Number(settings.minStreak) || 2));
+  const fuel = oiFuel || {};
+  const side = sweep?.side || null;
+  const sweepStatus = String(sweep?.status || 'WAIT').toUpperCase();
+  const sweepOk = sweepStatus === 'SWEEP_BREAK';
+  const sweepNear = sweepStatus === 'NEAR' || sweepStatus === 'WATCHING';
+
+  return [
+    {
+      id: 'win',
+      name: 'Trade window',
+      short: 'Win',
+      ok: Boolean(inWindow),
+      value: inWindow ? 'open' : 'shut',
+      need: `${settings.tradeFromTime || '09:30'}–${settings.tradeToTime || '14:00'}`,
+      note: inWindow ? 'Inside window' : 'Outside trade window',
+    },
+    {
+      id: 'swings',
+      name: '5m swings',
+      short: 'Swg',
+      ok: Boolean(swingsReady),
+      value: `${barCount || 0}/${needBars || '?'}`,
+      need: `${needBars || '—'} bars`,
+      note: swingsReady
+        ? `${sweep?.highCount ?? '—'}H / ${sweep?.lowCount ?? '—'}L pools`
+        : `Need ${needBars || '—'} confirmed 5m bars`,
+    },
+    {
+      id: 'sweep',
+      name: 'Sweep+break',
+      short: 'Swp',
+      ok: sweepOk,
+      value: sweepOk ? (side || 'yes') : sweepNear ? sweepStatus : '—',
+      need: 'Wick + close through pool',
+      note: sweep?.detail || 'Waiting for liquidity sweep+break',
+    },
+    {
+      id: 'streak',
+      name: 'OI streak',
+      short: 'Str',
+      ok: Boolean(streakOk),
+      value: fuel.streak
+        ? `${fuel.streak}${fuel.streakSide === 'Bull' ? 'B' : fuel.streakSide === 'Bear' ? 'Be' : ''}`
+        : '0',
+      need: `≥${minStreak} ${side === 'PE' ? 'Bear' : side === 'CE' ? 'Bull' : 'aligned'}`,
+      note: streakOk
+        ? `Streak aligned for ${side}`
+        : `Need streak ≥${minStreak} ${side === 'PE' ? 'Bear' : 'Bull'}`,
+    },
+    {
+      id: 'lead',
+      name: 'OI lead',
+      short: 'Lead',
+      ok: Boolean(leadOk),
+      value: fuel.lead || '—',
+      need: side === 'CE' ? 'puts/flat' : side === 'PE' ? 'calls/flat' : 'aligned',
+      note: leadOk ? `Lead ok (${fuel.lead})` : `Lead fights chase (${fuel.lead || '—'})`,
+    },
+    {
+      id: 'pcr',
+      name: 'ΔPCR soft',
+      short: 'ΔPCR',
+      ok: Boolean(pcrOk),
+      value: Number.isFinite(Number(fuel.deltaPcr))
+        ? `${Number(fuel.deltaPcr) > 0 ? '+' : ''}${Number(fuel.deltaPcr).toFixed(3)}`
+        : '—',
+      need: `fight ≤ ${Number(settings.maxDeltaPcrFight) || 0.08}`,
+      note: pcrOk ? 'ΔPCR not fighting' : 'ΔPCR fights chase',
+    },
+    {
+      id: 'act',
+      name: 'Top act',
+      short: 'Act',
+      ok: Boolean(topOk),
+      value: fuel.topAct || '—',
+      need: 'Not fighting side',
+      note: topOk ? (fuel.topAct ? `Top ${fuel.topAct}` : 'No top act') : `Top act ${fuel.topAct} weak`,
+    },
+  ];
 }
 
 /**
  * Gate sweep break with OI fuel.
- * @returns {{ status, buyLive, optionType, ... }}
+ * Daily profile: streak ≥1 required; lead/topAct optional (settings.requireLead / requireTopAct).
+ * @returns {{ status, buyLive, optionType, checks, ... }}
  */
-function buildChaseSignal({ sweep, oiFuel, settings = {} }) {
-  const minStreak = Math.max(1, Math.floor(Number(settings.minStreak) || 2));
-  const maxDeltaPcrFight = Number(settings.maxDeltaPcrFight) || 0.08;
+function buildChaseSignal({ sweep, oiFuel, settings = {}, inWindow = true }) {
+  const minStreak = Math.max(1, Math.floor(Number(settings.minStreak) || 1));
+  const maxDeltaPcrFight = Number(settings.maxDeltaPcrFight) || 0.15;
+  const requireLead = settings.requireLead === true;
+  const requireTopAct = settings.requireTopAct === true;
+  const fuel = oiFuel || {};
+  const barCount = Number(sweep?.barCount) || 0;
+  const needBars = Number(sweep?.needBars) || 0;
+  const swingsReady = Boolean(sweep?.swingsReady);
+
+  const baseMeta = {
+    oiFuel: fuel,
+    sweep,
+    checks: null,
+    at: new Date().toISOString(),
+  };
+
+  const attach = (payload, gate = {}) => {
+    const checks = buildChaseChecks({
+      sweep,
+      oiFuel: fuel,
+      settings,
+      swingsReady,
+      barCount,
+      needBars,
+      inWindow,
+      streakOk: gate.streakOk,
+      leadOk: gate.leadOk,
+      pcrOk: gate.pcrOk,
+      topOk: gate.topOk,
+    });
+    return { ...baseMeta, ...payload, checks };
+  };
 
   if (!sweep || sweep.status === 'WAIT') {
-    return {
+    const streakReady = fuel.streak >= minStreak;
+    return attach({
       status: 'WAIT',
       buyLive: false,
       optionType: null,
       detail: sweep?.detail || 'Waiting for liquidity sweep+break',
-      oiFuel,
-      sweep,
-    };
+      headline: swingsReady ? 'No sweep yet' : 'Building swings',
+    }, {
+      streakOk: streakReady,
+      leadOk: true,
+      pcrOk: true,
+      topOk: true,
+    });
   }
+
   if (sweep.status === 'CONFLICT') {
-    return {
+    return attach({
       status: 'CONFLICT',
       buyLive: false,
       optionType: null,
       detail: sweep.detail,
-      oiFuel,
-      sweep,
+      headline: 'Both sides swept',
+    }, { streakOk: false, leadOk: true, pcrOk: true, topOk: true });
+  }
+
+  const evalFuel = (side) => {
+    const streakAligned = Boolean(side) && fuel.streak >= minStreak && (
+      (side === 'CE' && fuel.streakSide === 'Bull') ||
+      (side === 'PE' && fuel.streakSide === 'Bear')
+    );
+    const leadAligned =
+      !side ||
+      (side === 'CE' && (fuel.lead === 'puts' || fuel.lead === 'flat')) ||
+      (side === 'PE' && (fuel.lead === 'calls' || fuel.lead === 'flat'));
+    let pcrOk = true;
+    if (side && Number.isFinite(fuel.deltaPcr)) {
+      if (side === 'CE' && fuel.deltaPcr < -maxDeltaPcrFight) pcrOk = false;
+      if (side === 'PE' && fuel.deltaPcr > maxDeltaPcrFight) pcrOk = false;
+    }
+    const topAligned =
+      !fuel.topAct || !side ||
+      (side === 'CE' && ['Writing', 'Long build', 'Buying', 'Short cover'].includes(fuel.topAct)) ||
+      (side === 'PE' && ['Writing', 'Buying', 'Long build', 'Short cover'].includes(fuel.topAct));
+    return {
+      streakOk: streakAligned,
+      leadOk: requireLead ? leadAligned : true,
+      leadAligned,
+      pcrOk,
+      topOk: requireTopAct ? topAligned : true,
+      topAligned,
     };
+  };
+
+  if (sweep.status === 'WATCHING' || sweep.status === 'NEAR') {
+    const side = sweep.side || null;
+    const gate = evalFuel(side);
+    return attach({
+      status: sweep.status,
+      buyLive: false,
+      optionType: side,
+      detail: sweep.detail,
+      headline: sweep.status === 'NEAR' ? `Near ${side} break` : `Watch ${side || 'pool'}`,
+      stopSpot: null,
+      targetSpot: null,
+    }, {
+      streakOk: gate.streakOk,
+      leadOk: gate.leadAligned,
+      pcrOk: gate.pcrOk,
+      topOk: gate.topAligned,
+    });
   }
 
   const side = sweep.side;
-  const fuel = oiFuel || {};
-  const streakOk = fuel.streak >= minStreak && (
-    (side === 'CE' && fuel.streakSide === 'Bull') ||
-    (side === 'PE' && fuel.streakSide === 'Bear')
-  );
-  const leadOk =
-    (side === 'CE' && (fuel.lead === 'puts' || fuel.lead === 'flat')) ||
-    (side === 'PE' && (fuel.lead === 'calls' || fuel.lead === 'flat'));
+  const gate = evalFuel(side);
 
-  // Soft ΔPCR: CE chase shouldn't see big PCR dump; PE chase shouldn't see big PCR spike
-  let pcrOk = true;
-  if (Number.isFinite(fuel.deltaPcr)) {
-    if (side === 'CE' && fuel.deltaPcr < -maxDeltaPcrFight) pcrOk = false;
-    if (side === 'PE' && fuel.deltaPcr > maxDeltaPcrFight) pcrOk = false;
-  }
-
-  const topOk =
-    !fuel.topAct ||
-    (side === 'CE' && ['Writing', 'Long build', 'Buying', 'Short cover'].includes(fuel.topAct)) ||
-    (side === 'PE' && ['Writing', 'Buying', 'Long build', 'Short cover'].includes(fuel.topAct));
-
-  if (!streakOk) {
-    return {
+  if (!gate.streakOk) {
+    return attach({
       status: 'NEAR',
       buyLive: false,
       optionType: side,
       detail: `Sweep ok · need streak ≥${minStreak} ${side === 'CE' ? 'Bull' : 'Bear'} (now ${fuel.streak || 0})`,
-      oiFuel: fuel,
-      sweep,
-    };
+      headline: `Prepare ${side} · need streak`,
+      stopSpot: sweep.stopSpot,
+      targetSpot: sweep.targetSpot,
+    }, {
+      streakOk: false,
+      leadOk: gate.leadAligned,
+      pcrOk: gate.pcrOk,
+      topOk: gate.topAligned,
+    });
   }
-  if (!leadOk) {
-    return {
+  if (requireLead && !gate.leadAligned) {
+    return attach({
       status: 'CAUTION',
       buyLive: false,
       optionType: side,
       detail: `OI lead fights chase (lead=${fuel.lead})`,
-      oiFuel: fuel,
-      sweep,
-    };
+      headline: `Lead fights ${side}`,
+      stopSpot: sweep.stopSpot,
+      targetSpot: sweep.targetSpot,
+    }, {
+      streakOk: true,
+      leadOk: false,
+      pcrOk: gate.pcrOk,
+      topOk: gate.topAligned,
+    });
   }
-  if (!pcrOk) {
-    return {
+  if (!gate.pcrOk) {
+    return attach({
       status: 'CAUTION',
       buyLive: false,
       optionType: side,
       detail: `ΔPCR fights chase (${Number(fuel.deltaPcr).toFixed(3)})`,
-      oiFuel: fuel,
-      sweep,
-    };
+      headline: `ΔPCR fights ${side}`,
+      stopSpot: sweep.stopSpot,
+      targetSpot: sweep.targetSpot,
+    }, {
+      streakOk: true,
+      leadOk: gate.leadAligned,
+      pcrOk: false,
+      topOk: gate.topAligned,
+    });
   }
-  if (!topOk) {
-    return {
+  if (requireTopAct && !gate.topAligned) {
+    return attach({
       status: 'NEAR',
       buyLive: false,
       optionType: side,
       detail: `Top act ${fuel.topAct} weak for ${side}`,
-      oiFuel: fuel,
-      sweep,
-    };
+      headline: `Weak act for ${side}`,
+      stopSpot: sweep.stopSpot,
+      targetSpot: sweep.targetSpot,
+    }, {
+      streakOk: true,
+      leadOk: gate.leadAligned,
+      pcrOk: true,
+      topOk: false,
+    });
   }
 
-  return {
+  const softNote = !gate.leadAligned
+    ? ` · lead soft (${fuel.lead})`
+    : '';
+  return attach({
     status: 'TAKE_ENTRY',
     buyLive: true,
     optionType: side,
-    detail: `${sweep.detail} · streak ${fuel.streak}${fuel.streakSide === 'Bull' ? 'B' : 'Be'} · lead ${fuel.lead}`,
-    oiFuel: fuel,
-    sweep,
+    detail: `${sweep.detail} · streak ${fuel.streak}${fuel.streakSide === 'Bull' ? 'B' : 'Be'} · lead ${fuel.lead}${softNote}`,
+    headline: side === 'CE' ? 'Buy CE · chase' : 'Buy PE · chase',
     stopSpot: sweep.stopSpot,
     targetSpot: sweep.targetSpot,
-  };
+  }, {
+    streakOk: true,
+    leadOk: gate.leadAligned,
+    pcrOk: true,
+    topOk: gate.topAligned,
+  });
 }
 
 module.exports = {
   enrichOiWindow,
   buildChaseSignal,
+  buildChaseChecks,
   classifyCallAct,
   classifyPutAct,
 };

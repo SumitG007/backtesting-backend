@@ -37,20 +37,24 @@ const DEFAULT_SETTINGS = {
   symbol: 'NIFTY',
   lotCount: 1,
   tradeFromTime: '09:30',
-  tradeToTime: '14:00',
+  tradeToTime: '14:30',
   eodExitTime: '15:15',
-  swingLength: 14,
-  oiWindowMins: 15,
-  minStreak: 2,
+  // Daily-leaning profile: shorter swings + light OI fuel (still needs sweep+break).
+  swingLength: 5,
+  oiWindowMins: 10,
+  minStreak: 1,
+  requireLead: false,
+  requireTopAct: false,
   slBufferPts: 8,
   breakBufferPts: 0,
-  maxDeltaPcrFight: 0.08,
-  maxSlAtrMult: 1.5,
-  fallbackTargetPts: 40,
-  softTargetOptionPts: 15,
-  maxTradesPerDay: 2,
-  cooldownSeconds: 300,
+  maxDeltaPcrFight: 0.15,
+  maxSlAtrMult: 2,
+  fallbackTargetPts: 35,
+  softTargetOptionPts: 12,
+  maxTradesPerDay: 3,
+  cooldownSeconds: 120,
   perTradeCost: 0,
+  settingsVersion: 2,
 };
 
 const engineState = {
@@ -99,21 +103,24 @@ function normalizeSettings(raw = {}) {
   s.enabled = raw.enabled === false ? false : true;
   s.symbol = String(s.symbol || 'NIFTY').toUpperCase();
   s.lotCount = Math.max(1, Math.min(20, Math.floor(Number(s.lotCount) || 1)));
-  s.swingLength = Math.max(5, Math.min(30, Math.floor(Number(s.swingLength) || 14)));
-  s.oiWindowMins = Math.max(5, Math.min(60, Math.floor(Number(s.oiWindowMins) || 15)));
-  s.minStreak = Math.max(1, Math.min(10, Math.floor(Number(s.minStreak) || 2)));
+  s.swingLength = Math.max(3, Math.min(30, Math.floor(Number(s.swingLength) || 5)));
+  s.oiWindowMins = Math.max(5, Math.min(60, Math.floor(Number(s.oiWindowMins) || 10)));
+  s.minStreak = Math.max(1, Math.min(10, Math.floor(Number(s.minStreak) || 1)));
+  s.requireLead = raw.requireLead === true;
+  s.requireTopAct = raw.requireTopAct === true;
   s.slBufferPts = Math.max(2, Math.min(30, Number(s.slBufferPts) || 8));
   s.breakBufferPts = Math.max(0, Math.min(10, Number(s.breakBufferPts) || 0));
-  s.maxDeltaPcrFight = Math.max(0.02, Math.min(0.3, Number(s.maxDeltaPcrFight) || 0.08));
-  s.maxSlAtrMult = Math.max(0.8, Math.min(3, Number(s.maxSlAtrMult) || 1.5));
-  s.fallbackTargetPts = Math.max(15, Math.min(120, Number(s.fallbackTargetPts) || 40));
-  s.softTargetOptionPts = Math.max(5, Math.min(50, Number(s.softTargetOptionPts) || 15));
-  s.maxTradesPerDay = Math.max(1, Math.min(5, Math.floor(Number(s.maxTradesPerDay) || 2)));
-  s.cooldownSeconds = Math.max(60, Math.floor(Number(s.cooldownSeconds) || 300));
+  s.maxDeltaPcrFight = Math.max(0.02, Math.min(0.4, Number(s.maxDeltaPcrFight) || 0.15));
+  s.maxSlAtrMult = Math.max(0.8, Math.min(3, Number(s.maxSlAtrMult) || 2));
+  s.fallbackTargetPts = Math.max(15, Math.min(120, Number(s.fallbackTargetPts) || 35));
+  s.softTargetOptionPts = Math.max(5, Math.min(50, Number(s.softTargetOptionPts) || 12));
+  s.maxTradesPerDay = Math.max(1, Math.min(8, Math.floor(Number(s.maxTradesPerDay) || 3)));
+  s.cooldownSeconds = Math.max(60, Math.floor(Number(s.cooldownSeconds) || 120));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:30');
-  s.tradeToTime = String(s.tradeToTime || '14:00');
+  s.tradeToTime = String(s.tradeToTime || '14:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');
+  s.settingsVersion = Math.max(2, Math.floor(Number(s.settingsVersion) || 2));
   return s;
 }
 
@@ -132,7 +139,31 @@ async function ensureWallet() {
 
 async function loadSettingsFromDb() {
   const w = await ensureWallet();
-  engineState.settings = normalizeSettings(w.liquidityOiChaseEngineSettings || {});
+  const raw = w.liquidityOiChaseEngineSettings || {};
+  // One-time migrate tight v1 → daily-leaning v2 (keep user's lotCount / enabled).
+  if (Number(raw.settingsVersion || 0) < 2) {
+    const migrated = normalizeSettings({
+      ...raw,
+      swingLength: 5,
+      oiWindowMins: 10,
+      minStreak: 1,
+      requireLead: false,
+      requireTopAct: false,
+      maxDeltaPcrFight: 0.15,
+      maxSlAtrMult: 2,
+      fallbackTargetPts: 35,
+      softTargetOptionPts: 12,
+      maxTradesPerDay: Math.max(3, Number(raw.maxTradesPerDay) || 3),
+      cooldownSeconds: 120,
+      tradeToTime: raw.tradeToTime && raw.tradeToTime > '14:00' ? raw.tradeToTime : '14:30',
+      settingsVersion: 2,
+    });
+    w.liquidityOiChaseEngineSettings = migrated;
+    await w.save();
+    engineState.settings = migrated;
+    return migrated;
+  }
+  engineState.settings = normalizeSettings(raw);
   return engineState.settings;
 }
 
@@ -250,16 +281,45 @@ async function loadMinuteRows(dateKey) {
 
 async function readLatestSignal() {
   const clock = getIstClock(new Date());
+  const sessionOpen =
+    inWindow(clock.minutes, engineState.settings.tradeFromTime, engineState.settings.tradeToTime)
+    && !isEod(clock.minutes, engineState.settings.eodExitTime);
+
   if (isWeekendDateKey(clock.dateKey) || !isNseCashTradingDay(clock.dateKey)) {
-    engineState.liveSignal = { status: 'WAIT', detail: 'Market closed', buyLive: false };
+    engineState.liveSignal = {
+      status: 'WAIT',
+      detail: 'Market closed',
+      headline: 'Market closed',
+      buyLive: false,
+      checks: [],
+      at: new Date().toISOString(),
+    };
     return null;
   }
   let candles;
   try {
     candles = await loadFiveMinCandles(clock.dateKey);
+    engineState.lastError = null;
   } catch (err) {
     engineState.lastError = `Candles: ${err.message}`;
-    engineState.liveSignal = { status: 'WAIT', detail: engineState.lastError, buyLive: false };
+    engineState.liveSignal = {
+      status: 'WAIT',
+      detail: engineState.lastError,
+      headline: 'Candles unavailable',
+      buyLive: false,
+      checks: [
+        {
+          id: 'candles',
+          name: '5m candles',
+          short: 'Cdl',
+          ok: false,
+          value: 'err',
+          need: 'Dhan historical',
+          note: err.message,
+        },
+      ],
+      at: new Date().toISOString(),
+    };
     return null;
   }
   const swings = buildLiquiditySwings(candles, { length: engineState.settings.swingLength });
@@ -267,19 +327,26 @@ async function readLatestSignal() {
     slBufferPts: engineState.settings.slBufferPts,
     breakBufferPts: engineState.settings.breakBufferPts,
   });
+  sweep.highCount = swings.highs?.length || 0;
+  sweep.lowCount = swings.lows?.length || 0;
   const minutes = await loadMinuteRows(clock.dateKey);
   const oiFuel = enrichOiWindow(minutes, engineState.settings.oiWindowMins);
   const signal = buildChaseSignal({
     sweep,
     oiFuel,
     settings: engineState.settings,
+    inWindow: sessionOpen,
   });
   signal.swings = {
     atr: swings.atr,
     highCount: swings.highs?.length || 0,
     lowCount: swings.lows?.length || 0,
     lastClose: swings.lastClose,
+    barCount: swings.barCount,
+    length: swings.length,
   };
+  signal.spot = Number(swings.lastClose) || null;
+  signal.time = `${String(Math.floor(clock.minutes / 60)).padStart(2, '0')}:${String(clock.minutes % 60).padStart(2, '0')}`;
   if (signal.status !== 'TAKE_ENTRY') {
     engineState.entryArmed = true;
   }
@@ -297,11 +364,23 @@ async function readLatestSignal() {
       signal.status = 'CAUTION';
       signal.buyLive = false;
       signal.detail = `SL too wide (${width.toFixed(0)} > ${maxW.toFixed(0)} ATR cap)`;
+      signal.headline = 'SL too wide';
+      if (Array.isArray(signal.checks)) {
+        signal.checks.push({
+          id: 'slwidth',
+          name: 'SL vs ATR',
+          short: 'SL',
+          ok: false,
+          value: width.toFixed(0),
+          need: `≤ ${maxW.toFixed(0)}`,
+          note: signal.detail,
+        });
+      }
     }
   }
   engineState.liveSignal = signal;
   engineState.lastDecision = signal;
-  return signal.buyLive ? signal : null;
+  return signal.buyLive && sessionOpen ? signal : null;
 }
 
 async function finalizeTrade(trade, { exitPremium, mark, reason }) {
@@ -579,8 +658,9 @@ async function tickOnce() {
   engineState.tickInFlight = true;
   try {
     await checkOpenTrade();
-    if (!engineState.settings.enabled) return;
+    // Always refresh live tape (even when paper entries are disabled).
     const signal = await readLatestSignal();
+    if (!engineState.settings.enabled) return;
     if (signal) await tryEnter(signal);
   } catch (err) {
     engineState.lastError = err.message;
@@ -694,6 +774,7 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
 }
 
 async function getBookSummary() {
+  await ensureEngineRunning();
   const wallet = await ensureWallet();
   const clock = getIstClock(new Date());
   const open = await LivePaperTrade.find({
@@ -715,6 +796,10 @@ async function getBookSummary() {
     strategyKey: STRATEGY_KEY,
     exitTime: { $ne: null },
   });
+  // Keep UI tape fresh even if the loop just started / last tick was delayed.
+  if (!engineState.liveSignal || !engineState.liveSignal.checks) {
+    await readLatestSignal().catch(() => {});
+  }
   return {
     settings: engineState.settings,
     enabled: Boolean(engineState.settings.enabled),
@@ -734,6 +819,7 @@ async function getBookSummary() {
     dateKey: clock.dateKey,
     lastError: engineState.lastError,
     lastEntryDebug: engineState.lastEntryDebug,
+    entryArmed: engineState.entryArmed,
   };
 }
 
