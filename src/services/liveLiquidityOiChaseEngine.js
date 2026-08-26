@@ -342,8 +342,38 @@ async function readLatestSignal() {
     highCount: swings.highs?.length || 0,
     lowCount: swings.lows?.length || 0,
     lastClose: swings.lastClose,
+    lastOpen: swings.lastOpen,
+    lastHigh: swings.lastHigh,
+    lastLow: swings.lastLow,
     barCount: swings.barCount,
     length: swings.length,
+    // Recent pools for live chart overlays (slim objects)
+    highs: (swings.highs || []).map((z) => ({
+      kind: z.kind,
+      index: z.index,
+      time: z.time,
+      top: z.top,
+      bottom: z.bottom,
+      mid: z.mid,
+      broken: Boolean(z.broken),
+    })),
+    lows: (swings.lows || []).map((z) => ({
+      kind: z.kind,
+      index: z.index,
+      time: z.time,
+      top: z.top,
+      bottom: z.bottom,
+      mid: z.mid,
+      broken: Boolean(z.broken),
+    })),
+  };
+  // Chart payload — same confirmed 5m series the engine used
+  signal.chart = {
+    symbol: engineState.settings.symbol || 'NIFTY',
+    interval: '5',
+    dateKey: clock.dateKey,
+    candles: candles,
+    updatedAt: new Date().toISOString(),
   };
   signal.spot = Number(swings.lastClose) || null;
   signal.time = `${String(Math.floor(clock.minutes / 60)).padStart(2, '0')}:${String(clock.minutes % 60).padStart(2, '0')}`;
@@ -809,7 +839,7 @@ async function getBookSummary() {
     exitTime: { $ne: null },
   });
   // Keep UI tape fresh even if the loop just started / last tick was delayed.
-  if (!engineState.liveSignal || !engineState.liveSignal.checks) {
+  if (!engineState.liveSignal || !engineState.liveSignal.checks || !engineState.liveSignal.chart) {
     await readLatestSignal().catch(() => {});
   }
   return {
