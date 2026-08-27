@@ -65,11 +65,12 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const liqChase = require('./services/liveLiquidityOiChaseEngine');
-    await liqChase.ensureEngineRunning();
-    console.log('Liquidity OI Chase paper engine started');
+    // Strategy paused — only keep rolling 7 trading-day candle history in Mongo for the chart.
+    const liqChart = require('./services/liquidityChartHistoryService');
+    liqChart.startHistoryLoop();
+    console.log('Liquidity OI Chase chart history started (strategy paused)');
   } catch (err) {
-    console.warn('Liquidity OI Chase paper engine boot:', err.message);
+    console.warn('Liquidity OI Chase chart history boot:', err.message);
   }
 
   try {

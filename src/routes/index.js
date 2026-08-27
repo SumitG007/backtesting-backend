@@ -73,6 +73,7 @@ const {
 } = require('../controllers/oiFlowBbBouncePaperController');
 const {
   getLiquidityOiChaseStatus,
+  getLiquidityOiChaseChart,
   getLiquidityOiChaseBook,
   getLiquidityOiChaseTrades,
   postLiquidityOiChaseEnabled,
@@ -153,6 +154,7 @@ router.patch('/oi-flow/bb-bounce/paper/settings', patchOiFlowBbBouncePaperSettin
 router.post('/oi-flow/bb-bounce/paper/close', postOiFlowBbBouncePaperClose);
 
 router.get('/liquidity-oi-chase/status', getLiquidityOiChaseStatus);
+router.get('/liquidity-oi-chase/chart', getLiquidityOiChaseChart);
 router.get('/liquidity-oi-chase/book', getLiquidityOiChaseBook);
 router.get('/liquidity-oi-chase/trades', getLiquidityOiChaseTrades);
 router.post('/liquidity-oi-chase/enabled', postLiquidityOiChaseEnabled);
