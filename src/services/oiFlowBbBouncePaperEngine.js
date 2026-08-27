@@ -66,6 +66,8 @@ const engineState = {
   lastError: null,
   lastEntryDebug: null,
   lastTickSavedAt: 0,
+  /** Per-trade tick throttle so fast SL/TP moves are not dropped. */
+  lastTickByTradeId: {},
   /** Latest open mark in RAM so the book API is not stuck on a stale Mongo row. */
   liveOpenMark: null,
   closingTrade: false,
@@ -187,6 +189,24 @@ function indexSpotSlHit(optionType, liveSpot, slSpot) {
   return String(optionType || '').toUpperCase() === 'PE' ? spot >= sl : spot <= sl;
 }
 
+/** Exits must use fresh quotes — not the UI hold buffer. */
+function pickExitMark(liveMark, displayMark) {
+  if (Number.isFinite(liveMark?.optionLtp) && liveMark.optionLtp > 0) return liveMark;
+  return displayMark;
+}
+
+async function resolveIndexSpotForSl(trade, mark) {
+  const fromMark = Number(mark?.spot);
+  if (Number.isFinite(fromMark) && fromMark > 0) return fromMark;
+  try {
+    const idx = await getIndexLtp({ symbol: trade.symbol, maxWaitMs: 500, forceFresh: false });
+    if (Number.isFinite(idx?.ltp) && idx.ltp > 0) return idx.ltp;
+  } catch {
+    /* optional */
+  }
+  return null;
+}
+
 async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } = {}) {
   const optionType = String(trade.optionType).toUpperCase() === 'PE' ? 'PE' : 'CE';
   let indexSpot = null;
@@ -252,11 +272,18 @@ async function resolveOptionLtp(trade, { forceFresh = false, maxWaitMs = 800 } =
   return { optionLtp: null, spot: indexSpot, source: 'none', securityId };
 }
 
+function isLiveQuoteSource(source) {
+  const s = String(source || '');
+  return s !== 'none' && !s.endsWith('_hold') && s !== 'marketfeed_buffer';
+}
+
 async function saveOptionTick(trade, mark) {
   if (!trade?._id || !Number.isFinite(mark?.optionLtp) || mark.optionLtp <= 0) return;
   const now = Date.now();
-  if (now - (engineState.lastTickSavedAt || 0) < 2500) return;
-  engineState.lastTickSavedAt = now;
+  const tradeKey = String(trade._id);
+  const lastAt = engineState.lastTickByTradeId[tradeKey] || 0;
+  if (now - lastAt < 1000) return;
+  engineState.lastTickByTradeId[tradeKey] = now;
   const clock = getIstClock(new Date());
   const at = new Date();
   await OiFlowOptionTick.create({
@@ -296,7 +323,6 @@ function findBufferedExit(ticks, trade) {
     const ltp = Number(t.ltp);
     const spot = Number(t.spot);
     if (
-      isIndexSpotSource(t.source) &&
       Number.isFinite(slSpot) &&
       Number.isFinite(spot) &&
       spot > 0 &&
@@ -480,6 +506,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
 
     await recalcWalletFromTrades();
     engineState.openTradeId = null;
+    delete engineState.lastTickByTradeId[String(trade._id)];
     engineState.lastExitAtMs = Date.now();
     // Do not re-enter on the same ongoing signal — wait until decision goes WAIT.
     engineState.entryArmed = false;
@@ -530,10 +557,12 @@ async function checkOpenTrade() {
 
   const clock = getIstClock(new Date());
   const liveMark = await resolveOptionLtp(open);
-  const mark = await resolveDisplayMark(open, liveMark);
+  const displayMark = await resolveDisplayMark(open, liveMark);
 
-  // Screen-only overlay. SL/TP still use `mark` from resolveDisplayMark (unchanged rules).
-  const uiMark = Number.isFinite(liveMark?.optionLtp) && liveMark.optionLtp > 0 ? liveMark : mark;
+  // Screen overlay may hold stale marks; SL/TP use fresh live quotes (same as OI Wall Scalp).
+  const uiMark =
+    Number.isFinite(liveMark?.optionLtp) && liveMark.optionLtp > 0 ? liveMark : displayMark;
+  const exitMark = pickExitMark(liveMark, displayMark);
   if (Number.isFinite(uiMark?.optionLtp) && uiMark.optionLtp > 0) {
     const mtm = computeOpenMtm(open, uiMark.optionLtp);
     engineState.liveOpenMark = {
@@ -556,17 +585,20 @@ async function checkOpenTrade() {
     };
   }
 
-  if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, mark)) {
-    const mtm = computeOpenMtm(open, mark.optionLtp);
+  if (shouldUpdateOpenMark(open.openPositionMark, open.openPositionMarkAt, displayMark)) {
+    const mtm = computeOpenMtm(open, displayMark.optionLtp);
     open.openPositionMark = {
-      optionLtp: Number(Number(mark.optionLtp).toFixed(2)),
-      spot: Number.isFinite(mark.spot) && mark.spot > 0 ? Number(Number(mark.spot).toFixed(2)) : null,
-      source: mark.source,
+      optionLtp: Number(Number(displayMark.optionLtp).toFixed(2)),
+      spot:
+        Number.isFinite(displayMark.spot) && displayMark.spot > 0
+          ? Number(Number(displayMark.spot).toFixed(2))
+          : null,
+      source: displayMark.source,
       at: new Date().toISOString(),
       mtm: mtm != null ? Number(mtm.toFixed(2)) : null,
       qty: tradeQty(open),
       pts: Number.isFinite(Number(open.entryPremium))
-        ? Number((Number(mark.optionLtp) - Number(open.entryPremium)).toFixed(2))
+        ? Number((Number(displayMark.optionLtp) - Number(open.entryPremium)).toFixed(2))
         : null,
       slSpot: Number.isFinite(Number(open.combinedStopSpot))
         ? Number(open.combinedStopSpot)
@@ -576,16 +608,10 @@ async function checkOpenTrade() {
     open.openPositionMarkAt = new Date();
     await open.save();
   }
-  // Only persist ticks from live resolve (not held stale display) when fresh feed/chain.
-  if (
-    Number.isFinite(liveMark.optionLtp) &&
-    liveMark.optionLtp > 0 &&
-    (liveMark.source === 'marketfeed' || liveMark.source === 'chain')
-  ) {
+  if (Number.isFinite(liveMark.optionLtp) && liveMark.optionLtp > 0 && isLiveQuoteSource(liveMark.source)) {
     await saveOptionTick(open, liveMark);
   }
 
-  // Missed SL/TP from 5m buffer (fast candles between polls)
   const heldMs = Date.now() - new Date(open.entryTime).getTime();
   if (heldMs < MIN_HOLD_MS) return;
 
@@ -604,30 +630,35 @@ async function checkOpenTrade() {
 
   if (isEod(clock.minutes, engineState.settings.eodExitTime)) {
     await finalizeTrade(open, {
-      exitPremium: mark.optionLtp,
-      mark,
+      exitPremium: exitMark.optionLtp,
+      mark: exitMark,
       reason: 'DAY_CLOSE',
     });
     return;
   }
 
-  const optionLtp = Number(mark.optionLtp);
+  const optionLtp = Number(exitMark.optionLtp);
   if (!Number.isFinite(optionLtp) || optionLtp <= 0) return;
-  // Avoid acting on chain prints early; prefer live index + option feed.
-  if ((mark.source === 'chain' || mark.source === 'index-chain') && heldMs < MIN_HOLD_MS * 2) return;
+  // Only defer when we truly lack a live feed and must rely on chain.
+  if (
+    exitMark === displayMark &&
+    (displayMark.source === 'chain' || displayMark.source === 'index-chain') &&
+    heldMs < MIN_HOLD_MS * 2
+  ) {
+    return;
+  }
 
   if (open.stopLossPremium != null && optionLtp <= Number(open.stopLossPremium) - EXIT_EPS) {
     await finalizeTrade(open, {
       exitPremium: Math.min(optionLtp, Number(open.stopLossPremium)),
-      mark,
+      mark: exitMark,
       reason: 'STOP_LOSS',
     });
     return;
   }
   const slSpot = Number(open.combinedStopSpot);
-  const liveSpot = Number(mark.spot);
+  const liveSpot = await resolveIndexSpotForSl(open, exitMark);
   if (
-    isIndexSpotSource(mark.source) &&
     Number.isFinite(slSpot) &&
     Number.isFinite(liveSpot) &&
     liveSpot > 0 &&
@@ -635,7 +666,7 @@ async function checkOpenTrade() {
   ) {
     await finalizeTrade(open, {
       exitPremium: optionLtp,
-      mark,
+      mark: { ...exitMark, spot: liveSpot },
       reason: 'STOP_LOSS',
     });
     return;
@@ -643,7 +674,17 @@ async function checkOpenTrade() {
   if (open.targetPremium != null && optionLtp >= Number(open.targetPremium) + EXIT_EPS) {
     await finalizeTrade(open, {
       exitPremium: Math.max(optionLtp, Number(open.targetPremium)),
-      mark,
+      mark: exitMark,
+      reason: 'TARGET',
+    });
+    return;
+  }
+  const targetPts = Number(engineState.settings.targetPoints) || 10;
+  const entry = Number(open.entryPremium);
+  if (Number.isFinite(entry) && optionLtp >= entry + targetPts - EXIT_EPS) {
+    await finalizeTrade(open, {
+      exitPremium: optionLtp,
+      mark: exitMark,
       reason: 'TARGET',
     });
     return;
@@ -653,7 +694,7 @@ async function checkOpenTrade() {
   if (maxHoldMin > 0 && heldMs >= maxHoldMin * 60 * 1000) {
     await finalizeTrade(open, {
       exitPremium: optionLtp,
-      mark,
+      mark: exitMark,
       reason: 'TIME_EXIT',
     });
   }
