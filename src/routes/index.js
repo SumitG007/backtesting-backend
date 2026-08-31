@@ -62,15 +62,6 @@ const {
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
 } = require('../controllers/oiFlowController');
-const { getOiFlowBbBounceBacktest } = require('../controllers/oiFlowBbBounceController');
-const {
-  getOiFlowBbBouncePaperStatus,
-  getOiFlowBbBouncePaperBook,
-  getOiFlowBbBouncePaperTrades,
-  postOiFlowBbBouncePaperEnabled,
-  patchOiFlowBbBouncePaperSettings,
-  postOiFlowBbBouncePaperClose,
-} = require('../controllers/oiFlowBbBouncePaperController');
 const {
   getLiquidityOiChaseChart,
 } = require('../controllers/liquidityOiChaseController');
@@ -139,13 +130,6 @@ router.get('/oi-flow/today', getOiFlowToday);
 router.get('/oi-flow/header-signal', getOiFlowHeaderSignal);
 router.get('/oi-flow/signals', getOiFlowSignals);
 router.post('/oi-flow/signals/backfill', postOiFlowSignalsBackfill);
-router.get('/oi-flow/bb-bounce/backtest', getOiFlowBbBounceBacktest);
-router.get('/oi-flow/bb-bounce/paper/status', getOiFlowBbBouncePaperStatus);
-router.get('/oi-flow/bb-bounce/paper/book', getOiFlowBbBouncePaperBook);
-router.get('/oi-flow/bb-bounce/paper/trades', getOiFlowBbBouncePaperTrades);
-router.post('/oi-flow/bb-bounce/paper/enabled', postOiFlowBbBouncePaperEnabled);
-router.patch('/oi-flow/bb-bounce/paper/settings', patchOiFlowBbBouncePaperSettings);
-router.post('/oi-flow/bb-bounce/paper/close', postOiFlowBbBouncePaperClose);
 
 router.get('/liquidity-oi-chase/chart', getLiquidityOiChaseChart);
 

@@ -57,14 +57,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const oiFlowBbPaper = require('./services/oiFlowBbBouncePaperEngine');
-    await oiFlowBbPaper.ensureEngineRunning();
-    console.log('OI Flow BB Bounce paper engine started');
-  } catch (err) {
-    console.warn('OI Flow BB Bounce paper engine boot:', err.message);
-  }
-
-  try {
     // Rolling 7 trading-day NIFTY 5m candles in Mongo for the Liquidity Map chart.
     const liqChart = require('./services/liquidityChartHistoryService');
     liqChart.startHistoryLoop();
