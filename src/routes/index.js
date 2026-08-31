@@ -72,15 +72,7 @@ const {
   postOiFlowBbBouncePaperClose,
 } = require('../controllers/oiFlowBbBouncePaperController');
 const {
-  getLiquidityOiChaseStatus,
   getLiquidityOiChaseChart,
-  getLiquidityOiChaseBook,
-  getLiquidityOiChaseTrades,
-  postLiquidityOiChaseEnabled,
-  patchLiquidityOiChaseSettings,
-  postLiquidityOiChaseClose,
-  postLiquidityOiChaseBacktest,
-  getLiquidityOiChaseBacktestMeta,
 } = require('../controllers/liquidityOiChaseController');
 
 const router = express.Router();
@@ -155,14 +147,6 @@ router.post('/oi-flow/bb-bounce/paper/enabled', postOiFlowBbBouncePaperEnabled);
 router.patch('/oi-flow/bb-bounce/paper/settings', patchOiFlowBbBouncePaperSettings);
 router.post('/oi-flow/bb-bounce/paper/close', postOiFlowBbBouncePaperClose);
 
-router.get('/liquidity-oi-chase/status', getLiquidityOiChaseStatus);
 router.get('/liquidity-oi-chase/chart', getLiquidityOiChaseChart);
-router.get('/liquidity-oi-chase/book', getLiquidityOiChaseBook);
-router.get('/liquidity-oi-chase/trades', getLiquidityOiChaseTrades);
-router.post('/liquidity-oi-chase/enabled', postLiquidityOiChaseEnabled);
-router.patch('/liquidity-oi-chase/settings', patchLiquidityOiChaseSettings);
-router.post('/liquidity-oi-chase/close', postLiquidityOiChaseClose);
-router.get('/liquidity-oi-chase/backtest/meta', getLiquidityOiChaseBacktestMeta);
-router.post('/liquidity-oi-chase/backtest', postLiquidityOiChaseBacktest);
 
 module.exports = router;

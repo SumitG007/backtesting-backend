@@ -65,12 +65,12 @@ async function bootBackgroundServices() {
   }
 
   try {
-    // Strategy paused — only keep rolling 7 trading-day candle history in Mongo for the chart.
+    // Rolling 7 trading-day NIFTY 5m candles in Mongo for the Liquidity Map chart.
     const liqChart = require('./services/liquidityChartHistoryService');
     liqChart.startHistoryLoop();
-    console.log('Liquidity OI Chase chart history started (strategy paused)');
+    console.log('Liquidity Map chart history started');
   } catch (err) {
-    console.warn('Liquidity OI Chase chart history boot:', err.message);
+    console.warn('Liquidity Map chart history boot:', err.message);
   }
 
   try {

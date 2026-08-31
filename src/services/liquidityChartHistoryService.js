@@ -1,5 +1,5 @@
 /**
- * Liquidity OI Chase — chart history only (strategy paused).
+ * Liquidity Map — chart history only.
  * Keeps current IST day + previous 6 NSE trading days of NIFTY 5m candles in Mongo.
  * Serve always from Mongo; refresh today (and missing past days) from Dhan in the background.
  */

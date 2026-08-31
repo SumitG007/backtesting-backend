@@ -13,8 +13,6 @@ const MANUAL_OI_AUTO_LIVE_KEY = 'manual_oi_auto_live';
 /** OI Flow Tracker signal store key (paper auto-trade removed). */
 const OI_FLOW_TRACKER_LIVE_KEY = 'oi_flow_tracker_live';
 const OI_FLOW_BB_BOUNCE_LIVE_KEY = 'oi_flow_bb_bounce_live';
-/** Liquidity sweep + OI fuel chase (paper). */
-const LIQUIDITY_OI_CHASE_LIVE_KEY = 'liquidity_oi_chase_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -25,5 +23,4 @@ module.exports = {
   MANUAL_OI_AUTO_LIVE_KEY,
   OI_FLOW_TRACKER_LIVE_KEY,
   OI_FLOW_BB_BOUNCE_LIVE_KEY,
-  LIQUIDITY_OI_CHASE_LIVE_KEY,
 };
