@@ -18,9 +18,12 @@ const livePaperTradeSchema = new mongoose.Schema(
     entryTime: { type: Date, required: true },
     stopLossPremium: { type: Number, default: null },
     targetPremium: { type: Number, default: null },
-    /** How SL/target were entered: PCT (% of entry) or POINTS (exact absolute premium/price). Shared unit. */
-    stopLossMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
-    targetMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
+    /** How SL/target were entered: PCT, POINTS (exact premium), or AMOUNT (₹ gross P/L). */
+    stopLossMode: { type: String, enum: ['PCT', 'POINTS', 'AMOUNT'], default: null },
+    targetMode: { type: String, enum: ['PCT', 'POINTS', 'AMOUNT'], default: null },
+    /** When mode is AMOUNT — gross ₹ profit/loss at exit (before charges). */
+    stopLossAmount: { type: Number, default: null },
+    targetAmount: { type: Number, default: null },
     entryCredit: { type: Number, default: null },
     exitDebit: { type: Number, default: null },
     legs: { type: [mongoose.Schema.Types.Mixed], default: undefined },

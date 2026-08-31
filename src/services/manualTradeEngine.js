@@ -150,8 +150,18 @@ function parsePremiumPoints(raw) {
   return Math.min(5000, n);
 }
 
+function parseAmount(raw) {
+  if (raw === '' || raw === null || raw === undefined) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(50_000_000, n);
+}
+
 function normalizeRiskMode(mode) {
-  return String(mode || '').toUpperCase() === 'PCT' ? 'PCT' : 'POINTS';
+  const m = String(mode || '').toUpperCase();
+  if (m === 'PCT') return 'PCT';
+  if (m === 'AMOUNT' || m === 'INR' || m === 'RS') return 'AMOUNT';
+  return 'POINTS';
 }
 
 /** Parse a positive % value (1..99 for SL, 1..1000 for target). */
@@ -165,9 +175,19 @@ function parsePct(raw, { max = 1000 } = {}) {
 /**
  * Resolve SL/target exit premium from entry + configured mode.
  * - PCT: offset = entry * pct / 100, then SL/TG placed vs entry by side (dir).
- * - POINTS: `points` is the exact absolute premium / price level (not +/- from entry).
+ * - POINTS: `points` is the exact absolute premium / price level.
+ * - AMOUNT: gross ₹ P/L (before charges) → premium offset = amount / qty.
  */
-function exitPremiumFromConfig({ mode, points, pct, entryPremium, leg, dir = 1 }) {
+function exitPremiumFromConfig({
+  mode,
+  points,
+  pct,
+  amount,
+  entryPremium,
+  leg,
+  dir = 1,
+  qty = 1,
+}) {
   const m = normalizeRiskMode(mode);
   if (m === 'PCT') {
     if (pct == null || !Number.isFinite(entryPremium) || entryPremium <= 0) return null;
@@ -176,8 +196,27 @@ function exitPremiumFromConfig({ mode, points, pct, entryPremium, leg, dir = 1 }
     const prem = leg === 'SL' ? entryPremium - dir * offset : entryPremium + dir * offset;
     return Math.max(0.05, prem);
   }
+  if (m === 'AMOUNT') {
+    if (amount == null || !Number.isFinite(entryPremium) || entryPremium <= 0) return null;
+    const q = Math.max(1, Number(qty) || 1);
+    const ptOffset = Number(amount) / q;
+    const prem = leg === 'SL' ? entryPremium - dir * ptOffset : entryPremium + dir * ptOffset;
+    return Math.max(0.05, prem);
+  }
   if (points == null || !Number.isFinite(points) || points <= 0) return null;
   return Math.max(0.05, points);
+}
+
+function parseRiskInputs({ mode, rawValue, leg }) {
+  const m = normalizeRiskMode(mode);
+  if (rawValue === '' || rawValue === null || rawValue === undefined) {
+    return { mode: m, pct: null, points: null, amount: null, configured: false };
+  }
+  const pct = m === 'PCT' ? parsePct(rawValue, { max: leg === 'SL' ? 99 : 1000 }) : null;
+  const points = m === 'POINTS' ? parsePremiumPoints(rawValue) : null;
+  const amount = m === 'AMOUNT' ? parseAmount(rawValue) : null;
+  const configured = pct != null || points != null || amount != null;
+  return { mode: m, pct, points, amount, configured };
 }
 
 function premiumFromChain(chain, optionType) {
@@ -904,24 +943,27 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
     await debitWallet(capitalNeeded, { reason: 'FILL' });
   }
 
-  const slConfigured = order.stopLossMode != null || order.stopLossPoints != null || order.stopLossPct != null;
-  const tgConfigured = order.targetMode != null || order.targetProfitPoints != null || order.targetPct != null;
-  // PCT = % offset from entry; POINTS = exact absolute premium/price level.
+  const slConfigured = order.stopLossMode != null || order.stopLossPoints != null || order.stopLossPct != null || order.stopLossAmount != null;
+  const tgConfigured = order.targetMode != null || order.targetProfitPoints != null || order.targetPct != null || order.targetAmount != null;
   const stopLossPremium = exitPremiumFromConfig({
     mode: order.stopLossMode,
     points: order.stopLossPoints,
     pct: order.stopLossPct,
+    amount: order.stopLossAmount,
     entryPremium,
     leg: 'SL',
     dir,
+    qty,
   });
   const targetPremium = exitPremiumFromConfig({
     mode: order.targetMode,
     points: order.targetProfitPoints,
     pct: order.targetPct,
+    amount: order.targetAmount,
     entryPremium,
     leg: 'TG',
     dir,
+    qty,
   });
 
   let tradeDoc;
@@ -950,6 +992,12 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
       targetPremium: targetPremium != null ? Number(targetPremium.toFixed(2)) : null,
       stopLossMode: stopLossPremium != null && slConfigured ? normalizeRiskMode(order.stopLossMode) : null,
       targetMode: targetPremium != null && tgConfigured ? normalizeRiskMode(order.targetMode) : null,
+      stopLossAmount: stopLossPremium != null && normalizeRiskMode(order.stopLossMode) === 'AMOUNT'
+        ? Number(order.stopLossAmount)
+        : null,
+      targetAmount: targetPremium != null && normalizeRiskMode(order.targetMode) === 'AMOUNT'
+        ? Number(order.targetAmount)
+        : null,
       legs: [{ optionType: product === 'FUTURE' ? 'FUT' : order.optionType, side, entryPremium: Number(entryPremium.toFixed(2)) }],
       notes: `manual; order=${order._id}; product=${product}; side=${side}; type=${order.orderType}; capital=${capitalNeeded}; sl=${stopLossPremium ?? 'off'}; tg=${targetPremium ?? 'eod'}${order.isTesting ? '; testing=1' : ''}`,
       isTesting: Boolean(order.isTesting),
@@ -1091,12 +1139,10 @@ async function createFutureOrder(payload, clock) {
   const targetMode = riskMode;
   const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
   const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
-  const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
-  const targetPct = targetMode === 'PCT' ? parsePct(tgRawValue, { max: 1000 }) : null;
-  const stopLossPoints = stopLossMode === 'POINTS' ? parsePremiumPoints(slRawValue) : null;
-  const targetProfitPoints = targetMode === 'POINTS' ? parsePremiumPoints(tgRawValue) : null;
-  const slConfigured = stopLossPct != null || stopLossPoints != null;
-  const tgConfigured = targetPct != null || targetProfitPoints != null;
+  const slParsed = parseRiskInputs({ mode: stopLossMode, rawValue: slRawValue, leg: 'SL' });
+  const tgParsed = parseRiskInputs({ mode: targetMode, rawValue: tgRawValue, leg: 'TG' });
+  const slConfigured = slParsed.configured;
+  const tgConfigured = tgParsed.configured;
 
   // Resolve nearest (or chosen) future expiry.
   const expiries = await listFutureExpiries(symbol);
@@ -1139,12 +1185,14 @@ async function createFutureOrder(payload, clock) {
     lots,
     lotSize,
     perTradeCost,
-    stopLossPoints,
-    targetProfitPoints,
-    stopLossMode: slConfigured ? stopLossMode : null,
-    targetMode: tgConfigured ? targetMode : null,
-    stopLossPct,
-    targetPct,
+    stopLossPoints: slParsed.points,
+    targetProfitPoints: tgParsed.points,
+    stopLossMode: slConfigured ? slParsed.mode : null,
+    targetMode: tgConfigured ? tgParsed.mode : null,
+    stopLossPct: slParsed.pct,
+    targetPct: tgParsed.pct,
+    stopLossAmount: slParsed.amount,
+    targetAmount: tgParsed.amount,
     status: 'PENDING',
     sessionDateKey: clock.dateKey,
     isTesting: parseIsTesting(payload.isTesting),
@@ -1161,8 +1209,8 @@ async function createFutureOrder(payload, clock) {
       orderType,
       limitPremium,
       expiryDate,
-      stopLoss: slConfigured ? { mode: stopLossMode, pct: stopLossPct, points: stopLossPoints } : 'off',
-      target: tgConfigured ? { mode: targetMode, pct: targetPct, points: targetProfitPoints } : 'eod',
+      stopLoss: slConfigured ? { mode: slParsed.mode, ...slParsed } : 'off',
+      target: tgConfigured ? { mode: tgParsed.mode, ...tgParsed } : 'eod',
     },
   });
 
@@ -1213,12 +1261,10 @@ async function createOrder(payload) {
   const targetMode = riskMode;
   const slRawValue = payload.stopLossValue != null ? payload.stopLossValue : payload.stopLossPoints;
   const tgRawValue = payload.targetValue != null ? payload.targetValue : payload.targetProfitPoints;
-  const stopLossPct = stopLossMode === 'PCT' ? parsePct(slRawValue, { max: 99 }) : null;
-  const targetPct = targetMode === 'PCT' ? parsePct(tgRawValue, { max: 1000 }) : null;
-  const stopLossPoints = stopLossMode === 'POINTS' ? parsePremiumPoints(slRawValue) : null;
-  const targetProfitPoints = targetMode === 'POINTS' ? parsePremiumPoints(tgRawValue) : null;
-  const slConfigured = stopLossPct != null || stopLossPoints != null;
-  const tgConfigured = targetPct != null || targetProfitPoints != null;
+  const slParsed = parseRiskInputs({ mode: stopLossMode, rawValue: slRawValue, leg: 'SL' });
+  const tgParsed = parseRiskInputs({ mode: targetMode, rawValue: tgRawValue, leg: 'TG' });
+  const slConfigured = slParsed.configured;
+  const tgConfigured = tgParsed.configured;
 
   let expiryDate = String(payload.expiryDate || '').slice(0, 10);
   if (!expiryDate) {
@@ -1273,12 +1319,14 @@ async function createOrder(payload) {
     lots,
     lotSize,
     perTradeCost,
-    stopLossPoints,
-    targetProfitPoints,
-    stopLossMode: slConfigured ? stopLossMode : null,
-    targetMode: tgConfigured ? targetMode : null,
-    stopLossPct,
-    targetPct,
+    stopLossPoints: slParsed.points,
+    targetProfitPoints: tgParsed.points,
+    stopLossMode: slConfigured ? slParsed.mode : null,
+    targetMode: tgConfigured ? tgParsed.mode : null,
+    stopLossPct: slParsed.pct,
+    targetPct: tgParsed.pct,
+    stopLossAmount: slParsed.amount,
+    targetAmount: tgParsed.amount,
     status: 'PENDING',
     sessionDateKey: clock.dateKey,
     isTesting: parseIsTesting(payload.isTesting),
@@ -1292,8 +1340,8 @@ async function createOrder(payload) {
     details: {
       orderType,
       limitPremium,
-      stopLoss: slConfigured ? { mode: stopLossMode, pct: stopLossPct, points: stopLossPoints } : 'off',
-      target: tgConfigured ? { mode: targetMode, pct: targetPct, points: targetProfitPoints } : 'eod',
+      stopLoss: slConfigured ? { mode: slParsed.mode, ...slParsed } : 'off',
+      target: tgConfigured ? { mode: tgParsed.mode, ...tgParsed } : 'eod',
       expiryDate,
     },
   });
@@ -1499,13 +1547,69 @@ async function updatePositionRisk(tradeId, payload = {}) {
   }
 
   const dir = directionSign(trade);
+  const qty = Math.max(1, Number(trade.qty) || 1);
   const prev = {
     stopLossPremium: trade.stopLossPremium,
     targetPremium: trade.targetPremium,
   };
   const changes = {};
 
-  // New contract: stopLossValue + stopLossMode. Legacy: stopLossPoints (always POINTS).
+  function applyRiskLeg(leg, hasKey, rawKey, legacyKey, modeKey) {
+    if (!hasKey) return;
+    const premField = leg === 'SL' ? 'stopLossPremium' : 'targetPremium';
+    const modeField = leg === 'SL' ? 'stopLossMode' : 'targetMode';
+    const amountField = leg === 'SL' ? 'stopLossAmount' : 'targetAmount';
+    const raw = Object.prototype.hasOwnProperty.call(payload, rawKey)
+      ? payload[rawKey]
+      : payload[legacyKey];
+    if (raw === '' || raw === null || raw === undefined) {
+      trade[premField] = null;
+      trade[modeField] = null;
+      trade[amountField] = null;
+      changes[premField] = null;
+      changes[modeField] = null;
+      changes[amountField] = null;
+      return;
+    }
+    const parsed = parseRiskInputs({
+      mode: payload[modeKey],
+      rawValue: raw,
+      leg,
+    });
+    const prem = exitPremiumFromConfig({
+      mode: parsed.mode,
+      points: parsed.points,
+      pct: parsed.pct,
+      amount: parsed.amount,
+      entryPremium: entry,
+      leg,
+      dir,
+      qty,
+    });
+    if (prem == null) {
+      trade[premField] = null;
+      trade[modeField] = null;
+      trade[amountField] = null;
+      changes[premField] = null;
+      changes[modeField] = null;
+      changes[amountField] = null;
+      return;
+    }
+    if (leg === 'SL' ? (dir === 1 ? prem >= entry : prem <= entry) : (dir === 1 ? prem <= entry : prem >= entry)) {
+      throw new Error(
+        leg === 'SL'
+          ? `Stop loss must be ${dir === 1 ? 'below' : 'above'} entry`
+          : `Target must be ${dir === 1 ? 'above' : 'below'} entry`,
+      );
+    }
+    trade[premField] = Number(prem.toFixed(2));
+    trade[modeField] = parsed.mode;
+    trade[amountField] = parsed.mode === 'AMOUNT' ? parsed.amount : null;
+    changes[premField] = trade[premField];
+    changes[modeField] = trade[modeField];
+    changes[amountField] = trade[amountField];
+  }
+
   const hasSl =
     Object.prototype.hasOwnProperty.call(payload, 'stopLossValue') ||
     Object.prototype.hasOwnProperty.call(payload, 'stopLossPoints');
@@ -1513,73 +1617,8 @@ async function updatePositionRisk(tradeId, payload = {}) {
     Object.prototype.hasOwnProperty.call(payload, 'targetValue') ||
     Object.prototype.hasOwnProperty.call(payload, 'targetProfitPoints');
 
-  if (hasSl) {
-    const usePct = normalizeRiskMode(payload.stopLossMode) === 'PCT' &&
-      Object.prototype.hasOwnProperty.call(payload, 'stopLossValue');
-    const rawSl = Object.prototype.hasOwnProperty.call(payload, 'stopLossValue')
-      ? payload.stopLossValue
-      : payload.stopLossPoints;
-    const slPrem = exitPremiumFromConfig({
-      mode: usePct ? 'PCT' : 'POINTS',
-      points: usePct ? null : parseRiskPointsInput(rawSl),
-      pct: usePct ? parsePct(rawSl, { max: 99 }) : null,
-      entryPremium: entry,
-      leg: 'SL',
-      dir,
-    });
-    if (slPrem == null) {
-      trade.stopLossPremium = null;
-      trade.stopLossMode = null;
-      changes.stopLossPremium = null;
-    } else {
-      // SL must be on the losing side: below entry for LONG, above entry for SHORT.
-      if (dir === 1 ? slPrem >= entry : slPrem <= entry) {
-        throw new Error(
-          usePct
-            ? `Stop loss must be ${dir === 1 ? 'below' : 'above'} entry`
-            : `Stop loss premium must be ${dir === 1 ? 'below' : 'above'} entry (${entry})`,
-        );
-      }
-      trade.stopLossPremium = Number(slPrem.toFixed(2));
-      trade.stopLossMode = usePct ? 'PCT' : 'POINTS';
-      changes.stopLossPremium = trade.stopLossPremium;
-      changes.stopLossMode = trade.stopLossMode;
-    }
-  }
-
-  if (hasTg) {
-    const usePct = normalizeRiskMode(payload.targetMode) === 'PCT' &&
-      Object.prototype.hasOwnProperty.call(payload, 'targetValue');
-    const rawTg = Object.prototype.hasOwnProperty.call(payload, 'targetValue')
-      ? payload.targetValue
-      : payload.targetProfitPoints;
-    const tgPrem = exitPremiumFromConfig({
-      mode: usePct ? 'PCT' : 'POINTS',
-      points: usePct ? null : parseRiskPointsInput(rawTg),
-      pct: usePct ? parsePct(rawTg, { max: 1000 }) : null,
-      entryPremium: entry,
-      leg: 'TG',
-      dir,
-    });
-    if (tgPrem == null) {
-      trade.targetPremium = null;
-      trade.targetMode = null;
-      changes.targetPremium = null;
-    } else {
-      // Target must be on the winning side: above entry for LONG, below for SHORT.
-      if (dir === 1 ? tgPrem <= entry : tgPrem >= entry) {
-        throw new Error(
-          usePct
-            ? `Target must be ${dir === 1 ? 'above' : 'below'} entry`
-            : `Target premium must be ${dir === 1 ? 'above' : 'below'} entry (${entry})`,
-        );
-      }
-      trade.targetPremium = Number(tgPrem.toFixed(2));
-      trade.targetMode = usePct ? 'PCT' : 'POINTS';
-      changes.targetPremium = trade.targetPremium;
-      changes.targetMode = trade.targetMode;
-    }
-  }
+  applyRiskLeg('SL', hasSl, 'stopLossValue', 'stopLossPoints', 'stopLossMode');
+  applyRiskLeg('TG', hasTg, 'targetValue', 'targetProfitPoints', 'targetMode');
 
   // Keep SL & Target unit modes in sync when both are configured.
   if (trade.stopLossMode && trade.targetMode && trade.stopLossMode !== trade.targetMode) {

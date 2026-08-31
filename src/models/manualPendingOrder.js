@@ -18,9 +18,11 @@ const manualPendingOrderSchema = new mongoose.Schema(
     perTradeCost: { type: Number, default: 100 },
     stopLossPoints: { type: Number, default: null },
     targetProfitPoints: { type: Number, default: null },
-    /** Risk input mode: PCT (% of entry) or POINTS (exact absolute premium/price). SL & Target share one mode. */
-    stopLossMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
-    targetMode: { type: String, enum: ['PCT', 'POINTS'], default: null },
+    /** Risk input mode: PCT, POINTS (exact premium), or AMOUNT (₹ gross P/L). SL & Target share one mode. */
+    stopLossMode: { type: String, enum: ['PCT', 'POINTS', 'AMOUNT'], default: null },
+    targetMode: { type: String, enum: ['PCT', 'POINTS', 'AMOUNT'], default: null },
+    stopLossAmount: { type: Number, default: null },
+    targetAmount: { type: Number, default: null },
     stopLossPct: { type: Number, default: null },
     targetPct: { type: Number, default: null },
     status: {
