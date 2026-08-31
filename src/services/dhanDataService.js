@@ -214,11 +214,12 @@ async function fetchDhanIntradayChunk({ fromDate, toDate, interval, securityId, 
 
 function getYearRange(year) {
   const safeYear = Number(year);
-  const now = new Date();
-  const currentYear = now.getFullYear();
+  const istToday = getIstClock(new Date()).dateKey; // YYYY-MM-DD IST
+  const currentYear = Number(String(istToday).slice(0, 4));
   return {
     fromDate: `${safeYear}-01-01`,
-    toDate: safeYear === currentYear ? now.toISOString().slice(0, 10) : `${safeYear}-12-31`,
+    // Current year → through today IST (not UTC), so backtest includes latest sessions.
+    toDate: safeYear === currentYear ? istToday : `${safeYear}-12-31`,
   };
 }
 

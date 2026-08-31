@@ -8,6 +8,7 @@
     "dev": "nodemon src/server.js",
     "test:token": "node src/scripts/testToken.js",
     "cache:candles": "node scripts/saveCandleCache.js",
+    "liquidity:scenarios": "node scripts/runLiquidityScenarioSearch.js --lots=10",
     "mongo:free-space": "node scripts/freeMongoStorage.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

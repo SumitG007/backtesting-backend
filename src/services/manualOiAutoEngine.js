@@ -1,7 +1,8 @@
 /**
  * Manual Console — Live Signal auto scalp.
  * Separate strategyKey + wallet from manual console entries.
- * Rules: 1 open trade at a time · TAKE_ENTRY signal · +5 / −15 · first SL stops day.
+ * Rules: 1 open trade at a time · TAKE_ENTRY signal · +5 / −15 · first SL stops day ·
+ * 7 consecutive wins stops day.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -26,6 +27,8 @@ const MIN_HOLD_MS = 20000;
 const OI_EXIT_MIN_HOLD_MS = 60000;
 const OI_FLIP_CONFIRM_TICKS = 3;
 const NEAR_BAND_DIV = 2;
+/** After this many consecutive profitable closes in one IST day, block new entries. */
+const CONSECUTIVE_WINS_CAP = 7;
 /** Ignore tiny LTP noise vs entry before counting as real target/SL. */
 const EXIT_EPS = 0.15;
 
@@ -68,6 +71,10 @@ const engineState = {
   /** IST dateKey (YYYY-MM-DD) once first STOP_LOSS of the session closes — no new entries until next day. */
   dailySlStopDateKey: null,
   dailySlStopAt: null,
+  /** IST dateKey once CONSECUTIVE_WINS_CAP profitable closes hit — no new entries until next day. */
+  dailyWinCapDateKey: null,
+  dailyWinCapAt: null,
+  consecutiveWinsToday: 0,
 };
 
 function parseHhmmToMinutes(raw) {
@@ -545,6 +552,59 @@ function resetDailySlStopIfNewDay(dateKey) {
   }
 }
 
+function resetDailyWinCapIfNewDay(dateKey) {
+  if (engineState.dailyWinCapDateKey && engineState.dailyWinCapDateKey !== dateKey) {
+    engineState.dailyWinCapDateKey = null;
+    engineState.dailyWinCapAt = null;
+    engineState.consecutiveWinsToday = 0;
+  }
+}
+
+function applyClosedTradeToWinStreak(trade, dateKey) {
+  const pnl = Number(trade.pnl);
+  const reason = String(trade.reason || '').toUpperCase();
+  if (pnl > 0) {
+    engineState.consecutiveWinsToday += 1;
+    if (engineState.consecutiveWinsToday >= CONSECUTIVE_WINS_CAP) {
+      engineState.dailyWinCapDateKey = dateKey;
+      engineState.dailyWinCapAt = trade.exitTime || new Date();
+    }
+  } else if (reason === 'STOP_LOSS' || pnl < 0) {
+    engineState.consecutiveWinsToday = 0;
+  }
+}
+
+/** Replay today's closed trades to hydrate win streak / cap after boot. */
+async function hydrateWinStreakFromDb(dateKey) {
+  resetDailyWinCapIfNewDay(dateKey);
+  engineState.consecutiveWinsToday = 0;
+  engineState.dailyWinCapDateKey = null;
+  engineState.dailyWinCapAt = null;
+
+  const rows = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    entryDateKey: dateKey,
+    status: 'CLOSED',
+    exitTime: { $ne: null },
+    isTesting: { $ne: true },
+  })
+    .sort({ exitTime: 1 })
+    .select({ pnl: 1, reason: 1, exitTime: 1 })
+    .lean();
+
+  for (const row of rows) {
+    applyClosedTradeToWinStreak(row, dateKey);
+  }
+}
+
+/** True when today's CONSECUTIVE_WINS_CAP already hit — block new entries until next IST day. */
+async function isDailyWinCapActive(dateKey) {
+  resetDailyWinCapIfNewDay(dateKey);
+  if (engineState.dailyWinCapDateKey === dateKey) return true;
+  await hydrateWinStreakFromDb(dateKey);
+  return engineState.dailyWinCapDateKey === dateKey;
+}
+
 /** True when today's first STOP_LOSS already hit — block new entries until next IST trading day. */
 async function isDailySlStopActive(dateKey) {
   resetDailySlStopIfNewDay(dateKey);
@@ -632,6 +692,9 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
     if (reason === 'STOP_LOSS') {
       engineState.dailySlStopDateKey = clock.dateKey;
       engineState.dailySlStopAt = trade.exitTime;
+      engineState.consecutiveWinsToday = 0;
+    } else {
+      applyClosedTradeToWinStreak(trade, clock.dateKey);
     }
     return trade;
   } finally {
@@ -744,6 +807,15 @@ async function tryEnter(signal, board) {
       skip: 'daily_sl_stop',
       dateKey: clock.dateKey,
       stoppedAt: engineState.dailySlStopAt,
+    };
+    return;
+  }
+  if (await isDailyWinCapActive(clock.dateKey)) {
+    engineState.lastEntryDebug = {
+      skip: 'daily_win_cap',
+      dateKey: clock.dateKey,
+      stoppedAt: engineState.dailyWinCapAt,
+      consecutiveWins: CONSECUTIVE_WINS_CAP,
     };
     return;
   }
@@ -949,6 +1021,7 @@ async function ensureEngineRunning() {
     await secondsSinceLastExit(); // hydrate lastExitAtMs from DB
     const bootClock = getIstClock(new Date());
     await isDailySlStopActive(bootClock.dateKey);
+    await isDailyWinCapActive(bootClock.dateKey);
     engineState.running = true;
     engineState.startedAt = new Date();
     engineState.entryArmed = true;
@@ -999,6 +1072,14 @@ async function getStatus() {
         stoppedAt: engineState.dailySlStopAt,
       }
       : null,
+    dailyWinCap: engineState.dailyWinCapDateKey
+      ? {
+        dateKey: engineState.dailyWinCapDateKey,
+        stoppedAt: engineState.dailyWinCapAt,
+        consecutiveWins: CONSECUTIVE_WINS_CAP,
+      }
+      : null,
+    consecutiveWinsToday: engineState.consecutiveWinsToday,
   };
 }
 

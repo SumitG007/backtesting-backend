@@ -79,6 +79,8 @@ const {
   postLiquidityOiChaseEnabled,
   patchLiquidityOiChaseSettings,
   postLiquidityOiChaseClose,
+  postLiquidityOiChaseBacktest,
+  getLiquidityOiChaseBacktestMeta,
 } = require('../controllers/liquidityOiChaseController');
 
 const router = express.Router();
@@ -160,5 +162,7 @@ router.get('/liquidity-oi-chase/trades', getLiquidityOiChaseTrades);
 router.post('/liquidity-oi-chase/enabled', postLiquidityOiChaseEnabled);
 router.patch('/liquidity-oi-chase/settings', patchLiquidityOiChaseSettings);
 router.post('/liquidity-oi-chase/close', postLiquidityOiChaseClose);
+router.get('/liquidity-oi-chase/backtest/meta', getLiquidityOiChaseBacktestMeta);
+router.post('/liquidity-oi-chase/backtest', postLiquidityOiChaseBacktest);
 
 module.exports = router;
