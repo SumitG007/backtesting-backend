@@ -19,6 +19,8 @@ const {
   getOptionChainOiSnapshot,
 } = require('./dhanLiveService');
 const { compactStrikes, intervalOiFromRows } = require('../utils/oiFlowIntervalOi');
+const { analyticsFromStrikes } = require('../utils/oiFlowStrikeAnalytics');
+const { getFutureLtp } = require('./dhanLiveService');
 
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
@@ -111,6 +113,8 @@ function deriveFields({
       ? dayPutChgOi - dayCallChgOi
       : null;
 
+  const strikeStats = analyticsFromStrikes(strikes, prev);
+
   return {
     callsChgOi,
     putsChgOi,
@@ -120,6 +124,14 @@ function deriveFields({
     chngInDir,
     dirOfChng: dirArrow(chngInDir),
     sentiment: sentimentFromDiff(chngInDir),
+    topCallChgStrike: strikeStats.topCallChgStrike,
+    topCallChgOi: strikeStats.topCallChgOi,
+    topPutChgStrike: strikeStats.topPutChgStrike,
+    topPutChgOi: strikeStats.topPutChgOi,
+    dominantSide: strikeStats.dominantSide,
+    dominantStrike: strikeStats.dominantStrike,
+    dominantOi: strikeStats.dominantOi,
+    oiMigration: strikeStats.oiMigration,
   };
 }
 
@@ -372,10 +384,93 @@ async function buildAfterCloseLastEntry(clock, prev) {
 const OI_FLOW_TODAY_SELECT =
   '-strikes -createdAt -updatedAt -__v';
 
+const FUT_CACHE_MS = 4000;
+const futCache = { ltp: null, fetchedAt: 0 };
+
 function stripStrikes(row) {
   if (!row || typeof row !== 'object') return row;
   const { strikes: _s, ...rest } = row;
   return rest;
+}
+
+async function getLiveMarketContext(spot) {
+  const now = Date.now();
+  if (!futCache.ltp || now - futCache.fetchedAt > FUT_CACHE_MS) {
+    try {
+      if (!engineState.expiry) {
+        engineState.expiry = await getNearestWeeklyExpiry(engineState.symbol);
+      }
+      const { ltp } = await getFutureLtp({
+        symbol: engineState.symbol,
+        expiry: engineState.expiry,
+        maxWaitMs: 1200,
+      });
+      if (Number.isFinite(Number(ltp))) {
+        futCache.ltp = Number(ltp);
+        futCache.fetchedAt = now;
+      }
+    } catch {
+      /* keep stale fut */
+    }
+  }
+  const fut = futCache.ltp;
+  const spotN = Number(spot);
+  const basis = Number.isFinite(fut) && Number.isFinite(spotN) ? fut - spotN : null;
+  return {
+    futPrice: Number.isFinite(fut) ? fut : null,
+    basis: Number.isFinite(basis) ? Number(basis.toFixed(2)) : null,
+  };
+}
+
+async function fetchLatestRowWithStrikes(dateKey) {
+  return OiFlowMinuteRow.findOne({
+    symbol: engineState.symbol,
+    dateKey,
+    fetchOk: true,
+    'strikes.0': { $exists: true },
+  })
+    .sort({ minutes: -1 })
+    .select('-createdAt -updatedAt -__v')
+    .lean();
+}
+
+/** Attach strike snapshots for heatmap / walls (display only). */
+async function enrichDisplayRow(displayRow, dateKey, { inSession } = {}) {
+  if (!displayRow) return null;
+  let source = null;
+  if (inSession && Array.isArray(engineState.lastRow?.strikes) && engineState.lastRow.strikes.length) {
+    source = engineState.lastRow;
+  } else {
+    source = await fetchLatestRowWithStrikes(dateKey);
+  }
+  if (!source?.strikes?.length) {
+    return stripStrikes(displayRow);
+  }
+  const captureMinutes = Number(source.minutes);
+  const prev =
+    Number.isFinite(captureMinutes)
+      ? await getPreviousRow(engineState.symbol, dateKey, captureMinutes)
+      : null;
+  return {
+    ...stripStrikes(displayRow),
+    spotPrice: displayRow.spotPrice ?? source.spotPrice,
+    atm: displayRow.atm ?? source.atm,
+    callOiTotal: displayRow.callOiTotal ?? source.callOiTotal,
+    putOiTotal: displayRow.putOiTotal ?? source.putOiTotal,
+    dayCallChgOi: displayRow.dayCallChgOi ?? source.dayCallChgOi,
+    dayPutChgOi: displayRow.dayPutChgOi ?? source.dayPutChgOi,
+    topCallChgStrike: displayRow.topCallChgStrike ?? source.topCallChgStrike,
+    topCallChgOi: displayRow.topCallChgOi ?? source.topCallChgOi,
+    topPutChgStrike: displayRow.topPutChgStrike ?? source.topPutChgStrike,
+    topPutChgOi: displayRow.topPutChgOi ?? source.topPutChgOi,
+    dominantSide: displayRow.dominantSide ?? source.dominantSide,
+    dominantStrike: displayRow.dominantStrike ?? source.dominantStrike,
+    dominantOi: displayRow.dominantOi ?? source.dominantOi,
+    oiMigration: displayRow.oiMigration ?? source.oiMigration,
+    strikes: source.strikes,
+    prevStrikes: Array.isArray(prev?.strikes) ? prev.strikes : [],
+    strikeCaptureTime: source.time,
+  };
 }
 
 async function getStatus() {
@@ -495,7 +590,34 @@ async function listTodayRows() {
     }
   }
 
-  return { ...status, rows, displayRow };
+  displayRow = await enrichDisplayRow(displayRow, clock.dateKey, { inSession: status.inSession });
+  const spotForLive = Number(displayRow?.spotPrice);
+  const liveContext = await getLiveMarketContext(spotForLive);
+  if (displayRow) {
+    const callOi = Number(displayRow.callOiTotal);
+    const putOi = Number(displayRow.putOiTotal);
+    liveContext.spot = Number.isFinite(spotForLive) ? spotForLive : null;
+    liveContext.atm = Number.isFinite(Number(displayRow.atm)) ? Number(displayRow.atm) : null;
+    liveContext.callOiTotal = Number.isFinite(callOi) ? callOi : null;
+    liveContext.putOiTotal = Number.isFinite(putOi) ? putOi : null;
+    liveContext.pcr =
+      Number.isFinite(callOi) && callOi > 0 && Number.isFinite(putOi) ? putOi / callOi : null;
+    liveContext.dayCallChgOi = Number.isFinite(Number(displayRow.dayCallChgOi))
+      ? Number(displayRow.dayCallChgOi)
+      : null;
+    liveContext.dayPutChgOi = Number.isFinite(Number(displayRow.dayPutChgOi))
+      ? Number(displayRow.dayPutChgOi)
+      : null;
+    if (displayRow.expiry) {
+      const exp = new Date(`${String(displayRow.expiry).slice(0, 10)}T15:30:00+05:30`);
+      const today = new Date(`${clock.dateKey}T12:00:00+05:30`);
+      if (!Number.isNaN(exp.getTime()) && !Number.isNaN(today.getTime())) {
+        liveContext.expiryDays = Math.max(0, Math.ceil((exp - today) / 86400000));
+      }
+    }
+  }
+
+  return { ...status, rows, displayRow, liveContext };
 }
 
 function computeHeaderSignal(rows, displayRow) {

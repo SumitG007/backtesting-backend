@@ -53,6 +53,17 @@ const oiFlowMinuteRowSchema = new mongoose.Schema(
     chngInDir: { type: Number, default: null },
     /** Bull | Bear | Neutral */
     sentiment: { type: String, default: null },
+    /** Interval top |ΔOI| strike on Call / Put side (ATM window). */
+    topCallChgStrike: { type: Number, default: null },
+    topCallChgOi: { type: Number, default: null },
+    topPutChgStrike: { type: Number, default: null },
+    topPutChgOi: { type: Number, default: null },
+    /** Strike with largest |interval ΔOI| this minute. */
+    dominantSide: { type: String, default: null },
+    dominantStrike: { type: Number, default: null },
+    dominantOi: { type: Number, default: null },
+    /** up | down | flat — dominant strike vs prior minute. */
+    oiMigration: { type: String, default: null },
     expiry: { type: String, default: null },
     fetchOk: { type: Boolean, default: true },
     error: { type: String, default: null },
