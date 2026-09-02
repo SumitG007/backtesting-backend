@@ -2,6 +2,7 @@ const {
   loginWithCredentials,
   getAuthStatus,
   verifyAccessToken,
+  verifyPasswordForUser,
 } = require('../services/adminAuthService');
 // login with credentials
 async function postLogin(req, res) {
@@ -45,4 +46,17 @@ function postLogout(_req, res) {
   return res.json({ ok: true, message: 'Logged out — discard token on client' });
 }
 
-module.exports = { postLogin, getAuthConfig, getMe, postLogout };
+async function postVerifyPassword(req, res) {
+  try {
+    const password = req.body?.password;
+    const result = await verifyPasswordForUser(req.user?.email, password);
+    if (!result.ok) {
+      return res.status(401).json({ ok: false, error: result.error });
+    }
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message || String(error) });
+  }
+}
+
+module.exports = { postLogin, getAuthConfig, getMe, postLogout, postVerifyPassword };

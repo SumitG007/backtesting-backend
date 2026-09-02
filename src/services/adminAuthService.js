@@ -123,10 +123,31 @@ async function getAuthStatus() {
   };
 }
 
+async function verifyPasswordForUser(email, password) {
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const plainPassword = String(password || '');
+  if (!normalizedEmail || !plainPassword) {
+    return { ok: false, error: 'Password is required' };
+  }
+
+  const admin = await PlatformAdmin.findOne({ key: SINGLETON_KEY }).lean();
+  if (!admin || admin.email !== normalizedEmail) {
+    return { ok: false, error: 'Invalid password' };
+  }
+
+  const match = await bcrypt.compare(plainPassword, admin.passwordHash);
+  if (!match) {
+    return { ok: false, error: 'Invalid password' };
+  }
+
+  return { ok: true };
+}
+
 module.exports = {
   syncAdminFromEnv,
   loginWithCredentials,
   verifyAccessToken,
+  verifyPasswordForUser,
   getPublicAuthConfig,
   getAuthStatus,
   readAdminEmailFromEnv,

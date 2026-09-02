@@ -9,7 +9,7 @@ const {
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
 } = require('../controllers/backtestController');
-const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
+const { postLogin, getAuthConfig, getMe, postLogout, postVerifyPassword } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
 const {
   getStatus: getLiveStatus,
@@ -81,6 +81,7 @@ router.post('/auth/login', postLogin);
 router.get('/auth/config', getAuthConfig);
 router.get('/auth/me', getMe);
 router.post('/auth/logout', postLogout);
+router.post('/auth/verify-password', postVerifyPassword);
 router.get('/dhan/token-status', getDhanTokenStatus);
 router.post('/dhan/access-token', postDhanAccessToken);
 router.get('/data/candles', getCandles);
