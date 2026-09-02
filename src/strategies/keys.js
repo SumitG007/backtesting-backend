@@ -12,6 +12,8 @@ const MANUAL_CONSOLE_LIVE_KEY = 'manual_console_live';
 const MANUAL_OI_AUTO_LIVE_KEY = 'manual_oi_auto_live';
 /** OI Flow Tracker signal store key (paper auto-trade removed). */
 const OI_FLOW_TRACKER_LIVE_KEY = 'oi_flow_tracker_live';
+/** OI Wall Reaction — 1 trade/day · wall touch + price reaction · OI Flow tape. */
+const OI_WALL_REACTION_LIVE_KEY = 'oi_wall_reaction_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -21,4 +23,5 @@ module.exports = {
   MANUAL_CONSOLE_LIVE_KEY,
   MANUAL_OI_AUTO_LIVE_KEY,
   OI_FLOW_TRACKER_LIVE_KEY,
+  OI_WALL_REACTION_LIVE_KEY,
 };

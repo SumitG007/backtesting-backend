@@ -99,6 +99,23 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** OI Wall Reaction — 1 trade/day · OI Flow wall touch + price reaction. */
+    oiWallReactionEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '10:30' },
+      tradeToTime: { type: String, default: '13:00' },
+      eodExitTime: { type: String, default: '15:15' },
+      targetPoints: { type: Number, default: 21 },
+      stopLossPoints: { type: Number, default: 7 },
+      proximityPoints: { type: Number, default: 20 },
+      minWallRatio: { type: Number, default: 2 },
+      matchBarsRequired: { type: Number, default: 2 },
+      minStreak: { type: Number, default: 3 },
+      skipWritingPin: { type: Boolean, default: true },
+      perTradeCost: { type: Number, default: 0 },
+    },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
       enabled: { type: Boolean, default: true },

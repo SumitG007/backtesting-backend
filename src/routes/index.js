@@ -56,6 +56,14 @@ const {
   postManualOiAutoClose,
 } = require('../controllers/manualOiAutoController');
 const {
+  getOiWallReactionStatus,
+  getOiWallReactionBook,
+  getOiWallReactionTrades,
+  postOiWallReactionEnabled,
+  patchOiWallReactionSettings,
+  postOiWallReactionClose,
+} = require('../controllers/oiWallReactionController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
@@ -124,6 +132,13 @@ router.get('/manual-oi-auto/trades', getManualOiAutoTrades);
 router.post('/manual-oi-auto/enabled', postManualOiAutoEnabled);
 router.patch('/manual-oi-auto/settings', patchManualOiAutoSettings);
 router.post('/manual-oi-auto/close', postManualOiAutoClose);
+
+router.get('/oi-wall-reaction/status', getOiWallReactionStatus);
+router.get('/oi-wall-reaction/book', getOiWallReactionBook);
+router.get('/oi-wall-reaction/trades', getOiWallReactionTrades);
+router.post('/oi-wall-reaction/enabled', postOiWallReactionEnabled);
+router.patch('/oi-wall-reaction/settings', patchOiWallReactionSettings);
+router.post('/oi-wall-reaction/close', postOiWallReactionClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);

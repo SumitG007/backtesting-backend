@@ -47,6 +47,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiWallReaction = require('./services/oiWallReactionEngine');
+    await oiWallReaction.ensureEngineRunning();
+  } catch (err) {
+    console.warn('OI Wall Reaction engine boot:', err.message);
+  }
+
+  try {
     const oiFlow = require('./services/oiFlowMinuteEngine');
     const boot = oiFlow.ensureEngineRunning();
     if (boot.ok) {
