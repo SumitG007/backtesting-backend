@@ -8,6 +8,8 @@ const {
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
+  getOrBreakMeta,
+  postOrBreakRun,
 } = require('../controllers/backtestController');
 const { postLogin, getAuthConfig, getMe, postLogout } = require('../controllers/authController');
 const { postDhanAccessToken, getDhanTokenStatus } = require('../controllers/dhanTokenController');
@@ -90,6 +92,8 @@ router.post('/strategy2/validation', postStrategyShortStraddleValidation);
 router.post('/strategy2/validation-year', postStrategyShortStraddleValidationYear);
 router.get('/strategy2/runs/:runId/trades', getStrategyShortStraddleRunTrades);
 router.get('/strategy2/runs/:runId/validation', getStrategyShortStraddleValidation);
+router.get('/or-break/meta', getOrBreakMeta);
+router.post('/or-break/run', postOrBreakRun);
 // Paper live (real market data, simulated fills in DB)
 router.get('/live/:strategyId/status', getLiveStatus);
 router.get('/live/:strategyId/meta', getLiveMeta);

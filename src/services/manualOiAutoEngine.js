@@ -43,7 +43,7 @@ const DEFAULT_SETTINGS = {
   stopLossPoints: 15,
   proximityPoints: 20,
   minOiRatio: 1.2,
-  cooldownSeconds: 90,
+  cooldownSeconds: 60,
   perTradeCost: 0,
 };
 
@@ -416,7 +416,7 @@ function normalizeSettings(raw = {}) {
   s.stopLossPoints = Math.max(1, Number(s.stopLossPoints) || 15);
   s.proximityPoints = Math.max(5, Number(s.proximityPoints) || 20);
   s.minOiRatio = Math.max(1.05, Math.min(3, Number(s.minOiRatio) || 1.2));
-  s.cooldownSeconds = Math.max(30, Math.floor(Number(s.cooldownSeconds) || 90));
+  s.cooldownSeconds = Math.max(30, Math.floor(Number(s.cooldownSeconds) || 60));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:30');
   s.tradeToTime = String(s.tradeToTime || '13:00');
@@ -824,7 +824,7 @@ async function tryEnter(signal, board) {
   }
   if (isEod(clock.minutes, engineState.settings.eodExitTime)) return;
 
-  const cooldownSec = Math.max(30, Number(engineState.settings.cooldownSeconds) || 90);
+  const cooldownSec = Math.max(30, Number(engineState.settings.cooldownSeconds) || 60);
   const sinceExit = await secondsSinceLastExit();
   if (sinceExit < cooldownSec) {
     engineState.lastEntryDebug = {

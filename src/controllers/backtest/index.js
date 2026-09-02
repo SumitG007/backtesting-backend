@@ -10,6 +10,7 @@ const {
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
 } = require('./intradayTierHandlers');
+const { getOrBreakMeta, postOrBreakRun } = require('./orBreakHandlers');
 
 module.exports = {
   health,
@@ -20,4 +21,6 @@ module.exports = {
   getStrategyShortStraddleValidation,
   postStrategyShortStraddleValidation,
   postStrategyShortStraddleValidationYear,
+  getOrBreakMeta,
+  postOrBreakRun,
 };
