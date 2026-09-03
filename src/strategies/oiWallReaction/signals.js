@@ -1,9 +1,8 @@
 /**
  * OI Wall Reaction — OI wall map + price reaction at touch + sentiment confirm.
  *
- * Note: Call/Put "Match" on the same bar is structurally rare/impossible
- * (same price move → opposite act tones). Confirmation uses:
- *   supportive act for direction + sentiment streak + price hold/reject.
+ * Confirmation uses supportive act for direction + flow-bias streak + price hold/reject.
+ * Call/Put Match is possible when both sides share the same bias (standard put tones).
  */
 const { findOiWalls } = require('../../utils/oiFlowStrikeAnalytics');
 const { computeBuildupOverall, enrichMinuteBars } = require('../../utils/oiFlowActs');

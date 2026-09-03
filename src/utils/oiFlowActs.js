@@ -26,10 +26,11 @@ function classifyPutAct(priceUp, oiChg) {
   if (!Number.isFinite(oiChg) || oiChg === 0 || priceUp == null) {
     return { label: '—', tone: 'flat' };
   }
-  if (priceUp && oiChg > 0) return { label: 'Writing', tone: 'bear' };
-  if (!priceUp && oiChg > 0) return { label: 'Buying', tone: 'bull' };
-  if (priceUp && oiChg < 0) return { label: 'Long unwind', tone: 'bear' };
-  return { label: 'Short cover', tone: 'bull' };
+  // Standard put OI: long put build = bear, put writing = bull.
+  if (priceUp && oiChg > 0) return { label: 'Writing', tone: 'bull' };
+  if (!priceUp && oiChg > 0) return { label: 'Buying', tone: 'bear' };
+  if (priceUp && oiChg < 0) return { label: 'Long unwind', tone: 'bull' };
+  return { label: 'Short cover', tone: 'bear' };
 }
 
 function actMatchLabel(callTone, putTone) {
