@@ -64,6 +64,14 @@ const {
   postOiWallReactionClose,
 } = require('../controllers/oiWallReactionController');
 const {
+  getFutDoiWallStatus,
+  getFutDoiWallBook,
+  getFutDoiWallTrades,
+  postFutDoiWallEnabled,
+  patchFutDoiWallSettings,
+  postFutDoiWallClose,
+} = require('../controllers/futDoiWallController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
@@ -140,6 +148,13 @@ router.get('/oi-wall-reaction/trades', getOiWallReactionTrades);
 router.post('/oi-wall-reaction/enabled', postOiWallReactionEnabled);
 router.patch('/oi-wall-reaction/settings', patchOiWallReactionSettings);
 router.post('/oi-wall-reaction/close', postOiWallReactionClose);
+
+router.get('/fut-doi-wall/status', getFutDoiWallStatus);
+router.get('/fut-doi-wall/book', getFutDoiWallBook);
+router.get('/fut-doi-wall/trades', getFutDoiWallTrades);
+router.post('/fut-doi-wall/enabled', postFutDoiWallEnabled);
+router.patch('/fut-doi-wall/settings', patchFutDoiWallSettings);
+router.post('/fut-doi-wall/close', postFutDoiWallClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);

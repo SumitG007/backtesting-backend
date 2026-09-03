@@ -54,6 +54,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const futDoiWall = require('./services/futDoiWallEngine');
+    await futDoiWall.ensureEngineRunning();
+  } catch (err) {
+    console.warn('FUT ΔOI Wall engine boot:', err.message);
+  }
+
+  try {
     const oiFlow = require('./services/oiFlowMinuteEngine');
     const boot = oiFlow.ensureEngineRunning();
     if (boot.ok) {

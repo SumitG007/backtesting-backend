@@ -116,6 +116,28 @@ const liveWalletSchema = new mongoose.Schema(
       skipWritingPin: { type: Boolean, default: true },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** FUT ΔOI Wall V1 — ADX + 20 DMA · 1.5× wall · 1 ITM. */
+    futDoiWallEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:45' },
+      tradeToTime: { type: String, default: '13:00' },
+      eodExitTime: { type: String, default: '15:15' },
+      targetPoints: { type: Number, default: 16 },
+      stopLossPoints: { type: Number, default: 8 },
+      proximityPoints: { type: Number, default: 20 },
+      entryDistancePoints: { type: Number, default: 10 },
+      minOiRatio: { type: Number, default: 1.5 },
+      adxEntryThreshold: { type: Number, default: 25 },
+      adxWatchThreshold: { type: Number, default: 20 },
+      dmaPeriod: { type: Number, default: 20 },
+      consecutiveWinsCap: { type: Number, default: 7 },
+      nearExpiryDays: { type: Number, default: 10 },
+      nearExpiryMinAdx: { type: Number, default: 30 },
+      cooldownSeconds: { type: Number, default: 60 },
+      perTradeCost: { type: Number, default: 0 },
+    },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
       enabled: { type: Boolean, default: true },
