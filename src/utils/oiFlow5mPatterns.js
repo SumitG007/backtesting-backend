@@ -1,11 +1,13 @@
 /**
- * Closed 5m OI Flow bars → CALL BUY / PUT BUY pattern tests.
- * Live rules (from today research): CALL = E, PUT = B.
+ * Closed interval OI Flow bars → CALL BUY / PUT BUY pattern tests.
+ * Live Signal column uses LIVE_STEP (15m closed bars).
  */
 const { intervalOiFromRows } = require('./oiFlowIntervalOi');
 
 const SESSION_FROM = 9 * 60 + 15;
 const STEP_5M = 5;
+/** Live tracker Signal column — closed bar interval. */
+const LIVE_STEP = 15;
 
 function classifyCallAct(priceUp, oiChg) {
   if (!Number.isFinite(oiChg) || oiChg === 0 || priceUp == null) {
@@ -192,7 +194,18 @@ function build5mBars(rows, step = STEP_5M) {
       deltaPcr,
       oiVelocity,
       oiMigration: row.oiMigration || null,
+      topCallStrike: Number.isFinite(Number(row.topCallChgStrike))
+        ? Number(row.topCallChgStrike)
+        : null,
+      topPutStrike: Number.isFinite(Number(row.topPutChgStrike))
+        ? Number(row.topPutChgStrike)
+        : null,
+      dominantStrike: Number.isFinite(Number(row.dominantStrike))
+        ? Number(row.dominantStrike)
+        : null,
+      dominantSide: row.dominantSide || null,
       streak: 0,
+      strengthStreak: 0,
       strength: null,
     });
   }
@@ -213,11 +226,17 @@ function build5mBars(rows, step = STEP_5M) {
       oiMigration: cur.oiMigration,
       intervalMin: step,
     });
+    const lab = cur.strength?.label || 'Neutral';
+    if (prev && prev.strength?.label === lab && lab !== 'Neutral') {
+      cur.strengthStreak = (prev.strengthStreak || 1) + 1;
+    } else {
+      cur.strengthStreak = lab === 'Neutral' ? 0 : 1;
+    }
   }
   return enriched;
 }
 
-/** First matching LIVE pattern on a closed 5m bar, or null. */
+/** First matching LIVE pattern on a closed bar, or null. */
 function matchLivePattern(bar) {
   if (!bar) return null;
   for (const pattern of LIVE_PATTERNS) {
@@ -235,16 +254,23 @@ function matchLivePattern(bar) {
   return null;
 }
 
+function isClosedLiveMinutes(minutes, step = LIVE_STEP) {
+  return matchesInterval(Number(minutes), step);
+}
+
+/** @deprecated use isClosedLiveMinutes */
 function isClosed5mMinutes(minutes) {
-  return matchesInterval(Number(minutes), STEP_5M);
+  return isClosedLiveMinutes(minutes, LIVE_STEP);
 }
 
 module.exports = {
   SESSION_FROM,
   STEP_5M,
+  LIVE_STEP,
   LIVE_PATTERNS,
   build5mBars,
   matchLivePattern,
   isClosed5mMinutes,
+  isClosedLiveMinutes,
   matchesInterval,
 };

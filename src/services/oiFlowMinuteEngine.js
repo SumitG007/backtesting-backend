@@ -22,10 +22,10 @@ const { compactStrikes, intervalOiFromRows } = require('../utils/oiFlowIntervalO
 const { analyticsFromStrikes } = require('../utils/oiFlowStrikeAnalytics');
 const { getFutureLtp } = require('./dhanLiveService');
 const {
-  detectLive5mPatternSignal,
-  ensureToday5mPatternSignalsBackfilled,
-  list5mPatternSignals,
-} = require('./oiFlow5mPatternSignalStore');
+  detectLivePlaybookEntry,
+  monitorOpenPlaybookTrade,
+  ensurePlaybookBook,
+} = require('./oiFlowPlaybookStore');
 
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
@@ -171,7 +171,17 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
     engineState.lastMinutes = minutes;
     engineState.lastRow = existing;
     try {
-      await detectLive5mPatternSignal({
+      const spot = Number(existing.spotPrice);
+      if (Number.isFinite(spot)) {
+        await monitorOpenPlaybookTrade({
+          symbol: engineState.symbol,
+          dateKey,
+          spot,
+          minutes,
+          time,
+        });
+      }
+      await detectLivePlaybookEntry({
         symbol: engineState.symbol,
         dateKey,
         minutes,
@@ -238,13 +248,32 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
       engineState.lastRow = saved;
       engineState.lastFetchedAt = saved.fetchedAt;
       engineState.lastError = null;
-      // Closed 5m bar → detect CALL/PUT BUY pattern and persist.
+      // Playbook: monitor open + detect new 15m entry.
       try {
-        await detectLive5mPatternSignal({
+        const spot = Number(saved.spotPrice);
+        if (Number.isFinite(spot)) {
+          await monitorOpenPlaybookTrade({
+            symbol: engineState.symbol,
+            dateKey,
+            spot,
+            minutes,
+            time,
+          });
+        }
+        await detectLivePlaybookEntry({
           symbol: engineState.symbol,
           dateKey,
           minutes,
         });
+        if (Number.isFinite(spot)) {
+          await monitorOpenPlaybookTrade({
+            symbol: engineState.symbol,
+            dateKey,
+            spot,
+            minutes,
+            time,
+          });
+        }
       } catch (sigErr) {
         engineState.lastError = sigErr.message;
       }
@@ -320,9 +349,19 @@ async function tick() {
     }
 
     if (engineState.lastMinutes === minutes && engineState.lastRow?.fetchOk) {
-      // Still try pattern detect if this minute closes a 5m (backfill may have missed).
       try {
-        await detectLive5mPatternSignal({
+        const spot = Number(engineState.lastRow.spotPrice);
+        const time = formatHhmm(minutes);
+        if (Number.isFinite(spot)) {
+          await monitorOpenPlaybookTrade({
+            symbol: engineState.symbol,
+            dateKey,
+            spot,
+            minutes,
+            time,
+          });
+        }
+        await detectLivePlaybookEntry({
           symbol: engineState.symbol,
           dateKey,
           minutes,
@@ -626,14 +665,15 @@ async function listTodayRows() {
 
   displayRow = await enrichDisplayRow(displayRow, clock.dateKey, { inSession: status.inSession });
 
-  // Morning→now 5m CALL/PUT pattern signals (Mongo). Auto-backfill if empty/stale.
-  let patternSignals = { dateKey: clock.dateKey, callCount: 0, putCount: 0, signals: [] };
+  // 15m E/B playbook book (open + today's closed). Backfill if empty.
+  let playbook = null;
   try {
-    await ensureToday5mPatternSignalsBackfilled(clock.dateKey, {
+    playbook = await ensurePlaybookBook(clock.dateKey, {
       symbol: engineState.symbol,
-    });
-    patternSignals = await list5mPatternSignals(clock.dateKey, {
-      symbol: engineState.symbol,
+      spot: Number(displayRow?.spotPrice),
+      minutes: clock.minutes,
+      time: formatHhmm(clock.minutes),
+      allowLiveEntry: Boolean(status.inSession),
     });
   } catch (sigErr) {
     engineState.lastError = sigErr.message;
@@ -665,7 +705,7 @@ async function listTodayRows() {
     }
   }
 
-  return { ...status, rows, displayRow, liveContext, patternSignals };
+  return { ...status, rows, displayRow, liveContext, playbook };
 }
 
 function computeHeaderSignal(rows, displayRow) {
