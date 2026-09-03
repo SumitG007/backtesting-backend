@@ -165,25 +165,6 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
   if (existing?.fetchOk && !forceRetry) {
     engineState.lastMinutes = minutes;
     engineState.lastRow = existing;
-    try {
-      const spot = Number(existing.spotPrice);
-      if (Number.isFinite(spot)) {
-        await monitorOpenPlaybookTrade({
-          symbol: engineState.symbol,
-          dateKey,
-          spot,
-          minutes,
-          time,
-        });
-      }
-      await detectLivePlaybookEntry({
-        symbol: engineState.symbol,
-        dateKey,
-        minutes,
-      });
-    } catch (sigErr) {
-      engineState.lastError = sigErr.message;
-    }
     return existing;
   }
 
@@ -243,35 +224,8 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
       engineState.lastRow = saved;
       engineState.lastFetchedAt = saved.fetchedAt;
       engineState.lastError = null;
-      // Playbook: monitor open + detect new 15m entry.
-      try {
-        const spot = Number(saved.spotPrice);
-        if (Number.isFinite(spot)) {
-          await monitorOpenPlaybookTrade({
-            symbol: engineState.symbol,
-            dateKey,
-            spot,
-            minutes,
-            time,
-          });
-        }
-        await detectLivePlaybookEntry({
-          symbol: engineState.symbol,
-          dateKey,
-          minutes,
-        });
-        if (Number.isFinite(spot)) {
-          await monitorOpenPlaybookTrade({
-            symbol: engineState.symbol,
-            dateKey,
-            spot,
-            minutes,
-            time,
-          });
-        }
-      } catch (sigErr) {
-        engineState.lastError = sigErr.message;
-      }
+      listTodayCache.atMs = 0;
+      listTodayCache.payload = null;
       return saved;
     } catch (err) {
       lastErr = err;
@@ -344,26 +298,6 @@ async function tick() {
     }
 
     if (engineState.lastMinutes === minutes && engineState.lastRow?.fetchOk) {
-      try {
-        const spot = Number(engineState.lastRow.spotPrice);
-        const time = formatHhmm(minutes);
-        if (Number.isFinite(spot)) {
-          await monitorOpenPlaybookTrade({
-            symbol: engineState.symbol,
-            dateKey,
-            spot,
-            minutes,
-            time,
-          });
-        }
-        await detectLivePlaybookEntry({
-          symbol: engineState.symbol,
-          dateKey,
-          minutes,
-        });
-      } catch (sigErr) {
-        engineState.lastError = sigErr.message;
-      }
       return;
     }
 
@@ -454,6 +388,9 @@ const OI_FLOW_TODAY_SELECT =
 
 const FUT_CACHE_MS = 4000;
 const futCache = { ltp: null, fetchedAt: 0 };
+/** Short TTL so header + page + paper engines share one tape read. */
+const LIST_TODAY_CACHE_MS = 2000;
+const listTodayCache = { atMs: 0, payload: null };
 
 function stripStrikes(row) {
   if (!row || typeof row !== 'object') return row;
@@ -588,6 +525,11 @@ async function getStatus() {
 }
 
 async function listTodayRows() {
+  const now = Date.now();
+  if (listTodayCache.payload && now - listTodayCache.atMs < LIST_TODAY_CACHE_MS) {
+    return listTodayCache.payload;
+  }
+
   const clock = getIstClock(new Date());
   const rows = await OiFlowMinuteRow.find({
     symbol: engineState.symbol,
@@ -686,7 +628,10 @@ async function listTodayRows() {
     }
   }
 
-  return { ...status, rows, displayRow, liveContext };
+  const payload = { ...status, rows, displayRow, liveContext };
+  listTodayCache.atMs = now;
+  listTodayCache.payload = payload;
+  return payload;
 }
 
 function computeHeaderSignal(rows, displayRow) {
