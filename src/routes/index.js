@@ -77,6 +77,8 @@ const {
   getOiFlowHeaderSignal,
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
+  getOiFlow5mPatternSignals,
+  postOiFlow5mPatternSignalsBackfill,
 } = require('../controllers/oiFlowController');
 const {
   getLiquidityOiChaseChart,
@@ -161,6 +163,8 @@ router.get('/oi-flow/today', getOiFlowToday);
 router.get('/oi-flow/header-signal', getOiFlowHeaderSignal);
 router.get('/oi-flow/signals', getOiFlowSignals);
 router.post('/oi-flow/signals/backfill', postOiFlowSignalsBackfill);
+router.get('/oi-flow/5m-pattern-signals', getOiFlow5mPatternSignals);
+router.post('/oi-flow/5m-pattern-signals/backfill', postOiFlow5mPatternSignalsBackfill);
 
 router.get('/liquidity-oi-chase/chart', getLiquidityOiChaseChart);
 

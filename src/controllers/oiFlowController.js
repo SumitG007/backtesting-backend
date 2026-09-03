@@ -3,6 +3,10 @@ const {
   listLiveSignals,
   forceBackfillLiveSignalsFromMinutes,
 } = require('../services/oiFlowLiveSignalStore');
+const {
+  backfill5mPatternSignals,
+  list5mPatternSignals,
+} = require('../services/oiFlow5mPatternSignalStore');
 const { getIstClock } = require('../utils/dateTime');
 
 async function getOiFlowStatus(_req, res) {
@@ -56,10 +60,36 @@ async function postOiFlowSignalsBackfill(req, res) {
   }
 }
 
+async function getOiFlow5mPatternSignals(req, res) {
+  try {
+    const clock = getIstClock(new Date());
+    const raw = String(req.query.date || '').trim();
+    const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : clock.dateKey;
+    const data = await list5mPatternSignals(dateKey);
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function postOiFlow5mPatternSignalsBackfill(req, res) {
+  try {
+    const clock = getIstClock(new Date());
+    const raw = String(req.body?.date || req.query?.date || '').trim();
+    const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : clock.dateKey;
+    const data = await backfill5mPatternSignals(dateKey, { source: 'backfill' });
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 module.exports = {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
+  getOiFlow5mPatternSignals,
+  postOiFlow5mPatternSignalsBackfill,
 };

@@ -21,6 +21,11 @@ const {
 const { compactStrikes, intervalOiFromRows } = require('../utils/oiFlowIntervalOi');
 const { analyticsFromStrikes } = require('../utils/oiFlowStrikeAnalytics');
 const { getFutureLtp } = require('./dhanLiveService');
+const {
+  detectLive5mPatternSignal,
+  ensureToday5mPatternSignalsBackfilled,
+  list5mPatternSignals,
+} = require('./oiFlow5mPatternSignalStore');
 
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
@@ -165,6 +170,15 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
   if (existing?.fetchOk && !forceRetry) {
     engineState.lastMinutes = minutes;
     engineState.lastRow = existing;
+    try {
+      await detectLive5mPatternSignal({
+        symbol: engineState.symbol,
+        dateKey,
+        minutes,
+      });
+    } catch (sigErr) {
+      engineState.lastError = sigErr.message;
+    }
     return existing;
   }
 
@@ -224,6 +238,16 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
       engineState.lastRow = saved;
       engineState.lastFetchedAt = saved.fetchedAt;
       engineState.lastError = null;
+      // Closed 5m bar → detect CALL/PUT BUY pattern and persist.
+      try {
+        await detectLive5mPatternSignal({
+          symbol: engineState.symbol,
+          dateKey,
+          minutes,
+        });
+      } catch (sigErr) {
+        engineState.lastError = sigErr.message;
+      }
       return saved;
     } catch (err) {
       lastErr = err;
@@ -296,6 +320,16 @@ async function tick() {
     }
 
     if (engineState.lastMinutes === minutes && engineState.lastRow?.fetchOk) {
+      // Still try pattern detect if this minute closes a 5m (backfill may have missed).
+      try {
+        await detectLive5mPatternSignal({
+          symbol: engineState.symbol,
+          dateKey,
+          minutes,
+        });
+      } catch (sigErr) {
+        engineState.lastError = sigErr.message;
+      }
       return;
     }
 
@@ -591,6 +625,20 @@ async function listTodayRows() {
   }
 
   displayRow = await enrichDisplayRow(displayRow, clock.dateKey, { inSession: status.inSession });
+
+  // Morning→now 5m CALL/PUT pattern signals (Mongo). Auto-backfill if empty/stale.
+  let patternSignals = { dateKey: clock.dateKey, callCount: 0, putCount: 0, signals: [] };
+  try {
+    await ensureToday5mPatternSignalsBackfilled(clock.dateKey, {
+      symbol: engineState.symbol,
+    });
+    patternSignals = await list5mPatternSignals(clock.dateKey, {
+      symbol: engineState.symbol,
+    });
+  } catch (sigErr) {
+    engineState.lastError = sigErr.message;
+  }
+
   const spotForLive = Number(displayRow?.spotPrice);
   const liveContext = await getLiveMarketContext(spotForLive);
   if (displayRow) {
@@ -617,7 +665,7 @@ async function listTodayRows() {
     }
   }
 
-  return { ...status, rows, displayRow, liveContext };
+  return { ...status, rows, displayRow, liveContext, patternSignals };
 }
 
 function computeHeaderSignal(rows, displayRow) {
