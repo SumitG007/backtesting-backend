@@ -21,11 +21,6 @@ const {
 const { compactStrikes, intervalOiFromRows } = require('../utils/oiFlowIntervalOi');
 const { analyticsFromStrikes } = require('../utils/oiFlowStrikeAnalytics');
 const { getFutureLtp } = require('./dhanLiveService');
-const {
-  detectLivePlaybookEntry,
-  monitorOpenPlaybookTrade,
-  ensurePlaybookBook,
-} = require('./oiFlowPlaybookStore');
 
 const SYMBOL = 'NIFTY';
 const SESSION_FROM = 9 * 60 + 15; // 09:15
@@ -665,20 +660,6 @@ async function listTodayRows() {
 
   displayRow = await enrichDisplayRow(displayRow, clock.dateKey, { inSession: status.inSession });
 
-  // 15m E/B playbook book (open + today's closed). Backfill if empty.
-  let playbook = null;
-  try {
-    playbook = await ensurePlaybookBook(clock.dateKey, {
-      symbol: engineState.symbol,
-      spot: Number(displayRow?.spotPrice),
-      minutes: clock.minutes,
-      time: formatHhmm(clock.minutes),
-      allowLiveEntry: Boolean(status.inSession),
-    });
-  } catch (sigErr) {
-    engineState.lastError = sigErr.message;
-  }
-
   const spotForLive = Number(displayRow?.spotPrice);
   const liveContext = await getLiveMarketContext(spotForLive);
   if (displayRow) {
@@ -705,7 +686,7 @@ async function listTodayRows() {
     }
   }
 
-  return { ...status, rows, displayRow, liveContext, playbook };
+  return { ...status, rows, displayRow, liveContext };
 }
 
 function computeHeaderSignal(rows, displayRow) {

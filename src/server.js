@@ -61,6 +61,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiFlowEb = require('./services/oiFlowEbEngine');
+    await oiFlowEb.ensureEngineRunning();
+  } catch (err) {
+    console.warn('OI Flow E/B engine boot:', err.message);
+  }
+
+  try {
     const oiFlow = require('./services/oiFlowMinuteEngine');
     const boot = oiFlow.ensureEngineRunning();
     if (boot.ok) {

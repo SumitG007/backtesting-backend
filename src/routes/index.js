@@ -72,13 +72,19 @@ const {
   postFutDoiWallClose,
 } = require('../controllers/futDoiWallController');
 const {
+  getOiFlowEbStatus,
+  getOiFlowEbBook,
+  getOiFlowEbTrades,
+  postOiFlowEbEnabled,
+  patchOiFlowEbSettings,
+  postOiFlowEbClose,
+} = require('../controllers/oiFlowEbController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
   getOiFlowSignals,
   postOiFlowSignalsBackfill,
-  getOiFlowPlaybook,
-  postOiFlowPlaybookBackfill,
 } = require('../controllers/oiFlowController');
 const {
   getLiquidityOiChaseChart,
@@ -158,13 +164,18 @@ router.post('/fut-doi-wall/enabled', postFutDoiWallEnabled);
 router.patch('/fut-doi-wall/settings', patchFutDoiWallSettings);
 router.post('/fut-doi-wall/close', postFutDoiWallClose);
 
+router.get('/oi-flow-eb/status', getOiFlowEbStatus);
+router.get('/oi-flow-eb/book', getOiFlowEbBook);
+router.get('/oi-flow-eb/trades', getOiFlowEbTrades);
+router.post('/oi-flow-eb/enabled', postOiFlowEbEnabled);
+router.patch('/oi-flow-eb/settings', patchOiFlowEbSettings);
+router.post('/oi-flow-eb/close', postOiFlowEbClose);
+
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
 router.get('/oi-flow/header-signal', getOiFlowHeaderSignal);
 router.get('/oi-flow/signals', getOiFlowSignals);
 router.post('/oi-flow/signals/backfill', postOiFlowSignalsBackfill);
-router.get('/oi-flow/playbook', getOiFlowPlaybook);
-router.post('/oi-flow/playbook/backfill', postOiFlowPlaybookBackfill);
 
 router.get('/liquidity-oi-chase/chart', getLiquidityOiChaseChart);
 

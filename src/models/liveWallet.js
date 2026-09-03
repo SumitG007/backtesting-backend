@@ -138,6 +138,26 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownSeconds: { type: Number, default: 60 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** OI Flow E/B — closed 15m Strong Bull/Bear + Spot Δ + Match. */
+    oiFlowEbEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:45' },
+      tradeToTime: { type: String, default: '14:30' },
+      eodExitTime: { type: String, default: '15:15' },
+      stepMin: { type: Number, default: 15 },
+      callMinSpotDelta: { type: Number, default: 5 },
+      riskMin: { type: Number, default: 6 },
+      riskMax: { type: Number, default: 12 },
+      slBufferPts: { type: Number, default: 2 },
+      rMult: { type: Number, default: 1.5 },
+      tpCap: { type: Number, default: 15 },
+      maxHoldMin: { type: Number, default: 30 },
+      dailyTarget: { type: Number, default: 15 },
+      dailyLoss: { type: Number, default: 16 },
+      perTradeCost: { type: Number, default: 0 },
+    },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
       enabled: { type: Boolean, default: true },
