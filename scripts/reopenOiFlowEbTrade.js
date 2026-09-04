@@ -1,5 +1,5 @@
 /**
- * One-off: reopen today's closed OI Flow E/B CE trade with fixed option SL/TP (no max hold).
+ * Reopen OI Flow E/B CE trade — option SL/TP only (no TIME / EOD).
  * Usage: node scripts/reopenOiFlowEbTrade.js
  */
 require('dotenv').config();
@@ -17,7 +17,6 @@ async function main() {
   if (!uri) throw new Error('MONGODB_URI missing');
   await mongoose.connect(uri);
 
-  // Prefer the original 10:00 CE fill; else latest closed CE for this strategy today
   let trade = await LivePaperTrade.findOne({
     strategyKey: OI_FLOW_EB_LIVE_KEY,
     optionType: 'CE',
@@ -68,16 +67,20 @@ async function main() {
   delete snap.stopSpot;
   delete snap.targetSpot;
   delete snap.maxHoldMin;
+  delete snap.rawRisk;
+  delete snap.clamped;
+  delete snap.candleHigh;
+  delete snap.candleLow;
 
   trade.status = 'OPEN';
-  trade.exitPremium = undefined;
-  trade.exitSpot = undefined;
+  trade.set('exitPremium', undefined);
+  trade.set('exitSpot', undefined);
   trade.exitTime = null;
-  trade.exitDateKey = undefined;
-  trade.reason = undefined;
-  trade.finalValue = undefined;
-  trade.pnl = undefined;
-  trade.pnlPct = undefined;
+  trade.set('exitDateKey', undefined);
+  trade.set('reason', undefined);
+  trade.set('finalValue', undefined);
+  trade.set('pnl', undefined);
+  trade.set('pnlPct', undefined);
   trade.openPositionMark = null;
   trade.openPositionMarkAt = null;
   trade.combinedStopSpot = null;
@@ -87,7 +90,10 @@ async function main() {
   trade.stopLossMode = 'POINTS';
   trade.targetMode = 'POINTS';
   trade.signalSnapshot = snap;
-  trade.notes = [trade.notes, `reopened; optionSL=${OPTION_SL}; optionTP=${OPTION_TP}; noMaxHold`]
+  trade.notes = [
+    trade.notes,
+    `reopened ${new Date().toISOString()}; strikeOptionSL=${stopLossPremium}; strikeOptionTP=${targetPremium}; exits=SL|TP_only`,
+  ]
     .filter(Boolean)
     .join(' | ')
     .slice(0, 500);
@@ -139,18 +145,22 @@ async function main() {
   wallet.totalTrades = closed.length;
   wallet.wins = wins;
   wallet.losses = losses;
+  wallet.markModified('oiFlowEbEngineSettings');
   await wallet.save();
 
+  // Verify OPEN stuck
+  const verify = await LivePaperTrade.findById(trade._id).lean();
   console.log(JSON.stringify({
-    ok: true,
+    ok: verify.status === 'OPEN' && !verify.exitTime,
     tradeId: String(trade._id),
-    status: trade.status,
-    strike: trade.strike,
-    entryPremium: trade.entryPremium,
-    stopLossPremium: trade.stopLossPremium,
-    targetPremium: trade.targetPremium,
-    entryTime: trade.entryTime,
-    reasonWas: 'cleared',
+    status: verify.status,
+    reason: verify.reason || null,
+    exitTime: verify.exitTime,
+    strike: verify.strike,
+    entryPremium: verify.entryPremium,
+    stopLossPremium: verify.stopLossPremium,
+    targetPremium: verify.targetPremium,
+    exitRules: 'STRIKE_OPTION_LTP_SL_OR_TP_ONLY',
   }, null, 2));
 
   await mongoose.disconnect();
