@@ -1,17 +1,12 @@
 /**
  * OI Flow E/B — closed 15m Strong Bull/Bear + Spot Δ + Match → ATM CE/PE.
+ * Risk is fixed option-premium SL/TP from settings (default 12 / 15). Spot is entry trigger only.
  */
 const {
   build5mBars,
   matchLivePattern,
   attachCandleRange,
   STEP,
-  BUF,
-  RISK_MIN,
-  RISK_MAX,
-  R_MULT,
-  TP_CAP,
-  MAX_HOLD,
   DAILY_TARGET,
   DAILY_LOSS,
   round,
@@ -39,12 +34,14 @@ function buildSignalFromOiFlow(tape, settings = {}, opts = {}) {
   const step = Math.max(5, Math.floor(Number(settings.stepMin) || STEP));
   const callMinSpotDelta = Number(settings.callMinSpotDelta);
   const minCallDelta = Number.isFinite(callMinSpotDelta) ? callMinSpotDelta : 5;
-  const riskMin = Math.max(1, Number(settings.riskMin) || RISK_MIN);
-  const riskMax = Math.max(riskMin, Number(settings.riskMax) || RISK_MAX);
-  const buffer = Math.max(0, Number(settings.slBufferPts) || BUF);
-  const rMult = Math.max(0.5, Number(settings.rMult) || R_MULT);
-  const tpCap = Math.max(1, Number(settings.tpCap) || TP_CAP);
-  const maxHoldMin = Math.max(5, Number(settings.maxHoldMin) || MAX_HOLD);
+  const optionSlPts = Math.max(
+    1,
+    Number(settings.optionSlPts) || Number(settings.riskMax) || 12,
+  );
+  const optionTpPts = Math.max(
+    1,
+    Number(settings.optionTpPts) || Number(settings.tpCap) || 15,
+  );
   const dailyTarget = Math.max(1, Number(settings.dailyTarget) || DAILY_TARGET);
   const dailyLoss = Math.max(1, Number(settings.dailyLoss) || DAILY_LOSS);
 
@@ -66,8 +63,8 @@ function buildSignalFromOiFlow(tape, settings = {}, opts = {}) {
     patternName: null,
     barTime: null,
     barMinutes: null,
-    riskPts: null,
-    rewardPts: null,
+    riskPts: optionSlPts,
+    rewardPts: optionTpPts,
     stopSpot: null,
     targetSpot: null,
     dayPts: Number.isFinite(Number(opts.dayPts)) ? Number(opts.dayPts) : 0,
@@ -78,12 +75,8 @@ function buildSignalFromOiFlow(tape, settings = {}, opts = {}) {
     headline: null,
     rules: {
       stepMin: step,
-      riskMin,
-      riskMax,
-      buffer,
-      rMult,
-      tpCap,
-      maxHoldMin,
+      optionSlPts,
+      optionTpPts,
       dailyTarget,
       dailyLoss,
       callMinSpotDelta: minCallDelta,
@@ -218,22 +211,6 @@ function buildSignalFromOiFlow(tape, settings = {}, opts = {}) {
     const side = match.side;
     const optionType = side === 'CALL' ? 'CE' : 'PE';
     const entry = Number(lastClosed.spot);
-    const high = Number(lastClosed.high);
-    const low = Number(lastClosed.low);
-    const rawRisk = side === 'CALL' ? entry - (low - buffer) : high + buffer - entry;
-    const risk = Math.min(riskMax, Math.max(riskMin, rawRisk));
-    const reward = Math.min(tpCap, risk * rMult);
-    const stopSpot = side === 'CALL' ? entry - risk : entry + risk;
-    const targetSpot = side === 'CALL' ? entry + reward : entry - reward;
-    const lv = {
-      entry: round(entry, 1),
-      rawRisk: round(rawRisk),
-      risk: round(risk),
-      reward: round(reward),
-      stopSpot: round(stopSpot, 1),
-      targetSpot: round(targetSpot, 1),
-      clamped: rawRisk > riskMax || rawRisk < riskMin,
-    };
 
     return {
       ...base,
@@ -251,20 +228,20 @@ function buildSignalFromOiFlow(tape, settings = {}, opts = {}) {
       decision: match.decision,
       barTime: lastClosed.time,
       barMinutes: lastClosed.minutes,
-      candleHigh: round(high, 1),
-      candleLow: round(low, 1),
-      riskPts: lv.risk,
-      rewardPts: lv.reward,
-      rawRisk: lv.rawRisk,
-      stopSpot: lv.stopSpot,
-      targetSpot: lv.targetSpot,
-      clamped: lv.clamped,
-      entrySpot: lv.entry,
+      candleHigh: round(Number(lastClosed.high), 1),
+      candleLow: round(Number(lastClosed.low), 1),
+      riskPts: optionSlPts,
+      rewardPts: optionTpPts,
+      optionSlPts,
+      optionTpPts,
+      stopSpot: null,
+      targetSpot: null,
+      clamped: false,
+      entrySpot: round(entry, 1),
       checks: checks.map((c) => ({ ...c, ok: true })),
-      detail: `${match.decision} · ATM ${atm} · SL ${lv.risk} TP ${lv.reward}`,
+      detail: `${match.decision} · ATM ${atm} · option SL −${optionSlPts} TP +${optionTpPts}`,
       why: `${match.patternName} on closed ${lastClosed.time}`,
       headline: `${optionType} · ${atm}`,
-      maxHoldMin,
     };
   }
 

@@ -1,14 +1,15 @@
 /**
  * OI Flow E/B — paper live.
  * Closed 15m Strong Bull/Bear + Spot Δ + Match → ATM CE/PE.
- * Spot SL (candle±buffer clamp 6–12) · TP 1.5R cap +15 · hold 30m · day +15/−16 · 1 open.
+ * Option premium SL/TP from settings (default −12 / +15) · day +15/−16 · 1 open.
+ * Spot is for entry signal only — not for stop/target. No max-hold time exit.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
 const { OI_FLOW_EB_LIVE_KEY } = require('../strategies/keys');
 const { buildSignalFromOiFlow } = require('../strategies/oiFlowEb/signals');
 const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
-const { ptsFromSpot, round } = require('../utils/oiFlowPlaybook');
+const { round } = require('../utils/oiFlowPlaybook');
 const {
   getAtmPremiums,
   getCurrentLotSize,
@@ -34,12 +35,9 @@ const DEFAULT_SETTINGS = {
   eodExitTime: '15:15',
   stepMin: 15,
   callMinSpotDelta: 5,
-  riskMin: 6,
-  riskMax: 12,
-  slBufferPts: 2,
-  rMult: 1.5,
-  tpCap: 15,
-  maxHoldMin: 30,
+  /** Fixed option-premium stop / target (pts from entry LTP). */
+  optionSlPts: 12,
+  optionTpPts: 15,
   dailyTarget: 15,
   dailyLoss: 16,
   perTradeCost: 0,
@@ -110,18 +108,30 @@ function normalizeSettings(raw = {}) {
   s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.stepMin = Math.max(5, Math.min(60, Math.floor(Number(s.stepMin) || 15)));
   s.callMinSpotDelta = Math.max(0, Number(s.callMinSpotDelta) || 5);
-  s.riskMin = Math.max(1, Number(s.riskMin) || 6);
-  s.riskMax = Math.max(s.riskMin, Number(s.riskMax) || 12);
-  s.slBufferPts = Math.max(0, Number(s.slBufferPts) || 2);
-  s.rMult = Math.max(0.5, Math.min(3, Number(s.rMult) || 1.5));
-  s.tpCap = Math.max(1, Number(s.tpCap) || 15);
-  s.maxHoldMin = Math.max(5, Math.min(120, Math.floor(Number(s.maxHoldMin) || 30)));
+  // Migrate legacy spot candle risk fields → fixed option pts if needed
+  const legacySl = Number(s.riskMax);
+  const legacyTp = Number(s.tpCap);
+  s.optionSlPts = Math.max(
+    1,
+    Number(s.optionSlPts) || (Number.isFinite(legacySl) ? legacySl : 12) || 12,
+  );
+  s.optionTpPts = Math.max(
+    1,
+    Number(s.optionTpPts) || (Number.isFinite(legacyTp) ? legacyTp : 15) || 15,
+  );
   s.dailyTarget = Math.max(1, Number(s.dailyTarget) || 15);
   s.dailyLoss = Math.max(1, Number(s.dailyLoss) || 16);
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '14:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');
+  // Drop legacy spot-risk / max-hold keys from runtime settings
+  delete s.riskMin;
+  delete s.riskMax;
+  delete s.slBufferPts;
+  delete s.rMult;
+  delete s.tpCap;
+  delete s.maxHoldMin;
   return s;
 }
 
@@ -183,12 +193,12 @@ async function syncOpenTradeId() {
 function favorPtsFromTrade(trade) {
   const snap = trade?.signalSnapshot || {};
   if (Number.isFinite(Number(snap.favorPts))) return Number(snap.favorPts);
-  const side = String(trade.optionType).toUpperCase() === 'PE' ? 'PUT' : 'CALL';
-  const entry = Number(trade.entrySpot);
-  const exit = Number(trade.exitSpot);
-  if (!Number.isFinite(entry) || !Number.isFinite(exit)) return 0;
-  const pts = ptsFromSpot(side, entry, exit);
-  return Number.isFinite(pts) ? round(pts) : 0;
+  const entryPrem = Number(trade.entryPremium);
+  const exitPrem = Number(trade.exitPremium);
+  if (Number.isFinite(entryPrem) && Number.isFinite(exitPrem)) {
+    return round(exitPrem - entryPrem);
+  }
+  return 0;
 }
 
 async function refreshDayBook(dateKey) {
@@ -329,10 +339,12 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, futFallback = n
     const exitSpot = pickExitSpot(resolved, trade, futFallback);
 
     const snap = { ...(trade.signalSnapshot || {}) };
-    const side = String(trade.optionType).toUpperCase() === 'PE' ? 'PUT' : 'CALL';
     let pts = favorPts;
-    if (!Number.isFinite(pts) && Number.isFinite(Number(trade.entrySpot)) && Number.isFinite(exitSpot)) {
-      pts = ptsFromSpot(side, Number(trade.entrySpot), exitSpot);
+    if (!Number.isFinite(pts)) {
+      const entryPrem = Number(trade.entryPremium);
+      if (Number.isFinite(entryPrem) && Number.isFinite(safeExit)) {
+        pts = round(safeExit - entryPrem);
+      }
     }
     const r = String(reason || '').toUpperCase();
     if (r === 'STOP_LOSS' && Number.isFinite(Number(snap.riskPts))) pts = -Math.abs(Number(snap.riskPts));
@@ -394,15 +406,15 @@ async function checkOpenTrade(signal, tape) {
   const spotNow = Number.isFinite(spotFallback) ? spotFallback : null;
 
   if (Number.isFinite(mark.optionLtp) && mark.optionLtp > 0) {
-    const side = String(open.optionType).toUpperCase() === 'PE' ? 'PUT' : 'CALL';
+    const entryPrem = Number(open.entryPremium);
     const favor =
-      Number.isFinite(spotNow) && Number.isFinite(Number(open.entrySpot))
-        ? ptsFromSpot(side, Number(open.entrySpot), spotNow)
+      Number.isFinite(entryPrem)
+        ? round(Number(mark.optionLtp) - entryPrem)
         : null;
     open.openPositionMark = {
       optionLtp: Number(mark.optionLtp.toFixed(2)),
       spot: Number.isFinite(spotNow) && spotNow > 0 ? spotNow : null,
-      favorPts: Number.isFinite(favor) ? round(favor) : null,
+      favorPts: Number.isFinite(favor) ? favor : null,
       source: mark.source,
       at: new Date().toISOString(),
     };
@@ -424,68 +436,47 @@ async function checkOpenTrade(signal, tape) {
   if (heldMs < MIN_HOLD_MS) return;
 
   const snap = open.signalSnapshot || {};
-  const side = String(open.optionType).toUpperCase() === 'PE' ? 'PUT' : 'CALL';
-  const stop = Number(open.combinedStopSpot ?? snap.stopSpot);
-  const target = Number(open.targetSpot ?? snap.targetSpot);
-  const maxHold = Math.max(5, Number(snap.maxHoldMin || engineState.settings.maxHoldMin) || 30);
-  const entryMinutes = Number(snap.entryMinutes ?? snap.barMinutes);
-  const holdMin = Number.isFinite(entryMinutes)
-    ? Math.max(0, clock.minutes - entryMinutes)
-    : Math.floor(heldMs / 60000);
+  const entryPrem = Number(open.entryPremium);
+  const ltp = Number(mark.optionLtp);
+  const slPts = Math.max(
+    1,
+    Number(snap.riskPts) || Number(engineState.settings.optionSlPts) || 12,
+  );
+  const tpPts = Math.max(
+    1,
+    Number(snap.rewardPts) || Number(engineState.settings.optionTpPts) || 15,
+  );
+  const stopPrem = Number.isFinite(Number(open.stopLossPremium))
+    ? Number(open.stopLossPremium)
+    : Number.isFinite(entryPrem)
+      ? entryPrem - slPts
+      : null;
+  const targetPrem = Number.isFinite(Number(open.targetPremium))
+    ? Number(open.targetPremium)
+    : Number.isFinite(entryPrem)
+      ? entryPrem + tpPts
+      : null;
 
-  if (Number.isFinite(spotNow) && spotNow > 0) {
-    if (side === 'CALL') {
-      if (Number.isFinite(stop) && spotNow <= stop) {
-        await finalizeTrade(open, {
-          exitPremium: mark.optionLtp,
-          mark,
-          reason: 'STOP_LOSS',
-          futFallback: spotNow,
-          favorPts: -Math.abs(Number(snap.riskPts) || 0),
-        });
-        return;
-      }
-      if (Number.isFinite(target) && spotNow >= target) {
-        await finalizeTrade(open, {
-          exitPremium: mark.optionLtp,
-          mark,
-          reason: 'TARGET',
-          futFallback: spotNow,
-          favorPts: Math.abs(Number(snap.rewardPts) || 0),
-        });
-        return;
-      }
-    } else {
-      if (Number.isFinite(stop) && spotNow >= stop) {
-        await finalizeTrade(open, {
-          exitPremium: mark.optionLtp,
-          mark,
-          reason: 'STOP_LOSS',
-          futFallback: spotNow,
-          favorPts: -Math.abs(Number(snap.riskPts) || 0),
-        });
-        return;
-      }
-      if (Number.isFinite(target) && spotNow <= target) {
-        await finalizeTrade(open, {
-          exitPremium: mark.optionLtp,
-          mark,
-          reason: 'TARGET',
-          futFallback: spotNow,
-          favorPts: Math.abs(Number(snap.rewardPts) || 0),
-        });
-        return;
-      }
+  if (Number.isFinite(ltp) && ltp > 0 && Number.isFinite(entryPrem)) {
+    if (Number.isFinite(stopPrem) && ltp <= stopPrem) {
+      await finalizeTrade(open, {
+        exitPremium: ltp,
+        mark,
+        reason: 'STOP_LOSS',
+        futFallback: spotNow,
+        favorPts: -slPts,
+      });
+      return;
     }
-  }
-
-  if (holdMin >= maxHold) {
-    await finalizeTrade(open, {
-      exitPremium: mark.optionLtp,
-      mark,
-      reason: 'TIME',
-      futFallback: spotNow,
-    });
+    if (Number.isFinite(targetPrem) && ltp >= targetPrem) {
+      await finalizeTrade(open, {
+        exitPremium: ltp,
+        mark,
+        reason: 'TARGET',
+        futFallback: spotNow,
+        favorPts: tpPts,
+      });
+    }
   }
 }
 
@@ -563,10 +554,10 @@ async function tryEnter(signal, tape) {
     const qty = lotSize * lots;
     const charges = Math.max(0, Number(engineState.settings.perTradeCost) || 0);
     const entrySpot = Number(signal.entrySpot || signal.spot || tape?.displayRow?.spotPrice);
-    const riskPts = Number(signal.riskPts);
-    const rewardPts = Number(signal.rewardPts);
-    const stopSpot = Number(signal.stopSpot);
-    const targetSpot = Number(signal.targetSpot);
+    const slPts = Math.max(1, Number(signal.riskPts) || Number(engineState.settings.optionSlPts) || 12);
+    const tpPts = Math.max(1, Number(signal.rewardPts) || Number(engineState.settings.optionTpPts) || 15);
+    const stopLossPremium = Number((entryPremium - slPts).toFixed(2));
+    const targetPremium = Number((entryPremium + tpPts).toFixed(2));
 
     const tradeDoc = await LivePaperTrade.create({
       strategyKey: STRATEGY_KEY,
@@ -587,15 +578,15 @@ async function tryEnter(signal, tape) {
       investedAmount: Number((entryPremium * qty).toFixed(2)),
       creditReceived: 0,
       charges: Number(charges.toFixed(2)),
-      stopLossPremium: null,
-      targetPremium: null,
+      stopLossPremium,
+      targetPremium,
       stopLossMode: 'POINTS',
       targetMode: 'POINTS',
-      combinedStopSpot: Number.isFinite(stopSpot) ? stopSpot : null,
-      targetSpot: Number.isFinite(targetSpot) ? targetSpot : null,
+      combinedStopSpot: null,
+      targetSpot: null,
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
       entryReason: `OI Flow E/B ${signal.decision || optionType} · ${signal.barTime || ''} · ${signal.patternName || ''}`,
-      notes: `oi_flow_eb; pattern=${signal.patternId}; risk=${riskPts}; reward=${rewardPts}; entrySrc=${entrySource}`,
+      notes: `oi_flow_eb; pattern=${signal.patternId}; optionSL=${slPts}; optionTP=${tpPts}; entrySrc=${entrySource}`,
       signalSnapshot: {
         patternId: signal.patternId,
         patternName: signal.patternName,
@@ -606,15 +597,12 @@ async function tryEnter(signal, tape) {
         barTime: signal.barTime,
         barMinutes: signal.barMinutes,
         entryMinutes: signal.barMinutes,
-        riskPts,
-        rewardPts,
-        rawRisk: signal.rawRisk,
-        stopSpot,
-        targetSpot,
-        clamped: signal.clamped,
-        maxHoldMin: Number(engineState.settings.maxHoldMin) || 30,
-        candleHigh: signal.candleHigh,
-        candleLow: signal.candleLow,
+        riskPts: slPts,
+        rewardPts: tpPts,
+        optionSlPts: slPts,
+        optionTpPts: tpPts,
+        stopLossPremium,
+        targetPremium,
       },
     });
 
