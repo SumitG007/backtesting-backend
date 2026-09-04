@@ -2,7 +2,7 @@
  * OI Flow E/B — paper live.
  * Closed 15m Strong Bull/Bear + Spot Δ + Match → ATM CE/PE.
  * Option premium SL/TP on that strike (default −12 / +15) · day +15/−16 new entries · 1 open.
- * Spot is for entry signal only. Open trades exit only on strike option SL or TP.
+ * Spot is for entry signal only. Open trades exit on strike option SL/TP or EOD.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
@@ -422,8 +422,18 @@ async function checkOpenTrade(signal, tape) {
     await open.save();
   }
 
-  // Exits only on this strike's option LTP vs fixed premium SL / TP.
-  // No max-hold TIME exit. No spot SL/TP. No EOD force-close on open trades.
+  if (isEod(clock.minutes, engineState.settings.eodExitTime)) {
+    await finalizeTrade(open, {
+      exitPremium: mark.optionLtp,
+      mark,
+      reason: 'DAY_CLOSE',
+      futFallback: spotNow,
+    });
+    return;
+  }
+
+  // Exits on this strike's option LTP vs fixed premium SL / TP (or EOD above).
+  // No max-hold TIME exit. No spot SL/TP.
   const heldMs = Date.now() - new Date(open.entryTime).getTime();
   if (heldMs < MIN_HOLD_MS) return;
 
