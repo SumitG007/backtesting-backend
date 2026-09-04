@@ -2,7 +2,8 @@ const mongoose = require('mongoose');
 
 /**
  * One OI-flow snapshot per IST minute for the current trading day only (LOCKED).
- * Engine deletes older dateKeys when a new session day starts.
+ * Engine deletes older dateKeys when a new weekday starts.
+ * Friday is retained through Sat/Sun and removed on Monday.
  *
  * Focus = Change in OI (ΔOI), not absolute standing OI.
  * dayCallChgOi / dayPutChgOi = ATM ± 3 day-so-far ΔOI (our "total OI")

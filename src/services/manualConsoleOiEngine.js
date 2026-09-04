@@ -2,10 +2,12 @@
  * Manual Console OI tape — own collection + calc + API surface.
  * Mirrored from OI Flow minute captures today; can diverge later without
  * changing OI Flow Tracker (/api/oi-flow/* · OiFlowMinuteRow).
+ *
+ * Weekend: keep Friday tape through Sat/Sun; purge on Monday with other days.
  */
 const ManualConsoleOiMinuteRow = require('../models/manualConsoleOiMinuteRow');
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
-const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
+const { getIstClock, isWeekendDateKey, oiTapeDateKey, oiTapeRetainDateKeys } = require('../utils/dateTime');
 const { isNseCashTradingDay } = require('./nseHolidayService');
 const { buildManualConsoleOiBars } = require('../utils/manualConsoleOiCalc');
 
@@ -67,14 +69,17 @@ async function mirrorRow(row) {
   return saved;
 }
 
-async function purgeOtherDays(dateKey) {
+async function purgeOtherDays(todayKey) {
+  const keep = oiTapeRetainDateKeys(todayKey);
+  if (!keep.length) return 0;
+  // Weekend: keep Friday. Monday+: wipe Friday with other old days.
   const result = await ManualConsoleOiMinuteRow.deleteMany({
-    dateKey: { $ne: dateKey },
+    dateKey: { $nin: keep },
   });
   return result?.deletedCount || 0;
 }
 
-/** One-time / catch-up seed from OI Flow Tracker collection for today. */
+/** One-time / catch-up seed from OI Flow Tracker collection for the tape day. */
 async function seedFromOiFlowIfNeeded(dateKey, symbol = SYMBOL) {
   const mcCount = await ManualConsoleOiMinuteRow.countDocuments({ symbol, dateKey });
   const trackerCount = await OiFlowMinuteRow.countDocuments({ symbol, dateKey });
@@ -92,24 +97,27 @@ async function seedFromOiFlowIfNeeded(dateKey, symbol = SYMBOL) {
 async function listToday({ intervalMin = 5 } = {}) {
   const step = Math.max(1, Math.min(60, Math.floor(Number(intervalMin) || 5)));
   const clock = getIstClock(new Date());
-  const cacheKey = `${clock.dateKey}:${step}`;
+  const tapeDateKey = oiTapeDateKey(clock.dateKey);
+  const weekendHold = isWeekendDateKey(clock.dateKey) && tapeDateKey !== clock.dateKey;
+  const cacheKey = `${clock.dateKey}:${tapeDateKey}:${step}`;
   const now = Date.now();
   if (cache.payload && cache.key === cacheKey && now - cache.atMs < LIST_CACHE_MS) {
     return cache.payload;
   }
 
   await purgeOtherDays(clock.dateKey);
-  await seedFromOiFlowIfNeeded(clock.dateKey, SYMBOL);
+  await seedFromOiFlowIfNeeded(tapeDateKey, SYMBOL);
 
   const rows = await ManualConsoleOiMinuteRow.find({
     symbol: SYMBOL,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
   })
     .sort({ minutes: 1 })
     .lean();
 
-  const inSession = clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO;
   const isTradingDay = !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey);
+  const inSession =
+    isTradingDay && clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO;
   const lastOk = [...rows].reverse().find((r) => r.fetchOk) || rows[rows.length - 1] || null;
 
   let displayRow = lastOk;
@@ -133,7 +141,9 @@ async function listToday({ intervalMin = 5 } = {}) {
     desk: 'manual_console',
     collection: 'manual_console_oi_minute_rows',
     symbol: SYMBOL,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
+    calendarDateKey: clock.dateKey,
+    weekendHold,
     nowTime: formatHhmm(clock.minutes),
     intervalMin: step,
     inSession,

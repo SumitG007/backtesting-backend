@@ -1,7 +1,8 @@
 /**
  * OI Flow minute recorder — current trading day only (LOCKED).
  * Captures every IST minute from 09:15 → 15:30.
- * On a new day, previous dateKeys are deleted (one day in DB).
+ * On a new weekday, previous dateKeys are deleted — except Fri is kept
+ * through Sat/Sun and purged when Monday (next session week) starts.
  *
  * Focus = Change in OI (ΔOI), not absolute standing OI.
  * dayCallChgOi / dayPutChgOi = ATM ± 3 day-so-far ΔOI (our "total OI")
@@ -12,7 +13,13 @@
  * callOiTotal / putOiTotal   = absolute OI stored for reference only
  */
 const OiFlowMinuteRow = require('../models/oiFlowMinuteRow');
-const { getIstClock, isWeekendDateKey, sleep } = require('../utils/dateTime');
+const {
+  getIstClock,
+  isWeekendDateKey,
+  oiTapeDateKey,
+  oiTapeRetainDateKeys,
+  sleep,
+} = require('../utils/dateTime');
 const { isNseCashTradingDay } = require('./nseHolidayService');
 const {
   getNearestWeeklyExpiry,
@@ -135,13 +142,16 @@ function deriveFields({
   };
 }
 
-async function purgeOtherDays(dateKey) {
+async function purgeOtherDays(todayKey) {
+  const keep = oiTapeRetainDateKeys(todayKey);
+  if (!keep.length) return 0;
+  // Weekday: keep today only. Weekend: keep last Friday (do not wipe Fri on Sat/Sun).
   const result = await OiFlowMinuteRow.deleteMany({
-    dateKey: { $ne: dateKey },
+    dateKey: { $nin: keep },
   });
   try {
     const manualOi = require('./manualConsoleOiEngine');
-    await manualOi.purgeOtherDays(dateKey);
+    await manualOi.purgeOtherDays(todayKey);
   } catch {
     /* best-effort */
   }
@@ -500,20 +510,22 @@ async function enrichDisplayRow(displayRow, dateKey, { inSession } = {}) {
 
 async function getStatus() {
   const clock = getIstClock(new Date());
+  const tapeDateKey = oiTapeDateKey(clock.dateKey);
+  const weekendHold = isWeekendDateKey(clock.dateKey) && tapeDateKey !== clock.dateKey;
   const count = await OiFlowMinuteRow.countDocuments({
     symbol: engineState.symbol,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
   });
-  let lastRow = engineState.lastRow;
+  let lastRow = weekendHold ? null : engineState.lastRow;
   if (!lastRow) {
     lastRow = await OiFlowMinuteRow.findOne({
       symbol: engineState.symbol,
-      dateKey: clock.dateKey,
+      dateKey: tapeDateKey,
       fetchOk: true,
     })
       .sort({ minutes: -1 })
       .lean();
-    if (lastRow) {
+    if (lastRow && !weekendHold) {
       engineState.lastRow = lastRow;
       engineState.lastMinutes = lastRow.minutes;
       engineState.lastFetchedAt = lastRow.fetchedAt;
@@ -521,16 +533,19 @@ async function getStatus() {
   }
   const lastMinutes = lastRow?.minutes ?? null;
   const lastTime = lastRow?.time || null;
+  const isTradingDay = !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey);
   return {
     running: engineState.running,
     startedAt: engineState.startedAt,
     symbol: engineState.symbol,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
+    calendarDateKey: clock.dateKey,
+    weekendHold,
     nowTime: formatHhmm(clock.minutes),
     sessionFrom: formatHhmm(SESSION_FROM),
     sessionTo: formatHhmm(SESSION_TO),
-    inSession: clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO,
-    isTradingDay: !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey),
+    inSession: isTradingDay && clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO,
+    isTradingDay,
     rowCount: count,
     expectedRows: SESSION_TO - SESSION_FROM + 1,
     lastMinutes,
@@ -540,7 +555,7 @@ async function getStatus() {
     lastRow: lastRow || null,
     expiry: engineState.expiry,
     lookaroundStrikes: LOOKAROUND_STRIKES,
-    savedStrikes: await latestSavedStrikeNames(clock.dateKey),
+    savedStrikes: await latestSavedStrikeNames(tapeDateKey),
   };
 }
 
@@ -551,35 +566,43 @@ async function listTodayRows() {
   }
 
   const clock = getIstClock(new Date());
+  const tapeDateKey = oiTapeDateKey(clock.dateKey);
+  const weekendHold = isWeekendDateKey(clock.dateKey) && tapeDateKey !== clock.dateKey;
   const rows = await OiFlowMinuteRow.find({
     symbol: engineState.symbol,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
   })
     .select(OI_FLOW_TODAY_SELECT)
     .sort({ minutes: -1 })
     .lean();
 
   const lastRowFromDb = rows.find((r) => r.fetchOk) || rows[0] || null;
-  let lastRow = engineState.lastRow;
+  let lastRow = weekendHold ? null : engineState.lastRow;
   if (
     lastRowFromDb
     && (!lastRow?.minutes || lastRowFromDb.minutes >= lastRow.minutes)
   ) {
     lastRow = lastRowFromDb;
   }
-  const savedStrikes = await latestSavedStrikeNames(clock.dateKey);
+  const savedStrikes = await latestSavedStrikeNames(tapeDateKey);
   if (lastRow) lastRow = stripStrikes(lastRow);
+
+  const isTradingDay = !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey);
+  const inSession =
+    isTradingDay && clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO;
 
   const status = {
     running: engineState.running,
     startedAt: engineState.startedAt,
     symbol: engineState.symbol,
-    dateKey: clock.dateKey,
+    dateKey: tapeDateKey,
+    calendarDateKey: clock.dateKey,
+    weekendHold,
     nowTime: formatHhmm(clock.minutes),
     sessionFrom: formatHhmm(SESSION_FROM),
     sessionTo: formatHhmm(SESSION_TO),
-    inSession: clock.minutes >= SESSION_FROM && clock.minutes <= SESSION_TO,
-    isTradingDay: !isWeekendDateKey(clock.dateKey) && isNseCashTradingDay(clock.dateKey),
+    inSession,
+    isTradingDay,
     rowCount: rows.length,
     expectedRows: SESSION_TO - SESSION_FROM + 1,
     lastMinutes: lastRow?.minutes ?? null,
@@ -594,7 +617,7 @@ async function listTodayRows() {
 
   let displayRow = status.lastRow || rows[0] || null;
 
-  // Outside 09:15–15:30: still show last entry, Time always 15:30.
+  // Outside 09:15–15:30 (or weekend hold of Friday): show last entry, Time 15:30.
   if (!status.inSession) {
     if (displayRow) {
       displayRow = {
@@ -606,7 +629,7 @@ async function listTodayRows() {
         isLastEntry: true,
         livePreview: false,
       };
-    } else {
+    } else if (!weekendHold) {
       const preview = await buildAfterCloseLastEntry(clock, null);
       if (preview) {
         displayRow = {
@@ -620,7 +643,7 @@ async function listTodayRows() {
     }
   }
 
-  displayRow = await enrichDisplayRow(displayRow, clock.dateKey, { inSession: status.inSession });
+  displayRow = await enrichDisplayRow(displayRow, tapeDateKey, { inSession: status.inSession });
 
   const spotForLive = Number(displayRow?.spotPrice);
   const liveContext = await getLiveMarketContext(spotForLive);

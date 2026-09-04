@@ -79,6 +79,44 @@ function isWeekendDateKey(dateKey) {
   return weekday === 0 || weekday === 6;
 }
 
+/** YYYY-MM-DD ± N calendar days (UTC date math; dateKeys are IST calendar dates). */
+function addDaysToDateKey(dateKey, days) {
+  const base = parseDateOnly(dateKey);
+  if (Number.isNaN(base.getTime())) return null;
+  return formatDateOnly(addDays(base, Number(days) || 0));
+}
+
+/**
+ * Most recent Friday on or before dateKey (IST calendar).
+ * Used so Sat/Sun keep Friday OI tape until Monday.
+ */
+function lastFridayDateKey(dateKey) {
+  let key = String(dateKey || '').trim();
+  for (let i = 0; i < 7; i += 1) {
+    if (getWeekdayFromDateKey(key) === 5) return key;
+    key = addDaysToDateKey(key, -1);
+    if (!key) break;
+  }
+  return String(dateKey || '').trim() || null;
+}
+
+/**
+ * Which OI minute dateKey the tape should show / retain.
+ * Sat–Sun → last Friday; Mon–Fri → today.
+ */
+function oiTapeDateKey(todayKey) {
+  const key = String(todayKey || '').trim();
+  if (!key) return key;
+  if (isWeekendDateKey(key)) return lastFridayDateKey(key);
+  return key;
+}
+
+/** dateKeys that must survive purge for the current calendar day. */
+function oiTapeRetainDateKeys(todayKey) {
+  const keep = oiTapeDateKey(todayKey);
+  return keep ? [keep] : [];
+}
+
 function parseClockMinutes(value, fallbackMinutes) {
   const raw = String(value || '').trim();
   const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
@@ -147,11 +185,15 @@ module.exports = {
   parseDateOnly,
   formatDateOnly,
   addDays,
+  addDaysToDateKey,
   differenceInDaysInclusive,
   normalizeTimestamp,
   getIstClock,
   getWeekdayFromDateKey,
   isWeekendDateKey,
+  lastFridayDateKey,
+  oiTapeDateKey,
+  oiTapeRetainDateKeys,
   parseClockMinutes,
   istCashSession15mBucketStart,
   ist15mBucketFullyClosed,
