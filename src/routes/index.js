@@ -46,6 +46,7 @@ const {
   getManualActions,
   postManualWalletReset,
   postManualWalletTopup,
+  getManualOiFlowToday,
 } = require('../controllers/manualConsoleController');
 const {
   getManualOiAutoStatus,
@@ -132,6 +133,7 @@ router.get('/manual-console/quote', getManualQuote);
 router.get('/manual-console/chain', getManualChain);
 router.get('/manual-console/oi-board', getManualOiBoard);
 router.get('/manual-console/oi-totals', getManualOiTotals);
+router.get('/manual-console/oi-flow/today', getManualOiFlowToday);
 router.get('/manual-console/instruments', getManualInstruments);
 router.get('/manual-console/future-quote', getManualFutureQuote);
 router.post('/manual-console/orders', postManualOrder);

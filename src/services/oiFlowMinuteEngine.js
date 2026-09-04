@@ -139,6 +139,12 @@ async function purgeOtherDays(dateKey) {
   const result = await OiFlowMinuteRow.deleteMany({
     dateKey: { $ne: dateKey },
   });
+  try {
+    const manualOi = require('./manualConsoleOiEngine');
+    await manualOi.purgeOtherDays(dateKey);
+  } catch {
+    /* best-effort */
+  }
   return result?.deletedCount || 0;
 }
 
@@ -220,6 +226,13 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
         { upsert: true, new: true, setDefaultsOnInsert: true },
       ).lean();
 
+      try {
+        const manualOi = require('./manualConsoleOiEngine');
+        await manualOi.mirrorRow(saved);
+      } catch {
+        /* Manual Console mirror is best-effort */
+      }
+
       engineState.lastMinutes = minutes;
       engineState.lastRow = saved;
       engineState.lastFetchedAt = saved.fetchedAt;
@@ -264,6 +277,13 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
     { $set: failed },
     { upsert: true, new: true, setDefaultsOnInsert: true },
   ).lean();
+
+  try {
+    const manualOi = require('./manualConsoleOiEngine');
+    await manualOi.mirrorRow(saved);
+  } catch {
+    /* best-effort */
+  }
 
   engineState.lastMinutes = minutes;
   engineState.lastRow = saved;

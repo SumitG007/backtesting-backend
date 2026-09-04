@@ -222,6 +222,18 @@ async function postManualWalletTopup(req, res) {
   }
 }
 
+/** Manual Console OI tape — own collection + calc (not /api/oi-flow). */
+async function getManualOiFlowToday(req, res) {
+  try {
+    const manualOi = require('../services/manualConsoleOiEngine');
+    const intervalMin = Number(req.query?.interval ?? req.query?.intervalMin ?? 5);
+    const data = await manualOi.listToday({ intervalMin });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
 module.exports = {
   getManualConsoleStatus,
   getManualExpiries,
@@ -239,4 +251,5 @@ module.exports = {
   getManualActions,
   postManualWalletReset,
   postManualWalletTopup,
+  getManualOiFlowToday,
 };
