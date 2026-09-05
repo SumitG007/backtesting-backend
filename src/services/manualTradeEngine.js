@@ -60,11 +60,62 @@ function parseIsTesting(value) {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
 }
 
-async function tagLegacyOpenAsTesting() {
-  await LivePaperTrade.updateMany(
-    { strategyKey: STRATEGY_KEY, exitTime: null, isTesting: { $exists: false } },
-    { $set: { isTesting: true } },
-  );
+/**
+ * Testing is excluded from main available cash / wallet P/L / calendar.
+ * Explicit isTesting flag wins; notes may still carry "; testing=1" for legacy rows.
+ */
+function isTestingTrade(trade) {
+  if (!trade) return false;
+  if (trade.isTesting === true) return true;
+  if (trade.isTesting === false) return false;
+  const notes = String(trade.notes || '');
+  return /testing\s*=\s*1/i.test(notes);
+}
+
+function isMainTrade(trade) {
+  return !isTestingTrade(trade);
+}
+
+/**
+ * Repair testing flags so main book never mixes testing into wallet P/L.
+ * - notes with testing=1 → isTesting true
+ * - open/closed without testing notes → isTesting false (main)
+ */
+async function repairTestingFlags() {
+  const testingNotes = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    notes: { $regex: /testing\s*=\s*1/i },
+  })
+    .select({ _id: 1, isTesting: 1, notes: 1 })
+    .lean();
+  const testingIds = testingNotes
+    .filter((t) => t.isTesting !== true)
+    .map((t) => t._id);
+
+  // Main trades: ensure explicit false so book filters stay stable.
+  const mainIds = await LivePaperTrade.find({
+    strategyKey: STRATEGY_KEY,
+    isTesting: { $exists: false },
+    notes: { $not: { $regex: /testing\s*=\s*1/i } },
+  })
+    .select({ _id: 1 })
+    .limit(5000)
+    .lean()
+    .then((rows) => rows.map((t) => t._id));
+
+  if (testingIds.length) {
+    await LivePaperTrade.updateMany(
+      { _id: { $in: testingIds }, isTesting: { $ne: true } },
+      { $set: { isTesting: true } },
+    );
+  }
+  if (mainIds.length) {
+    await LivePaperTrade.updateMany(
+      { _id: { $in: mainIds }, isTesting: { $ne: false } },
+      { $set: { isTesting: false } },
+    );
+  }
+  return { taggedTesting: testingIds.length, taggedMain: mainIds.length };
 }
 
 const engineState = {
@@ -478,8 +529,13 @@ async function ensureDepositHistoryBackfill(wallet) {
   return wallet;
 }
 
-async function recalcWalletFromTrades() {
-  const wallet = await ensureWallet();
+/**
+ * Rebuild wallet from MAIN book only.
+ * Testing trades never touch realized P/L, wins, losses, or available cash.
+ * Balance formula: starting + main realized − open main capital − pending holds
+ * (open testing capital still locked in cash, so it is included in lockedOpen).
+ */
+async function rebuildMainWalletLedger(wallet) {
   const closed = await LivePaperTrade.find({
     strategyKey: STRATEGY_KEY,
     $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
@@ -500,10 +556,12 @@ async function recalcWalletFromTrades() {
   let losses = 0;
   let grossProfit = 0;
   let grossLoss = 0;
+  let mainCount = 0;
   for (const t of closed) {
-    if (t.isTesting === true) continue;
+    if (isTestingTrade(t)) continue;
     const pnl = Number(t.pnl);
     if (!Number.isFinite(pnl)) continue;
+    mainCount += 1;
     realizedPnl += pnl;
     if (pnl > 0) {
       wins += 1;
@@ -514,8 +572,10 @@ async function recalcWalletFromTrades() {
     }
   }
 
+  // Capital reserved by open MAIN positions only (testing never locks main cash).
   let lockedOpen = 0;
   for (const t of open) {
+    if (isTestingTrade(t)) continue;
     const locked = Number(t.capitalLocked);
     if (Number.isFinite(locked) && locked > 0) lockedOpen += locked;
     else {
@@ -532,13 +592,19 @@ async function recalcWalletFromTrades() {
   wallet.realizedPnl = Number(realizedPnl.toFixed(2));
   wallet.grossProfit = Number(grossProfit.toFixed(2));
   wallet.grossLoss = Number(grossLoss.toFixed(2));
-  wallet.totalTrades = closed.filter((t) => t.isTesting !== true).length;
+  wallet.totalTrades = mainCount;
   wallet.wins = wins;
   wallet.losses = losses;
   wallet.balance = Number(Math.max(0, starting + realizedPnl - lockedOpen - heldPending).toFixed(2));
   wallet.cashLedger = true;
   await wallet.save();
   return wallet;
+}
+
+/** Keep legacy name — full rebuild of main-only cash ledger. */
+async function recalcWalletFromTrades() {
+  const wallet = await ensureWallet();
+  return rebuildMainWalletLedger(wallet);
 }
 
 async function assertMarketOpen(clock) {
@@ -929,18 +995,22 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   });
   if (capitalNeeded == null) throw new Error('Cannot estimate capital for fill');
 
-  const held = Number(order.heldAmount) || 0;
-  if (held > 0) {
-    // LIMIT hold already debited — settle difference vs actual capital.
-    const delta = Number((capitalNeeded - held).toFixed(2));
-    if (delta > 0) {
-      await debitWallet(delta, { reason: 'FILL_TOPUP' });
-    } else if (delta < 0) {
-      await creditWallet(-delta);
+  // Testing never locks main available cash.
+  const testing = parseIsTesting(order.isTesting);
+  if (!testing) {
+    const held = Number(order.heldAmount) || 0;
+    if (held > 0) {
+      // LIMIT hold already debited — settle difference vs actual capital.
+      const delta = Number((capitalNeeded - held).toFixed(2));
+      if (delta > 0) {
+        await debitWallet(delta, { reason: 'FILL_TOPUP' });
+      } else if (delta < 0) {
+        await creditWallet(-delta);
+      }
+      order.heldAmount = 0;
+    } else {
+      await debitWallet(capitalNeeded, { reason: 'FILL' });
     }
-    order.heldAmount = 0;
-  } else {
-    await debitWallet(capitalNeeded, { reason: 'FILL' });
   }
 
   const slConfigured = order.stopLossMode != null || order.stopLossPoints != null || order.stopLossPct != null || order.stopLossAmount != null;
@@ -1101,6 +1171,12 @@ async function createMarketFill(order, clock) {
 }
 
 async function holdFundsForLimitOrder(order, premium) {
+  // Testing never locks main available cash.
+  if (parseIsTesting(order.isTesting)) {
+    order.heldAmount = 0;
+    await order.save();
+    return 0;
+  }
   const qty = order.lotSize * order.lots;
   const charges = Number(order.perTradeCost || 100);
   const need = estimateCapitalRequired({
@@ -1156,20 +1232,23 @@ async function createFutureOrder(payload, clock) {
     if (limitPremium == null) throw new Error('Limit price is required for LIMIT orders');
   }
 
-  // Pre-check cash (market uses live LTP; limit uses limit price).
+  // Pre-check cash (main only — testing free).
   {
-    let px = limitPremium;
-    if (orderType === 'MARKET') {
-      const { ltp } = await getFutureLtp({ symbol, expiry: expiryDate });
-      px = ltp;
+    const isTesting = parseIsTesting(payload.isTesting);
+    if (!isTesting) {
+      let px = limitPremium;
+      if (orderType === 'MARKET') {
+        const { ltp } = await getFutureLtp({ symbol, expiry: expiryDate });
+        px = ltp;
+      }
+      const need = estimateCapitalRequired({
+        product: 'FUTURE',
+        premium: px,
+        qty: lotSize * lots,
+        charges: perTradeCost,
+      });
+      await assertSufficientBalance(need);
     }
-    const need = estimateCapitalRequired({
-      product: 'FUTURE',
-      premium: px,
-      qty: lotSize * lots,
-      charges: perTradeCost,
-    });
-    await assertSufficientBalance(need);
   }
 
   const order = await ManualPendingOrder.create({
@@ -1292,20 +1371,23 @@ async function createOrder(payload) {
     if (limitPremium == null) throw new Error('Limit premium is required for LIMIT orders');
   }
 
-  // Pre-check cash before creating the order row.
+  // Pre-check cash before creating the order row (main only — testing free).
   {
-    let px = limitPremium;
-    if (orderType === 'MARKET') {
-      const chain = await getAtmPremiums({ symbol, strike, expiry: expiryDate });
-      px = premiumFromChain(chain, optionType);
+    const isTesting = parseIsTesting(payload.isTesting);
+    if (!isTesting) {
+      let px = limitPremium;
+      if (orderType === 'MARKET') {
+        const chain = await getAtmPremiums({ symbol, strike, expiry: expiryDate });
+        px = premiumFromChain(chain, optionType);
+      }
+      const need = estimateCapitalRequired({
+        product: 'OPTION',
+        premium: px,
+        qty: lotSize * lots,
+        charges: perTradeCost,
+      });
+      await assertSufficientBalance(need);
     }
-    const need = estimateCapitalRequired({
-      product: 'OPTION',
-      premium: px,
-      qty: lotSize * lots,
-      charges: perTradeCost,
-    });
-    await assertSufficientBalance(need);
   }
 
   const order = await ManualPendingOrder.create({
@@ -1434,10 +1516,13 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   });
 
   const wallet = await ensureWallet();
-  const testing = trade.isTesting === true;
-  // Release locked capital. Testing P/L is recorded on the trade only — not wallet / calendar.
-  wallet.balance = Number((Number(wallet.balance) + locked + (testing ? 0 : pnl)).toFixed(2));
-  if (!testing) {
+  const testing = isTestingTrade(trade);
+  // Testing: return capital if it was locked, but never add main P/L.
+  // Main: release capital + add PnL to available cash.
+  if (testing) {
+    wallet.balance = Number((Number(wallet.balance) + locked).toFixed(2));
+  } else {
+    wallet.balance = Number((Number(wallet.balance) + locked + pnl).toFixed(2));
     wallet.realizedPnl = Number((Number(wallet.realizedPnl) + pnl).toFixed(2));
     wallet.totalTrades += 1;
     if (pnl > 0) {
@@ -1449,6 +1534,8 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
     }
   }
   await wallet.save();
+  // Keep durable rebuild in sync after every close (cheap vs every tick).
+  await rebuildMainWalletLedger(wallet);
   lastClosedStatsSyncAt = Date.now();
 
   await logAction({
@@ -2089,47 +2176,13 @@ async function getOiBoardTotals(opts = {}) {
 }
 
 async function syncClosedTradeStats(wallet) {
-  const closed = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
-    $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
-  })
-    .select({ pnl: 1, isTesting: 1 })
-    .lean();
-
-  let realizedPnl = 0;
-  let wins = 0;
-  let losses = 0;
-  let grossProfit = 0;
-  let grossLoss = 0;
-  let mainCount = 0;
-  for (const t of closed) {
-    if (t.isTesting === true) continue;
-    const pnl = Number(t.pnl);
-    if (!Number.isFinite(pnl)) continue;
-    mainCount += 1;
-    realizedPnl += pnl;
-    if (pnl > 0) {
-      wins += 1;
-      grossProfit += pnl;
-    } else if (pnl < 0) {
-      losses += 1;
-      grossLoss += Math.abs(pnl);
-    }
-  }
-
-  wallet.realizedPnl = Number(realizedPnl.toFixed(2));
-  wallet.grossProfit = Number(grossProfit.toFixed(2));
-  wallet.grossLoss = Number(grossLoss.toFixed(2));
-  wallet.totalTrades = mainCount;
-  wallet.wins = wins;
-  wallet.losses = losses;
-  await wallet.save();
-  return wallet;
+  // Full main-only rebuild so wallet tiles never mix testing into available cash.
+  return rebuildMainWalletLedger(wallet);
 }
 
 async function getStatus() {
   await ensureEngineRunning();
-  await tagLegacyOpenAsTesting();
+  await repairTestingFlags();
   const clock = getIstClock(new Date());
   let wallet = await ensureWallet();
   // Repair wallet profit/loss from closed book occasionally (not every poll).
@@ -2154,6 +2207,7 @@ async function getStatus() {
 
   // Overlay freshest in-memory / WS marks so /status is never stale vs Socket ticks.
   let unrealizedPnl = 0;
+  let openMainCapital = 0;
   for (const t of openTrades) {
     const id = String(t._id);
     const mem = latestMarks.get(id);
@@ -2170,18 +2224,21 @@ async function getStatus() {
       t.openPositionMarkAt = new Date(wsTick.ts);
       latestMarks.set(id, t.openPositionMark);
     }
-    unrealizedPnl += t.isTesting === true ? 0 : Number(t.openPositionMark?.unrealizedPnl) || 0;
+    // Main book only for available-cash MTM / capital summary.
+    if (isMainTrade(t)) {
+      unrealizedPnl += Number(t.openPositionMark?.unrealizedPnl) || 0;
+      const locked = Number(t.capitalLocked);
+      openMainCapital += Number.isFinite(locked) && locked > 0
+        ? locked
+        : (Number(t.investedAmount) || 0) + Math.max(0, Number(t.charges) || 0);
+    }
   }
 
   return {
     engine: getEngineSnapshot(),
     istDateKey: clock.dateKey,
     wallet: serializeWallet(wallet, {
-      openCapitalLocked: openTrades.reduce((sum, t) => {
-        const locked = Number(t.capitalLocked);
-        if (Number.isFinite(locked) && locked > 0) return sum + locked;
-        return sum + (Number(t.investedAmount) || 0) + Math.max(0, Number(t.charges) || 0);
-      }, 0),
+      openCapitalLocked: openMainCapital,
       pendingHeld: pendingOrders.reduce((sum, o) => sum + (Number(o.heldAmount) || 0), 0),
     }),
     openTrades,
@@ -2195,6 +2252,7 @@ async function getStatus() {
 }
 
 async function listTrades({ page = 1, pageSize = 50, status = 'ALL', book = 'all' } = {}) {
+  await repairTestingFlags();
   const filter = { strategyKey: STRATEGY_KEY };
   const statusQ = String(status || 'ALL').toUpperCase();
   const bookQ = String(book || 'all').toLowerCase();
@@ -2204,8 +2262,11 @@ async function listTrades({ page = 1, pageSize = 50, status = 'ALL', book = 'all
   } else if (statusQ === 'CLOSED') {
     filter.$or = [{ exitTime: { $ne: null } }, { status: 'CLOSED' }];
   }
-  if (bookQ === 'testing') filter.isTesting = true;
-  else if (bookQ === 'main') filter.isTesting = { $ne: true };
+  if (bookQ === 'testing') {
+    filter.isTesting = true;
+  } else if (bookQ === 'main') {
+    filter.isTesting = { $ne: true };
+  }
   const totalRows = await LivePaperTrade.countDocuments(filter);
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(Math.max(1, page), totalPages);
