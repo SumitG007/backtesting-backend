@@ -87,6 +87,14 @@ const {
   postOiFlowEbClose,
 } = require('../controllers/oiFlowEbController');
 const {
+  getOiFlowContinuationStatus,
+  getOiFlowContinuationBook,
+  getOiFlowContinuationTrades,
+  postOiFlowContinuationEnabled,
+  patchOiFlowContinuationSettings,
+  postOiFlowContinuationClose,
+} = require('../controllers/oiFlowContinuationController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
@@ -190,6 +198,13 @@ router.get('/oi-flow-eb/trades', getOiFlowEbTrades);
 router.post('/oi-flow-eb/enabled', postOiFlowEbEnabled);
 router.patch('/oi-flow-eb/settings', patchOiFlowEbSettings);
 router.post('/oi-flow-eb/close', postOiFlowEbClose);
+
+router.get('/oi-flow-continuation/status', getOiFlowContinuationStatus);
+router.get('/oi-flow-continuation/book', getOiFlowContinuationBook);
+router.get('/oi-flow-continuation/trades', getOiFlowContinuationTrades);
+router.post('/oi-flow-continuation/enabled', postOiFlowContinuationEnabled);
+router.patch('/oi-flow-continuation/settings', patchOiFlowContinuationSettings);
+router.post('/oi-flow-continuation/close', postOiFlowContinuationClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);

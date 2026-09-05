@@ -155,6 +155,21 @@ const liveWalletSchema = new mongoose.Schema(
       dailyLoss: { type: Number, default: 16 },
       perTradeCost: { type: Number, default: 0 },
     },
+    /** OI Flow Continuation — 5m streak + Strong + flow + ΔPCR · Nifty break · ATM. */
+    oiFlowContinuationEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:25' },
+      tradeToTime: { type: String, default: '14:45' },
+      eodExitTime: { type: String, default: '15:15' },
+      stepMin: { type: Number, default: 5 },
+      minStreak: { type: Number, default: 2 },
+      rMult: { type: Number, default: 1.5 },
+      dailyTarget: { type: Number, default: 40 },
+      dailyLoss: { type: Number, default: 40 },
+      perTradeCost: { type: Number, default: 0 },
+    },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
       enabled: { type: Boolean, default: true },

@@ -20,6 +20,8 @@ const OI_WALL_REACTION_LIVE_KEY = 'oi_wall_reaction_live';
 const FUT_DOI_WALL_LIVE_KEY = 'fut_doi_wall_live';
 /** OI Flow E/B — closed 15m Strong Bull/Bear + Spot Δ + Match · ATM paper. */
 const OI_FLOW_EB_LIVE_KEY = 'oi_flow_eb_live';
+/** OI Flow Continuation — closed 5m streak + Strong + flow + ΔPCR · Nifty break · ATM paper. */
+const OI_FLOW_CONTINUATION_LIVE_KEY = 'oi_flow_continuation_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -33,4 +35,5 @@ module.exports = {
   OI_WALL_REACTION_LIVE_KEY,
   FUT_DOI_WALL_LIVE_KEY,
   OI_FLOW_EB_LIVE_KEY,
+  OI_FLOW_CONTINUATION_LIVE_KEY,
 };
