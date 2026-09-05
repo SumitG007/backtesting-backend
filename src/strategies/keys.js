@@ -22,6 +22,8 @@ const FUT_DOI_WALL_LIVE_KEY = 'fut_doi_wall_live';
 const OI_FLOW_EB_LIVE_KEY = 'oi_flow_eb_live';
 /** OI Flow Continuation — closed 5m streak + Strong + flow + ΔPCR · Nifty break · ATM paper. */
 const OI_FLOW_CONTINUATION_LIVE_KEY = 'oi_flow_continuation_live';
+/** OI Pulse Scalp (OPS-3) — closed 5m recipe + Strong + Spot Δ · +3/−6 · time 2 bars · ATM. */
+const OI_PULSE_SCALP_LIVE_KEY = 'oi_pulse_scalp_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -36,4 +38,5 @@ module.exports = {
   FUT_DOI_WALL_LIVE_KEY,
   OI_FLOW_EB_LIVE_KEY,
   OI_FLOW_CONTINUATION_LIVE_KEY,
+  OI_PULSE_SCALP_LIVE_KEY,
 };

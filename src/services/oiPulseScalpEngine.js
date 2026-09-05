@@ -1,12 +1,12 @@
 /**
- * OI Flow Continuation — paper live.
- * Closed 5m: streak≥2 + Strong + flow + ΔPCR → arm signal H/L → Nifty break → ATM CE/PE.
- * Exit when Nifty hits signal SL or 1.5R (option closed at live premium) · EOD · 1 open.
+ * OI Pulse Scalp (OPS-3) — paper live.
+ * Closed 5m: recipe + Strong Match + Spot Δ → ATM CE/PE at bar close.
+ * Exit: Nifty +targetPts / −stopPts · time-stop N bars · EOD · 1 open · no daily cap.
  */
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
-const { OI_FLOW_CONTINUATION_LIVE_KEY } = require('../strategies/keys');
-const { buildSignalFromOiFlow } = require('../strategies/oiFlowContinuation/signals');
+const { OI_PULSE_SCALP_LIVE_KEY } = require('../strategies/keys');
+const { buildSignalFromOiFlow } = require('../strategies/oiPulseScalp/signals');
 const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
 const { round } = require('../utils/oiFlowPlaybook');
 const {
@@ -18,12 +18,12 @@ const {
   getFutureLtp,
 } = require('./dhanLiveService');
 
-const STRATEGY_KEY = OI_FLOW_CONTINUATION_LIVE_KEY;
-const WALLET_KEY = 'paper_live_oi_flow_continuation';
-const STRATEGY_ID = 'oi-flow-continuation';
+const STRATEGY_KEY = OI_PULSE_SCALP_LIVE_KEY;
+const WALLET_KEY = 'paper_live_oi_pulse_scalp';
+const STRATEGY_ID = 'oi-pulse-scalp';
 
 const LOOP_MS = 5000;
-const MIN_HOLD_MS = 10000;
+const MIN_HOLD_MS = 8000;
 
 const DEFAULT_SETTINGS = {
   enabled: true,
@@ -33,11 +33,10 @@ const DEFAULT_SETTINGS = {
   tradeToTime: '13:55',
   eodExitTime: '15:15',
   stepMin: 5,
-  minStreak: 2,
-  /** Nifty reward multiple from signal-candle risk. */
-  rMult: 1.5,
-  dailyTarget: 40,
-  dailyLoss: 40,
+  targetPts: 3,
+  stopPts: 6,
+  timeStopBars: 2,
+  maxStreak: 3,
   perTradeCost: 0,
 };
 
@@ -52,6 +51,7 @@ const engineState = {
   entryArmed: true,
   lastEntryKey: null,
   lastEntryBarMinutes: null,
+  lastRecipeKey: null,
   lastSignal: null,
   lastTapeAt: null,
   lastError: null,
@@ -62,10 +62,6 @@ const engineState = {
   expiry: null,
   dayPtsDateKey: null,
   dayPts: 0,
-  dayLocked: false,
-  dayStopReason: null,
-  /** Armed continuation setup waiting for Nifty break. */
-  pending: null,
 };
 
 function parseHhmmToMinutes(raw) {
@@ -95,7 +91,7 @@ async function ensureWallet() {
       balance: 0,
       realizedPnl: 0,
       cashLedger: false,
-      oiFlowContinuationEngineSettings: { ...DEFAULT_SETTINGS },
+      oiPulseScalpEngineSettings: { ...DEFAULT_SETTINGS },
     });
   }
   return wallet;
@@ -107,38 +103,37 @@ function normalizeSettings(raw = {}) {
   s.symbol = String(s.symbol || 'NIFTY').toUpperCase();
   s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.stepMin = Math.max(5, Math.min(60, Math.floor(Number(s.stepMin) || 5)));
-  s.minStreak = Math.max(2, Math.min(10, Math.floor(Number(s.minStreak) || 2)));
-  s.rMult = Math.max(0.5, Math.min(5, Number(s.rMult) || 1.5));
-  s.dailyTarget = Math.max(1, Number(s.dailyTarget) || 40);
-  s.dailyLoss = Math.max(1, Number(s.dailyLoss) || 40);
+  s.targetPts = Math.max(0.5, Math.min(50, Number(s.targetPts) || 3));
+  s.stopPts = Math.max(0.5, Math.min(100, Number(s.stopPts) || 6));
+  s.timeStopBars = Math.max(1, Math.min(10, Math.floor(Number(s.timeStopBars) || 2)));
+  s.maxStreak = Math.max(1, Math.min(10, Math.floor(Number(s.maxStreak) || 3)));
   s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '13:55');
   s.eodExitTime = String(s.eodExitTime || '15:15');
+  delete s.minStreak;
+  delete s.rMult;
+  delete s.dailyTarget;
+  delete s.dailyLoss;
   delete s.callMinSpotDelta;
   delete s.optionSlPts;
   delete s.optionTpPts;
-  delete s.riskMin;
-  delete s.riskMax;
-  delete s.slBufferPts;
-  delete s.tpCap;
-  delete s.maxHoldMin;
   return s;
 }
 
 async function loadSettingsFromDb() {
   const wallet = await ensureWallet();
-  engineState.settings = normalizeSettings(wallet.oiFlowContinuationEngineSettings || {});
+  engineState.settings = normalizeSettings(wallet.oiPulseScalpEngineSettings || {});
   return engineState.settings;
 }
 
 async function saveSettingsToDb(partial = {}) {
   const wallet = await ensureWallet();
   const next = normalizeSettings({
-    ...(wallet.oiFlowContinuationEngineSettings?.toObject?.() || wallet.oiFlowContinuationEngineSettings || {}),
+    ...(wallet.oiPulseScalpEngineSettings?.toObject?.() || wallet.oiPulseScalpEngineSettings || {}),
     ...partial,
   });
-  wallet.oiFlowContinuationEngineSettings = next;
+  wallet.oiPulseScalpEngineSettings = next;
   await wallet.save();
   engineState.settings = next;
   return next;
@@ -196,9 +191,8 @@ async function refreshDayBook(dateKey) {
   if (engineState.dayPtsDateKey !== dateKey) {
     engineState.dayPtsDateKey = dateKey;
     engineState.dayPts = 0;
-    engineState.dayLocked = false;
-    engineState.dayStopReason = null;
     engineState.lastEntryBarMinutes = null;
+    engineState.lastRecipeKey = null;
   }
 
   const closed = await LivePaperTrade.find({
@@ -212,10 +206,7 @@ async function refreshDayBook(dateKey) {
     .lean();
 
   let dayPts = 0;
-  let dayStopReason = null;
   let lastBar = null;
-  const dailyTarget = Number(engineState.settings.dailyTarget) || 15;
-  const dailyLoss = Number(engineState.settings.dailyLoss) || 16;
 
   for (const t of closed) {
     const snap = t.signalSnapshot || {};
@@ -226,23 +217,18 @@ async function refreshDayBook(dateKey) {
     const reward = Number(snap.rewardPts);
     if (reason === 'STOP_LOSS' && Number.isFinite(risk)) pts = -Math.abs(risk);
     if (reason === 'TARGET' && Number.isFinite(reward)) pts = Math.abs(reward);
-    dayPts = round(dayPts + pts);
-    if (!dayStopReason && dayPts >= dailyTarget) {
-      dayStopReason = `Daily target +${dailyTarget}`;
-    } else if (!dayStopReason && dayPts <= -Math.abs(dailyLoss)) {
-      dayStopReason = `Daily loss −${dailyLoss}`;
+    if (reason === 'TIME_STOP' && Number.isFinite(Number(snap.favorPts))) {
+      pts = Number(snap.favorPts);
     }
+    dayPts = round(dayPts + pts);
   }
 
   engineState.dayPts = dayPts;
-  engineState.dayLocked = Boolean(dayStopReason);
-  engineState.dayStopReason = dayStopReason;
   engineState.lastEntryBarMinutes = lastBar;
   return {
     dayPts,
-    dayLocked: engineState.dayLocked,
-    dayStopReason,
     lastEntryBarMinutes: lastBar,
+    lastRecipeKey: engineState.lastRecipeKey,
   };
 }
 
@@ -423,7 +409,7 @@ async function checkOpenTrade(signal, tape) {
     return;
   }
 
-  // Exit when Nifty spot hits signal SL / 1.5R target (option closed at live premium).
+  // Exit when Nifty spot hits +target / −stop, or time-stop after N bars.
   const heldMs = Date.now() - new Date(open.entryTime).getTime();
   if (heldMs < MIN_HOLD_MS) return;
 
@@ -432,8 +418,27 @@ async function checkOpenTrade(signal, tape) {
   const targetSpot = Number(snap.targetSpot ?? open.targetSpot);
   const riskPts = Math.abs(Number(snap.riskPts)) || null;
   const rewardPts = Math.abs(Number(snap.rewardPts)) || null;
+  const step = Math.max(5, Number(engineState.settings.stepMin) || 5);
+  const timeStopBars = Math.max(1, Number(engineState.settings.timeStopBars) || 2);
+  const maxHoldMs = timeStopBars * step * 60 * 1000;
   const opt = String(open.optionType || '').toUpperCase();
   const isCall = opt === 'CE';
+
+  if (heldMs >= maxHoldMs) {
+    const entrySpot = Number(open.entrySpot);
+    let favor = null;
+    if (Number.isFinite(spotNow) && Number.isFinite(entrySpot) && entrySpot > 0) {
+      favor = isCall ? round(spotNow - entrySpot) : round(entrySpot - spotNow);
+    }
+    await finalizeTrade(open, {
+      exitPremium: mark.optionLtp,
+      mark,
+      reason: 'TIME_STOP',
+      futFallback: spotNow,
+      favorPts: favor,
+    });
+    return;
+  }
 
   if (Number.isFinite(spotNow) && spotNow > 0 && Number.isFinite(stopSpot) && Number.isFinite(targetSpot)) {
     if (isCall) {
@@ -491,10 +496,7 @@ async function tryEnter(signal, tape) {
     return;
   }
   if (!engineState.entryArmed) return;
-  if (engineState.dayLocked) {
-    engineState.lastEntryDebug = { skip: 'day_locked', reason: engineState.dayStopReason };
-    return;
-  }
+  // No daily trade cap / day lock for OPS-3.
 
   const clock = getIstClock(new Date());
   if (isWeekendDateKey(clock.dateKey)) return;
@@ -588,8 +590,8 @@ async function tryEnter(signal, tape) {
       combinedStopSpot: Number.isFinite(stopSpot) ? stopSpot : null,
       targetSpot: Number.isFinite(targetSpot) ? targetSpot : null,
       legs: [{ optionType, entryPremium: Number(entryPremium.toFixed(2)) }],
-      entryReason: `OI Flow Continuation ${optionType} · ${signal.barTime || ''} · ${signal.patternName || ''}`,
-      notes: `oi_flow_continuation; pattern=${signal.patternId}; niftySL=${stopSpot}; niftyTP=${targetSpot}; R=${riskPts}; entrySrc=${entrySource}`,
+      entryReason: `OI Pulse Scalp ${optionType} · ${signal.barTime || ''} · ${signal.patternName || ''}`,
+      notes: `oi_pulse_scalp; pattern=${signal.patternId}; niftySL=${stopSpot}; niftyTP=${targetSpot}; R=${riskPts}; recipe=${signal.recipeKey}; entrySrc=${entrySource}`,
       signalSnapshot: {
         patternId: signal.patternId,
         patternName: signal.patternName,
@@ -598,22 +600,27 @@ async function tryEnter(signal, tape) {
         flowBias: signal.flowBias,
         streak: signal.streak,
         deltaPcr: signal.deltaPcr,
+        callAct: signal.callAct,
+        putAct: signal.putAct,
+        act: signal.act,
+        spotDelta: signal.spotDelta,
+        recipeKey: signal.recipeKey,
         barTime: signal.barTime,
         barMinutes: signal.barMinutes,
         entryMinutes: signal.barMinutes,
-        signalHigh: signal.signalHigh,
-        signalLow: signal.signalLow,
         riskPts: Number.isFinite(riskPts) ? riskPts : null,
         rewardPts: Number.isFinite(rewardPts) ? rewardPts : null,
         stopSpot: Number.isFinite(stopSpot) ? stopSpot : null,
         targetSpot: Number.isFinite(targetSpot) ? targetSpot : null,
-        rMult: engineState.settings.rMult,
+        targetPts: engineState.settings.targetPts,
+        stopPts: engineState.settings.stopPts,
+        timeStopBars: engineState.settings.timeStopBars,
       },
     });
 
     engineState.openTradeId = String(tradeDoc._id);
     engineState.entryArmed = false;
-    engineState.pending = null;
+    engineState.lastRecipeKey = signal.recipeKey || null;
     engineState.lastEntryKey = entryKey;
     engineState.lastEntryBarMinutes = Number(signal.barMinutes);
     engineState.lastEntryDebug = {
@@ -652,17 +659,12 @@ async function tickOnce() {
     const tape = await fetchTape();
     engineState.lastTapeAt = tape?.displayRow?.fetchedAt || new Date().toISOString();
     const signal = buildSignalFromOiFlow(tape, engineState.settings, {
-      dayLocked: dayBook.dayLocked,
-      dayPts: dayBook.dayPts,
-      dayStopReason: dayBook.dayStopReason,
       lastEntryBarMinutes: dayBook.lastEntryBarMinutes ?? engineState.lastEntryBarMinutes,
-      pending: engineState.pending,
+      lastRecipeKey: engineState.lastRecipeKey,
     });
 
-    if (signal?.clearPending) {
-      engineState.pending = null;
-    } else if (signal?.pending) {
-      engineState.pending = signal.pending;
+    if (signal?.clearRecipe) {
+      engineState.lastRecipeKey = null;
     }
 
     if (signal?.status && signal.status !== 'TAKE_ENTRY') {
@@ -675,16 +677,14 @@ async function tickOnce() {
       enabled: engineState.settings.enabled,
       entryArmed: engineState.entryArmed,
       dayPts: dayBook.dayPts,
-      dayLocked: dayBook.dayLocked,
-      dayStopReason: dayBook.dayStopReason,
-      pending: engineState.pending,
+      lastRecipeKey: engineState.lastRecipeKey,
     };
 
     const hadOpen = Boolean(engineState.openTradeId);
     await checkOpenTrade(signal, tape);
     const closedThisTick = hadOpen && !engineState.openTradeId;
 
-    if (!engineState.openTradeId && !closedThisTick && !dayBook.dayLocked) {
+    if (!engineState.openTradeId && !closedThisTick) {
       await tryEnter(signal, tape);
     }
     engineState.lastError = null;
@@ -719,7 +719,7 @@ async function ensureEngineRunning() {
     engineState.entryArmed = true;
     startLoop();
     tickOnce().catch(() => {});
-    console.log('OI Flow Continuation paper engine started');
+    console.log('OI Pulse Scalp (OPS-3) paper engine started');
     return { ok: true, started: true };
   }
   await syncOpenTradeId();
@@ -754,8 +754,7 @@ async function getStatus() {
       losses: wallet.losses,
     },
     dayPts: engineState.dayPts,
-    dayLocked: engineState.dayLocked,
-    dayStopReason: engineState.dayStopReason,
+    lastRecipeKey: engineState.lastRecipeKey,
     lastError: engineState.lastError,
     lastEntryDebug: engineState.lastEntryDebug,
     lastTapeAt: engineState.lastTapeAt,
@@ -837,8 +836,7 @@ async function getBookSummary() {
     closedCount: wallet.totalTrades,
     openMtm: Number(openMtm.toFixed(2)),
     dayPts: dayBook.dayPts,
-    dayLocked: dayBook.dayLocked,
-    dayStopReason: dayBook.dayStopReason,
+    lastRecipeKey: engineState.lastRecipeKey,
     lastError: engineState.lastError,
   };
 }
@@ -849,7 +847,7 @@ async function closeOpenTradeManual(reason = 'MANUAL_CLOSE') {
     status: 'OPEN',
     exitTime: null,
   }).sort({ entryTime: -1 });
-  if (!open) throw new Error('No open OI Flow E/B trade');
+  if (!open) throw new Error('No open OI Pulse Scalp trade');
   const mark = await resolveOptionLtp(open);
   return finalizeTrade(open, {
     exitPremium: mark.optionLtp,

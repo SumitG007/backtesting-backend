@@ -75,6 +75,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const oiPulseScalp = require('./services/oiPulseScalpEngine');
+    await oiPulseScalp.ensureEngineRunning();
+  } catch (err) {
+    console.warn('OI Pulse Scalp engine boot:', err.message);
+  }
+
+  try {
     const oiFlow = require('./services/oiFlowMinuteEngine');
     const boot = oiFlow.ensureEngineRunning();
     if (boot.ok) {

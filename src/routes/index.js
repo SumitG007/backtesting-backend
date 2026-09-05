@@ -95,6 +95,14 @@ const {
   postOiFlowContinuationClose,
 } = require('../controllers/oiFlowContinuationController');
 const {
+  getOiPulseScalpStatus,
+  getOiPulseScalpBook,
+  getOiPulseScalpTrades,
+  postOiPulseScalpEnabled,
+  patchOiPulseScalpSettings,
+  postOiPulseScalpClose,
+} = require('../controllers/oiPulseScalpController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
@@ -205,6 +213,12 @@ router.get('/oi-flow-continuation/trades', getOiFlowContinuationTrades);
 router.post('/oi-flow-continuation/enabled', postOiFlowContinuationEnabled);
 router.patch('/oi-flow-continuation/settings', patchOiFlowContinuationSettings);
 router.post('/oi-flow-continuation/close', postOiFlowContinuationClose);
+router.get('/oi-pulse-scalp/status', getOiPulseScalpStatus);
+router.get('/oi-pulse-scalp/book', getOiPulseScalpBook);
+router.get('/oi-pulse-scalp/trades', getOiPulseScalpTrades);
+router.post('/oi-pulse-scalp/enabled', postOiPulseScalpEnabled);
+router.patch('/oi-pulse-scalp/settings', patchOiPulseScalpSettings);
+router.post('/oi-pulse-scalp/close', postOiPulseScalpClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
