@@ -2,16 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const PlatformAdmin = require('../models/PlatformAdmin');
 
-const BCRYPT_ROUNDS = 12;
 const SINGLETON_KEY = 'singleton';
-
-function readAdminEmailFromEnv() {
-  return String(process.env.ADMIN || process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-}
-
-function readAdminPasswordFromEnv() {
-  return String(process.env.ADMIN_PASSWORD || '');
-}
 
 function getJwtSecret() {
   const secret = String(process.env.JWT_SECRET || '').trim();
@@ -25,29 +16,18 @@ function getJwtExpiresIn() {
   return String(process.env.JWT_EXPIRES_IN || '7d').trim() || '7d';
 }
 
-/** Upsert platform admin from ADMIN + ADMIN_PASSWORD in .env into MongoDB. */
-async function syncAdminFromEnv() {
-  const email = readAdminEmailFromEnv();
-  const password = readAdminPasswordFromEnv();
-  if (!email || !password) {
-    throw new Error('ADMIN and ADMIN_PASSWORD must be set in backend .env');
+/**
+ * Boot check only — admin email/password live in MongoDB (PlatformAdmin).
+ * Does not read or overwrite from ADMIN / ADMIN_PASSWORD env vars.
+ */
+async function ensurePlatformAdmin() {
+  const doc = await PlatformAdmin.findOne({ key: SINGLETON_KEY }).lean();
+  if (!doc?.email || !doc?.passwordHash) {
+    throw new Error(
+      'Platform admin missing in MongoDB (PlatformAdmin key=singleton). Seed once in DB, then restart.',
+    );
   }
-
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-  const doc = await PlatformAdmin.findOneAndUpdate(
-    { key: SINGLETON_KEY },
-    {
-      $set: {
-        email,
-        passwordHash,
-        envEmail: email,
-        lastSyncedFromEnvAt: new Date(),
-      },
-    },
-    { upsert: true, returnDocument: 'after' }
-  );
-
-  console.log(`[AUTH] Platform admin synced to MongoDB (${email}).`);
+  console.log(`[AUTH] Platform admin ready (${doc.email}).`);
   return doc;
 }
 
@@ -104,11 +84,8 @@ function verifyAccessToken(token) {
 
 /** Auth-gated diagnostics only — never expose via public routes. */
 async function getAuthStatus() {
-  const envEmail = readAdminEmailFromEnv();
-  const envPasswordSet = Boolean(readAdminPasswordFromEnv());
   const doc = await PlatformAdmin.findOne({ key: SINGLETON_KEY }).lean();
   return {
-    envConfigured: Boolean(envEmail && envPasswordSet),
     storedInMongo: Boolean(doc?.email),
     mongoEmail: doc?.email || null,
     lastSyncedFromEnvAt: doc?.lastSyncedFromEnvAt || null,
@@ -136,10 +113,12 @@ async function verifyPasswordForUser(email, password) {
 }
 
 module.exports = {
-  syncAdminFromEnv,
+  ensurePlatformAdmin,
+  /** @deprecated use ensurePlatformAdmin — kept for older call sites */
+  syncAdminFromEnv: ensurePlatformAdmin,
   loginWithCredentials,
   verifyAccessToken,
   verifyPasswordForUser,
   getAuthStatus,
-  readAdminEmailFromEnv,
+  findAdminByEmail,
 };

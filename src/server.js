@@ -132,10 +132,10 @@ async function start() {
   console.log('MongoDB connected');
 
   try {
-    const { syncAdminFromEnv } = require('./services/adminAuthService');
-    await syncAdminFromEnv();
+    const { ensurePlatformAdmin } = require('./services/adminAuthService');
+    await ensurePlatformAdmin();
   } catch (err) {
-    console.error('[AUTH] Admin sync failed:', err.message);
+    console.error('[AUTH] Admin check failed:', err.message);
     throw err;
   }
 
