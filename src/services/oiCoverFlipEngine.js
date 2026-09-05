@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS = {
   targetPts: 6,
   stopPts: 4,
   minSpotDelta: 3,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -108,7 +108,7 @@ function normalizeSettings(raw = {}) {
   s.targetPts = Math.max(0.5, Math.min(50, Number(s.targetPts) || 6));
   s.stopPts = Math.max(0.5, Math.min(100, Number(s.stopPts) || 4));
   s.minSpotDelta = Math.max(1, Math.min(20, Number(s.minSpotDelta) || 3));
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '13:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');

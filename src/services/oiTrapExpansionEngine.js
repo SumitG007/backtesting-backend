@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS = {
   trapMin: 90,
   revMin: 75,
   expMin: 70,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -111,7 +111,7 @@ function normalizeSettings(raw = {}) {
   s.trapMin = Math.max(50, Math.min(100, Number(s.trapMin) || 90));
   s.revMin = Math.max(40, Math.min(100, Number(s.revMin) || 75));
   s.expMin = Math.max(40, Math.min(100, Number(s.expMin) || 70));
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '14:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');

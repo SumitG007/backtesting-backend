@@ -40,7 +40,7 @@ const DEFAULT_SETTINGS = {
   optionTpPts: 15,
   dailyTarget: 15,
   dailyLoss: 16,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -121,7 +121,7 @@ function normalizeSettings(raw = {}) {
   );
   s.dailyTarget = Math.max(1, Number(s.dailyTarget) || 15);
   s.dailyLoss = Math.max(1, Number(s.dailyLoss) || 16);
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '14:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');

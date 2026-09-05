@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS = {
   matchBarsRequired: 2,
   minStreak: 3,
   skipWritingPin: true,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -108,7 +108,7 @@ function normalizeSettings(raw = {}) {
   s.matchBarsRequired = Math.max(1, Math.min(5, Math.floor(Number(s.matchBarsRequired) || 2)));
   s.minStreak = Math.max(1, Math.min(10, Math.floor(Number(s.minStreak) || 3)));
   s.skipWritingPin = raw.skipWritingPin == null ? true : Boolean(raw.skipWritingPin);
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '10:30');
   s.tradeToTime = String(s.tradeToTime || '13:00');
   s.eodExitTime = String(s.eodExitTime || '15:15');

@@ -47,7 +47,7 @@ const DEFAULT_SETTINGS = {
   nearExpiryDays: 10,
   nearExpiryMinAdx: 30,
   cooldownSeconds: 60,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -134,7 +134,7 @@ function normalizeSettings(raw = {}) {
   s.nearExpiryDays = Math.max(0, Math.min(21, Math.floor(Number(s.nearExpiryDays) || 10)));
   s.nearExpiryMinAdx = Math.max(10, Number(s.nearExpiryMinAdx) || 30);
   s.cooldownSeconds = Math.max(30, Math.floor(Number(s.cooldownSeconds) || 60));
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '13:00');
   s.eodExitTime = String(s.eodExitTime || '15:15');

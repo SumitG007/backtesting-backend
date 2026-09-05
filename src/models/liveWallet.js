@@ -80,7 +80,7 @@ const liveWalletSchema = new mongoose.Schema(
       proximityPoints: { type: Number, default: 20 },
       minOiRatio: { type: Number, default: 1.2 },
       cooldownSeconds: { type: Number, default: 60 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Flow Tracker paper (Put writing→CALL / Put buying→PUT). */
     oiFlowEngineSettings: {
@@ -97,7 +97,7 @@ const liveWalletSchema = new mongoose.Schema(
       maxPutOi: { type: Number, default: 3000000 },
       requireSpotAlign: { type: Boolean, default: true },
       cooldownMinutes: { type: Number, default: 30 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Wall Reaction — 1 trade/day · OI Flow wall touch + price reaction. */
     oiWallReactionEngineSettings: {
@@ -114,7 +114,7 @@ const liveWalletSchema = new mongoose.Schema(
       matchBarsRequired: { type: Number, default: 2 },
       minStreak: { type: Number, default: 3 },
       skipWritingPin: { type: Boolean, default: true },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** FUT ΔOI Wall V1 — ADX + 20 DMA · 1.5× wall · 1 ITM. */
     futDoiWallEngineSettings: {
@@ -136,7 +136,7 @@ const liveWalletSchema = new mongoose.Schema(
       nearExpiryDays: { type: Number, default: 10 },
       nearExpiryMinAdx: { type: Number, default: 30 },
       cooldownSeconds: { type: Number, default: 60 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Flow E/B — closed 15m Strong Bull/Bear + Spot Δ + Match. */
     oiFlowEbEngineSettings: {
@@ -153,7 +153,7 @@ const liveWalletSchema = new mongoose.Schema(
       optionTpPts: { type: Number, default: 15 },
       dailyTarget: { type: Number, default: 15 },
       dailyLoss: { type: Number, default: 16 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Flow Continuation — 5m streak + Strong + flow + ΔPCR · Nifty break · ATM. */
     oiFlowContinuationEngineSettings: {
@@ -168,7 +168,7 @@ const liveWalletSchema = new mongoose.Schema(
       rMult: { type: Number, default: 1.5 },
       dailyTarget: { type: Number, default: 40 },
       dailyLoss: { type: Number, default: 40 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Pulse Scalp (OPS-3) — 5m recipe + Strong + Spot Δ · +3/−6 · time 2 bars. */
     oiPulseScalpEngineSettings: {
@@ -183,7 +183,7 @@ const liveWalletSchema = new mongoose.Schema(
       stopPts: { type: Number, default: 6 },
       timeStopBars: { type: Number, default: 2 },
       maxStreak: { type: Number, default: 3 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Cover Flip — peanut harvest · +6/−4 · 09:45–13:30 IST. */
     oiCoverFlipEngineSettings: {
@@ -197,7 +197,7 @@ const liveWalletSchema = new mongoose.Schema(
       targetPts: { type: Number, default: 6 },
       stopPts: { type: Number, default: 4 },
       minSpotDelta: { type: Number, default: 3 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Cover Chase — both sides · no TP · SL−4 · flip · 09:45–14:30 IST. */
     oiCoverChaseEngineSettings: {
@@ -212,7 +212,7 @@ const liveWalletSchema = new mongoose.Schema(
       minSpotDelta: { type: Number, default: 3 },
       minFlipScore: { type: Number, default: 90 },
       minAbsDeltaFlip: { type: Number, default: 10 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** OI Trap Expansion — elite T/R/E · no TP · SL−8 · 09:45–14:30 IST. */
     oiTrapExpansionEngineSettings: {
@@ -227,7 +227,7 @@ const liveWalletSchema = new mongoose.Schema(
       trapMin: { type: Number, default: 90 },
       revMin: { type: Number, default: 75 },
       expMin: { type: Number, default: 70 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
@@ -248,7 +248,7 @@ const liveWalletSchema = new mongoose.Schema(
       softTargetOptionPts: { type: Number, default: 12 },
       maxTradesPerDay: { type: Number, default: 2 },
       cooldownSeconds: { type: Number, default: 300 },
-      perTradeCost: { type: Number, default: 0 },
+      perTradeCost: { type: Number, default: 100 },
     },
   },
   { timestamps: true }

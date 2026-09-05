@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS = {
   stopPts: 6,
   timeStopBars: 2,
   maxStreak: 3,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -107,7 +107,7 @@ function normalizeSettings(raw = {}) {
   s.stopPts = Math.max(0.5, Math.min(100, Number(s.stopPts) || 6));
   s.timeStopBars = Math.max(1, Math.min(10, Math.floor(Number(s.timeStopBars) || 2)));
   s.maxStreak = Math.max(1, Math.min(10, Math.floor(Number(s.maxStreak) || 3)));
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '13:55');
   s.eodExitTime = String(s.eodExitTime || '15:15');

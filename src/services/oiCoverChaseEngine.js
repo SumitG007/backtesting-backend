@@ -37,7 +37,7 @@ const DEFAULT_SETTINGS = {
   minSpotDelta: 3,
   minFlipScore: 90,
   minAbsDeltaFlip: 10,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -111,7 +111,7 @@ function normalizeSettings(raw = {}) {
   s.minSpotDelta = Math.max(1, Math.min(20, Number(s.minSpotDelta) || 3));
   s.minFlipScore = Math.max(0, Math.min(100, Number(s.minFlipScore) || 90));
   s.minAbsDeltaFlip = Math.max(0, Math.min(50, Number(s.minAbsDeltaFlip) || 10));
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '14:30');
   s.eodExitTime = String(s.eodExitTime || '15:15');

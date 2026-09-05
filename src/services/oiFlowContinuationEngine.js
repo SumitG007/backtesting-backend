@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS = {
   rMult: 1.5,
   dailyTarget: 40,
   dailyLoss: 40,
-  perTradeCost: 0,
+  perTradeCost: 100,
 };
 
 const engineState = {
@@ -111,7 +111,7 @@ function normalizeSettings(raw = {}) {
   s.rMult = Math.max(0.5, Math.min(5, Number(s.rMult) || 1.5));
   s.dailyTarget = Math.max(1, Number(s.dailyTarget) || 40);
   s.dailyLoss = Math.max(1, Number(s.dailyLoss) || 40);
-  s.perTradeCost = Math.max(0, Number(s.perTradeCost) || 0);
+  s.perTradeCost = Number.isFinite(Number(s.perTradeCost)) && Number(s.perTradeCost) >= 0 ? Number(s.perTradeCost) : 100;
   s.tradeFromTime = String(s.tradeFromTime || '09:45');
   s.tradeToTime = String(s.tradeToTime || '13:55');
   s.eodExitTime = String(s.eodExitTime || '15:15');
