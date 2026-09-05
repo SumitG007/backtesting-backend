@@ -103,7 +103,7 @@ function initRealtime(httpServer) {
       if (room) socket.join(room);
       try {
         let engine = null;
-        if (strategyId === 'manual-console') {
+        if (strategyId === 'manual-console' || strategyId === 'manual-stock') {
           engine = require('./manualTradeEngine');
         } else if (strategyId === 'strategy-14') {
           engine = require('./liveEodOiWallsEngine');

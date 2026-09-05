@@ -128,6 +128,21 @@ router.get('/live/:strategyId/trades/export', exportLiveTradesExcel);
 router.post('/live/:strategyId/close', closeLivePosition);
 // Manual trading console (paper — Dhan LTP, simulated fills)
 router.get('/manual-console/status', getManualConsoleStatus);
+// Stock Manual desk (stock futures only, no day close)
+const stockEngine = require('../controllers/manualStockController');
+router.get('/manual-stock/status', stockEngine.getManualStockStatus);
+router.get('/manual-stock/expiries', stockEngine.getManualStockExpiries);
+router.get('/manual-stock/quote', stockEngine.getManualStockQuote);
+router.get('/manual-stock/instruments', stockEngine.getManualStockInstruments);
+router.get('/manual-stock/future-quote', stockEngine.getManualStockFutureQuote);
+router.post('/manual-stock/orders', stockEngine.postManualStockOrder);
+router.delete('/manual-stock/orders/:orderId', stockEngine.deleteManualStockOrder);
+router.post('/manual-stock/positions/:tradeId/close', stockEngine.postManualStockClosePosition);
+router.patch('/manual-stock/positions/:tradeId/risk', stockEngine.patchManualStockPositionRisk);
+router.post('/manual-stock/wallet/reset', stockEngine.postManualStockWalletReset);
+router.post('/manual-stock/wallet/topup', stockEngine.postManualStockWalletTopup);
+router.get('/manual-stock/trades', stockEngine.getManualStockTrades);
+router.get('/manual-stock/actions', stockEngine.getManualStockActions);
 router.get('/manual-console/expiries', getManualExpiries);
 router.get('/manual-console/quote', getManualQuote);
 router.get('/manual-console/chain', getManualChain);

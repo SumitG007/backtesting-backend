@@ -11,10 +11,18 @@ function parsePageSize(raw, fallback = 25, max = 500) {
   return Math.max(1, Math.min(max, Math.floor(n)));
 }
 
+/** Keep entire request on Index desk context (separate wallet + trades from Stock Manual). */
+function withIndexDesk(fn) {
+  return manualEngine.runWithDesk('index', fn);
+}
+
 async function getManualConsoleStatus(_req, res) {
   try {
-    const data = await manualEngine.getStatus();
-    return res.json({ ok: true, ...data });
+    const data = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.getStatus();
+    });
+    return res.json({ ok: true, desk: 'index', ...data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -22,7 +30,9 @@ async function getManualConsoleStatus(_req, res) {
 
 async function getManualExpiries(req, res) {
   try {
-    const data = await manualEngine.getExpiries(req.query?.symbol || 'NIFTY');
+    const data = await withIndexDesk(() =>
+      manualEngine.getExpiries(req.query?.symbol || 'NIFTY'),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -31,12 +41,14 @@ async function getManualExpiries(req, res) {
 
 async function getManualQuote(req, res) {
   try {
-    const data = await manualEngine.getQuote({
-      symbol: req.query?.symbol,
-      expiry: req.query?.expiry,
-      strike: req.query?.strike,
-      optionType: req.query?.optionType,
-    });
+    const data = await withIndexDesk(() =>
+      manualEngine.getQuote({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+        strike: req.query?.strike,
+        optionType: req.query?.optionType,
+      }),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
@@ -45,10 +57,12 @@ async function getManualQuote(req, res) {
 
 async function getManualChain(req, res) {
   try {
-    const data = await manualEngine.getChainAroundAtm({
-      symbol: req.query?.symbol,
-      expiry: req.query?.expiry,
-    });
+    const data = await withIndexDesk(() =>
+      manualEngine.getChainAroundAtm({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
@@ -57,11 +71,13 @@ async function getManualChain(req, res) {
 
 async function getManualOiBoard(req, res) {
   try {
-    const board = await manualEngine.getLiveOiBoard({
-      symbol: req.query?.symbol,
-      expiry: req.query?.expiry,
-      lookaroundStrikes: req.query?.lookaround,
-    });
+    const board = await withIndexDesk(() =>
+      manualEngine.getLiveOiBoard({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+        lookaroundStrikes: req.query?.lookaround,
+      }),
+    );
     return res.json({ ok: true, board });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message, board: null });
@@ -70,10 +86,12 @@ async function getManualOiBoard(req, res) {
 
 async function getManualOiTotals(req, res) {
   try {
-    const totals = await manualEngine.getOiBoardTotals({
-      symbol: req.query?.symbol,
-      expiry: req.query?.expiry,
-    });
+    const totals = await withIndexDesk(() =>
+      manualEngine.getOiBoardTotals({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
     return res.json({ ok: true, ...totals });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
@@ -82,7 +100,7 @@ async function getManualOiTotals(req, res) {
 
 async function getManualInstruments(_req, res) {
   try {
-    const data = await manualEngine.getInstrumentUniverse();
+    const data = await withIndexDesk(() => manualEngine.getInstrumentUniverse());
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -91,10 +109,12 @@ async function getManualInstruments(_req, res) {
 
 async function getManualFutureQuote(req, res) {
   try {
-    const data = await manualEngine.getFuture({
-      symbol: req.query?.symbol,
-      expiry: req.query?.expiry,
-    });
+    const data = await withIndexDesk(() =>
+      manualEngine.getFuture({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
@@ -103,7 +123,17 @@ async function getManualFutureQuote(req, res) {
 
 async function postManualOrder(req, res) {
   try {
-    const result = await manualEngine.createOrder(req.body || {});
+    const body = { ...(req.body || {}) };
+    if (String(body.product || '').toUpperCase() === 'FUTURE') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Stock futures belong on Stock Manual — open /manual-stock',
+      });
+    }
+    const result = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.createOrder(body);
+    });
     return res.json({
       ok: true,
       order: result.order,
@@ -122,7 +152,10 @@ async function deleteManualOrder(req, res) {
   try {
     const orderId = String(req.params?.orderId || '').trim();
     if (!orderId) return res.status(400).json({ ok: false, error: 'orderId required' });
-    const order = await manualEngine.cancelOrder(orderId);
+    const order = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.cancelOrder(orderId);
+    });
     return res.json({ ok: true, order, message: 'Order cancelled' });
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
@@ -133,7 +166,10 @@ async function postManualClosePosition(req, res) {
   try {
     const tradeId = String(req.params?.tradeId || '').trim();
     if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId required' });
-    const trade = await manualEngine.closePositionById(tradeId, { reason: 'MANUAL_CLOSE' });
+    const trade = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.closePositionById(tradeId, { reason: 'MANUAL_CLOSE' });
+    });
     return res.json({
       ok: true,
       trade,
@@ -163,7 +199,10 @@ async function patchManualPositionRisk(req, res) {
     } else if (has('targetProfitPoints')) {
       riskPayload.targetProfitPoints = body.targetProfitPoints;
     }
-    const trade = await manualEngine.updatePositionRisk(tradeId, riskPayload);
+    const trade = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.updatePositionRisk(tradeId, riskPayload);
+    });
     return res.json({
       ok: true,
       trade,
@@ -176,12 +215,14 @@ async function patchManualPositionRisk(req, res) {
 
 async function getManualTrades(req, res) {
   try {
-    const data = await manualEngine.listTrades({
-      page: parsePage(req.query?.page),
-      pageSize: parsePageSize(req.query?.pageSize, 50),
-      status: req.query?.status,
-      book: req.query?.book,
-    });
+    const data = await withIndexDesk(() =>
+      manualEngine.listTrades({
+        page: parsePage(req.query?.page),
+        pageSize: parsePageSize(req.query?.pageSize, 50),
+        status: req.query?.status,
+        book: req.query?.book,
+      }),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -190,10 +231,12 @@ async function getManualTrades(req, res) {
 
 async function getManualActions(req, res) {
   try {
-    const data = await manualEngine.listActions({
-      page: parsePage(req.query?.page),
-      pageSize: parsePageSize(req.query?.pageSize, 50, 200),
-    });
+    const data = await withIndexDesk(() =>
+      manualEngine.listActions({
+        page: parsePage(req.query?.page),
+        pageSize: parsePageSize(req.query?.pageSize, 50, 200),
+      }),
+    );
     return res.json({ ok: true, ...data });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -202,8 +245,11 @@ async function getManualActions(req, res) {
 
 async function postManualWalletReset(req, res) {
   try {
-    const wallet = await manualEngine.resetWallet();
-    return res.json({ ok: true, wallet, message: 'Manual console history cleared — capital kept' });
+    const wallet = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.resetWallet();
+    });
+    return res.json({ ok: true, wallet, message: 'Index Manual history cleared — capital kept' });
   } catch (error) {
     return res.status(500).json({ ok: false, error: error.message });
   }
@@ -211,7 +257,10 @@ async function postManualWalletReset(req, res) {
 
 async function postManualWalletTopup(req, res) {
   try {
-    const wallet = await manualEngine.topUpWallet(req.body?.amount);
+    const wallet = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.topUpWallet(req.body?.amount);
+    });
     return res.json({
       ok: true,
       wallet,

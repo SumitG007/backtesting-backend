@@ -2,11 +2,12 @@
  * Personal manual trading console — paper long CE/PE with market/limit entry,
  * optional SL/target, EOD exit, action logging.
  */
+const { AsyncLocalStorage } = require('async_hooks');
 const LivePaperTrade = require('../models/livePaperTrade');
 const LiveWallet = require('../models/liveWallet');
 const ManualPendingOrder = require('../models/manualPendingOrder');
 const ManualTradeAction = require('../models/manualTradeAction');
-const { MANUAL_CONSOLE_LIVE_KEY } = require('../strategies/keys');
+const { MANUAL_CONSOLE_LIVE_KEY, MANUAL_STOCK_LIVE_KEY } = require('../strategies/keys');
 const { getIstClock, isWeekendDateKey } = require('../utils/dateTime');
 const { getStrikeStep } = require('../utils/market');
 const {
@@ -22,7 +23,6 @@ const {
   fetchOptionChainCached,
   getOptionChainOiSnapshot,
   listFutureUnderlyings,
-  listOptionStockUnderlyings,
   listFutureExpiries,
   getFutureLtp,
   getFutureQuote,
@@ -35,18 +35,66 @@ const {
   getLastPrice,
 } = require('./dhanLiveService');
 
-const STRATEGY_KEY = MANUAL_CONSOLE_LIVE_KEY;
-const WALLET_KEY = 'paper_live_manual';
+/** Dual desks: index (Manual Console) + stock FUT (no day-close). Separate strategyKey + walletKey. */
+const DESK_INDEX = {
+  strategyKey: MANUAL_CONSOLE_LIVE_KEY,
+  walletKey: 'paper_live_manual',
+  dayClose: true,
+  strategyId: 'manual-console',
+  label: 'Index Manual',
+};
+const DESK_STOCK = {
+  strategyKey: MANUAL_STOCK_LIVE_KEY,
+  walletKey: 'paper_live_manual_stock',
+  dayClose: false,
+  strategyId: 'manual-stock',
+  label: 'Stock Manual',
+};
+
+const DESKS = { index: DESK_INDEX, stock: DESK_STOCK };
+const DESK_NAMES = { index: 'index', stock: 'stock' };
+
+/** Per-request desk isolation so concurrent index/stock HTTP + poll never share the wrong wallet. */
+const deskAls = new AsyncLocalStorage();
+
+const engineState = {
+  running: false,
+  startedAt: null,
+  loopTimer: null,
+  tickInFlight: false,
+  desk: 'index',
+  strategyKey: DESK_INDEX.strategyKey,
+  walletKey: DESK_INDEX.walletKey,
+  dayClose: DESK_INDEX.dayClose,
+  strategyId: DESK_INDEX.strategyId,
+  label: DESK_INDEX.label,
+  symbol: 'NIFTY',
+  dateKey: null,
+  lastMinutes: null,
+  lastError: null,
+  lastFetchedAt: null,
+  lastRow: null,
+  expiry: null,
+  lastPollAt: null,
+  pollTimer: null,
+  lastLiveMarkEmitAt: 0,
+  liveMarkEmitTimer: null,
+};
+
 /** Engine loop is cheap once marks come from WS — keep snappy for SL/TG + UI marks. */
 const POLL_INTERVAL_MS = 1000;
 const EOD_EXIT = 920; // 15:20 IST
 const MIN_HOLD_MS = 5000;
 const WS_FRESH_MS = 12000;
 const CLOSED_STATS_SYNC_MS = 5 * 60 * 1000;
-let lastClosedStatsSyncAt = 0;
+const REPAIR_TESTING_MS = 10 * 60 * 1000;
+/** Per-desk timers so index/stock wallets stay independent. */
+const lastClosedStatsSyncAtByDesk = Object.create(null);
+const lastRepairTestingAtByDesk = Object.create(null);
 const LIVE_MARK_EMIT_MIN_GAP_MS = 400;
 const ALLOWED_SYMBOLS = new Set(['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY']);
-const MANUAL_STRATEGY_ID = 'manual-console';
+/** Index desk only — stock FUT is on the separate Stock Manual desk. */
+const INDEX_SYMBOLS = ALLOWED_SYMBOLS;
 /** Virtual top-up presets (paper only — not real money). */
 const TOPUP_AMOUNTS = Object.freeze([5000, 10000, 50000]);
 /** Custom top-up must be greater than this (presets may equal min). */
@@ -58,6 +106,50 @@ const FUTURE_MARGIN_PCT = 0.12;
 
 function parseIsTesting(value) {
   return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true';
+}
+
+function resolveDeskName(deskName) {
+  const raw = deskName || deskAls.getStore() || engineState.desk || 'index';
+  return DESKS[raw] ? raw : 'index';
+}
+
+function getDeskConfig(deskName) {
+  return DESKS[resolveDeskName(deskName)] || DESK_INDEX;
+}
+
+function getStrategyKey() {
+  return getDeskConfig().strategyKey;
+}
+
+function getWalletKey() {
+  return getDeskConfig().walletKey;
+}
+
+function getDayCloseEnabled() {
+  return Boolean(getDeskConfig().dayClose);
+}
+
+function getStrategyId() {
+  return getDeskConfig().strategyId;
+}
+
+function selectDesk(deskName = 'index') {
+  const name = resolveDeskName(deskName);
+  const desk = DESKS[name] || DESK_INDEX;
+  engineState.desk = name;
+  engineState.strategyKey = desk.strategyKey;
+  engineState.walletKey = desk.walletKey;
+  engineState.dayClose = desk.dayClose;
+  engineState.strategyId = desk.strategyId;
+  engineState.label = desk.label;
+  return desk;
+}
+
+/** Run async work bound to a desk — safe under concurrent index/stock requests. */
+function runWithDesk(deskName, fn) {
+  const name = resolveDeskName(deskName);
+  selectDesk(name);
+  return deskAls.run(name, fn);
 }
 
 /**
@@ -82,8 +174,9 @@ function isMainTrade(trade) {
  * - open/closed without testing notes → isTesting false (main)
  */
 async function repairTestingFlags() {
+  const strategyKey = getStrategyKey();
   const testingNotes = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey,
     notes: { $regex: /testing\s*=\s*1/i },
   })
     .select({ _id: 1, isTesting: 1, notes: 1 })
@@ -94,7 +187,7 @@ async function repairTestingFlags() {
 
   // Main trades: ensure explicit false so book filters stay stable.
   const mainIds = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey,
     isTesting: { $exists: false },
     notes: { $not: { $regex: /testing\s*=\s*1/i } },
   })
@@ -118,15 +211,8 @@ async function repairTestingFlags() {
   return { taggedTesting: testingIds.length, taggedMain: mainIds.length };
 }
 
-const engineState = {
-  running: false,
-  startedAt: null,
-  lastError: null,
-  lastPollAt: null,
-  pollTimer: null,
-  lastLiveMarkEmitAt: 0,
-  liveMarkEmitTimer: null,
-};
+// engineState already defined above with desk + running fields.
+// Keep poll/timer fields here-compatible by extending the primary engineState.
 
 /** tradeId -> { key, lastTick: { ltp, ts }, instrument, tradeLite } */
 const liveSubs = new Map();
@@ -152,8 +238,16 @@ function isEodExitTime(minutes) {
 
 function normalizeSymbol(symbol) {
   const s = String(symbol || 'NIFTY').toUpperCase();
-  if (!ALLOWED_SYMBOLS.has(s)) {
-    throw new Error('Symbol must be NIFTY, BANKNIFTY, SENSEX or FINNIFTY');
+  if (getDayCloseEnabled()) {
+    // Index desk
+    if (!ALLOWED_SYMBOLS.has(s)) {
+      throw new Error('Symbol must be NIFTY, BANKNIFTY, SENSEX or FINNIFTY');
+    }
+    return s;
+  }
+  // Stock desk — futures only
+  if (ALLOWED_SYMBOLS.has(s) || !isTradableStockUnderlying(s)) {
+    throw new Error(`Symbol must be a tradable stock future (not index): ${s}`);
   }
   return s;
 }
@@ -188,7 +282,15 @@ async function normalizeFutureSymbol(symbol) {
   if (!isTradableStockUnderlying(upper)) {
     throw new Error(`Test/sandbox symbol not allowed: ${upper}`);
   }
-  if (ALLOWED_SYMBOLS.has(upper)) return upper; // NIFTY/BANKNIFTY also have index futures
+  if (engineState.desk === 'stock') {
+    if (ALLOWED_SYMBOLS.has(upper)) {
+      throw new Error(`Index underlyings not allowed on Stock Manual: ${upper}`);
+    }
+    const list = await listFutureUnderlyings();
+    if (!list.includes(upper)) throw new Error(`No stock future found for ${upper}`);
+    return upper;
+  }
+  if (ALLOWED_SYMBOLS.has(upper)) return upper;
   const list = await listFutureUnderlyings();
   if (!list.includes(upper)) throw new Error(`No stock future found for ${upper}`);
   return upper;
@@ -333,7 +435,7 @@ async function resolveIndexFutLtp(symbol, preferredExpiry = null, { maxWaitMs = 
 async function logAction({ action, tradeId = null, orderId = null, symbol = null, message = null, details = null }) {
   try {
     await ManualTradeAction.create({
-      strategyKey: STRATEGY_KEY,
+      strategyKey: getStrategyKey(),
       action,
       tradeId,
       orderId,
@@ -347,10 +449,10 @@ async function logAction({ action, tradeId = null, orderId = null, symbol = null
 }
 
 async function ensureWallet() {
-  let wallet = await LiveWallet.findOne({ walletKey: WALLET_KEY });
+  let wallet = await LiveWallet.findOne({ walletKey: getWalletKey() });
   if (!wallet) {
     wallet = await LiveWallet.create({
-      walletKey: WALLET_KEY,
+      walletKey: getWalletKey(),
       startingBalance: 0,
       balance: 0,
       realizedPnl: 0,
@@ -505,7 +607,7 @@ async function topUpWallet(rawAmount) {
 async function ensureDepositHistoryBackfill(wallet) {
   if (Array.isArray(wallet.depositHistory) && wallet.depositHistory.length > 0) return wallet;
   const actions = await ManualTradeAction.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     action: 'WALLET_TOPUP',
   })
     .sort({ createdAt: -1 })
@@ -537,16 +639,16 @@ async function ensureDepositHistoryBackfill(wallet) {
  */
 async function rebuildMainWalletLedger(wallet) {
   const closed = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     $or: [{ exitTime: { $ne: null } }, { status: 'CLOSED' }],
   }).lean();
   const open = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     exitTime: null,
     status: { $ne: 'CLOSED' },
   }).lean();
   const pending = await ManualPendingOrder.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     status: 'PENDING',
     heldAmount: { $gt: 0 },
   }).lean();
@@ -616,7 +718,7 @@ async function assertMarketOpen(clock) {
     const holiday = getNseHolidayDescription(clock.dateKey);
     throw new Error(holiday ? `Market closed — ${holiday}` : 'Market closed — NSE holiday');
   }
-  if (isEodExitTime(clock.minutes)) {
+  if (getDayCloseEnabled() && isEodExitTime(clock.minutes)) {
     throw new Error('New entries blocked after 15:20 IST');
   }
 }
@@ -689,7 +791,7 @@ function getLiveMarkSnapshot() {
     marks[id] = mark;
   }
   return {
-    strategyId: MANUAL_STRATEGY_ID,
+    strategyId: getStrategyId(),
     open: latestMarks.size > 0,
     marks,
     at: new Date().toISOString(),
@@ -706,14 +808,14 @@ function publishManualMarkSnapshot(extra = {}) {
       clearTimeout(engineState.liveMarkEmitTimer);
       engineState.liveMarkEmitTimer = null;
     }
-    broadcastPaperLive('manual-console', payload);
+    broadcastPaperLive(getStrategyId(), payload);
     return;
   }
   if (engineState.liveMarkEmitTimer) return;
   engineState.liveMarkEmitTimer = setTimeout(() => {
     engineState.liveMarkEmitTimer = null;
     engineState.lastLiveMarkEmitAt = Date.now();
-    broadcastPaperLive('manual-console', getLiveMarkSnapshot());
+    broadcastPaperLive(getStrategyId(), getLiveMarkSnapshot());
   }, Math.max(20, LIVE_MARK_EMIT_MIN_GAP_MS - gap));
 }
 
@@ -828,7 +930,7 @@ async function onManualOptionTick(tradeId, ltp) {
   try {
     const trade = await LivePaperTrade.findOne({
       _id: id,
-      strategyKey: STRATEGY_KEY,
+      strategyKey: getStrategyKey(),
       exitTime: null,
     });
     if (!trade) {
@@ -1039,7 +1141,7 @@ async function fillOrderToTrade(order, { entryPremium, spot, clock }) {
   let tradeDoc;
   try {
     tradeDoc = await LivePaperTrade.create({
-      strategyKey: STRATEGY_KEY,
+      strategyKey: getStrategyKey(),
       symbol: order.symbol,
       side,
       optionType: product === 'FUTURE' ? 'FUT' : order.optionType,
@@ -1252,7 +1354,7 @@ async function createFutureOrder(payload, clock) {
   }
 
   const order = await ManualPendingOrder.create({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     symbol,
     optionType: 'FUT',
     product: 'FUTURE',
@@ -1323,8 +1425,16 @@ async function createOrder(payload) {
   const clock = getIstClock(new Date());
   await assertMarketOpen(clock);
 
+  // Desk is selected by the controller (index vs stock). Do not auto-switch here.
   if (normalizeProduct(payload.product) === 'FUTURE') {
+    if (resolveDeskName() !== 'stock') {
+      throw new Error('Stock futures belong on Stock Manual — use /api/manual-stock');
+    }
     return createFutureOrder(payload, clock);
+  }
+
+  if (resolveDeskName() !== 'index') {
+    throw new Error('Stock Manual only accepts stock futures (product=FUTURE)');
   }
 
   const symbol = normalizeSymbol(payload.symbol);
@@ -1391,7 +1501,7 @@ async function createOrder(payload) {
   }
 
   const order = await ManualPendingOrder.create({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     symbol,
     optionType,
     strike,
@@ -1463,7 +1573,7 @@ async function createOrder(payload) {
 async function cancelOrder(orderId, reason = 'USER_CANCEL') {
   const order = await ManualPendingOrder.findOne({
     _id: orderId,
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     status: 'PENDING',
   });
   if (!order) throw new Error('Pending order not found');
@@ -1536,7 +1646,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
   await wallet.save();
   // Keep durable rebuild in sync after every close (cheap vs every tick).
   await rebuildMainWalletLedger(wallet);
-  lastClosedStatsSyncAt = Date.now();
+  lastClosedStatsSyncAtByDesk[resolveDeskName()] = Date.now();
 
   await logAction({
     action: reason === 'MANUAL_CLOSE' ? 'POSITION_CLOSED_MANUAL' : `POSITION_CLOSED_${reason}`,
@@ -1552,7 +1662,7 @@ async function finalizeTrade(trade, { exitPremium, mark, reason }) {
 async function closePositionById(tradeId, { reason = 'MANUAL_CLOSE' } = {}) {
   const trade = await LivePaperTrade.findOne({
     _id: tradeId,
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     exitTime: null,
   });
   if (!trade) throw new Error('Open position not found');
@@ -1623,7 +1733,7 @@ function parseRiskPointsInput(raw) {
 async function updatePositionRisk(tradeId, payload = {}) {
   const trade = await LivePaperTrade.findOne({
     _id: tradeId,
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     exitTime: null,
   });
   if (!trade) throw new Error('Open position not found');
@@ -1747,7 +1857,7 @@ async function updatePositionRisk(tradeId, payload = {}) {
 
 async function checkPendingOrders(clock) {
   const pending = await ManualPendingOrder.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     status: 'PENDING',
     orderType: 'LIMIT',
   }).sort({ createdAt: 1 });
@@ -1798,7 +1908,7 @@ async function checkPendingOrders(clock) {
 
 async function checkOpenPositions(clock) {
   const openTrades = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     exitTime: null,
   }).sort({ entryTime: 1 });
 
@@ -1806,7 +1916,7 @@ async function checkOpenPositions(clock) {
 
   for (const trade of openTrades) {
     try {
-      if (clock.dateKey !== trade.entryDateKey) {
+      if (getDayCloseEnabled() && clock.dateKey !== trade.entryDateKey) {
         const mark = await resolveMarkForTrade(trade);
         await finalizeTrade(trade, {
           exitPremium: mark.optionLtp,
@@ -1832,6 +1942,20 @@ async function pollOnce() {
   const clock = getIstClock(new Date());
   engineState.lastPollAt = new Date();
   if (!engineState.running) return;
+  // Dual desk: process index + stock futures each tick with isolated desk context.
+  for (const deskName of Object.keys(DESKS)) {
+    try {
+      await runWithDesk(deskName, async () => {
+        await processDeskClock(deskName, clock);
+      });
+    } catch (err) {
+      engineState.lastError = `${deskName} poll: ${err.message}`;
+    }
+  }
+}
+
+async function processDeskClock(deskName, clock) {
+  // Keep helper for dual-desk ticks. Real work lives in checkPendingOrders / checkOpenPositions.
   await checkPendingOrders(clock);
   await checkOpenPositions(clock);
 }
@@ -1847,20 +1971,30 @@ function startPoll() {
   engineState.pollTimer = setInterval(tick, POLL_INTERVAL_MS);
 }
 
-async function ensureEngineRunning() {
+async function ensureEngineRunning(deskName = 'index') {
+  const name = resolveDeskName(deskName);
+  selectDesk(name);
   if (!engineState.running) {
     engineState.running = true;
     engineState.startedAt = new Date();
     startPoll();
-    await logAction({ action: 'ENGINE_STARTED', message: 'Manual console engine online' });
-    // Warm WS subscriptions for any positions already open.
-    LivePaperTrade.find({ strategyKey: STRATEGY_KEY, exitTime: null })
-      .then((open) => syncLiveSubscriptions(open))
-      .catch((err) => {
-        engineState.lastError = `WS warm-up: ${err.message}`;
+    await runWithDesk(name, async () => {
+      await logAction({
+        action: 'ENGINE_STARTED',
+        message: `${getDeskConfig(name).label} engine online`,
       });
+    });
+    // Warm WS for open positions on BOTH desks.
+    for (const d of Object.keys(DESKS)) {
+      const key = DESKS[d].strategyKey;
+      LivePaperTrade.find({ strategyKey: key, exitTime: null })
+        .then((open) => syncLiveSubscriptions(open))
+        .catch((err) => {
+          engineState.lastError = `WS warm-up ${d}: ${err.message}`;
+        });
+    }
   }
-  return { ok: true, state: getEngineSnapshot() };
+  return { ok: true, state: getEngineSnapshot(), desk: name };
 }
 
 function getEngineSnapshot() {
@@ -1906,29 +2040,23 @@ async function getExpiries(symbol) {
   return { symbol: sym, expiries: future.length ? future : list, nearest };
 }
 
-/** Symbol picker data: index option underlyings + all NSE stock-future underlyings. */
+/** Symbol picker data: index (desk=index) or stock futures only (desk=stock). */
 async function getInstrumentUniverse() {
-  let futures = [];
-  let optStocks = [];
-  try {
-    futures = await listFutureUnderlyings();
-  } catch {
-    futures = [];
+  const desk = resolveDeskName();
+  if (desk === 'stock') {
+    let futures = [];
+    try {
+      futures = await listFutureUnderlyings();
+    } catch {
+      futures = [];
+    }
+    let stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s) && isTradableStockUnderlying(s));
+    stockFutures.sort((a, b) => a.localeCompare(b));
+    return { indexOptions: [], stockFutures };
   }
-  try {
-    optStocks = await listOptionStockUnderlyings();
-  } catch {
-    optStocks = [];
-  }
+  // Index Manual: index underlyings only (stock FUT lives on Stock Manual).
   const indexOptions = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'FINNIFTY'].filter((s) => ALLOWED_SYMBOLS.has(s));
-  const optSet = new Set(optStocks);
-  // Stock F&O underlyings that have futures; prefer ones with OPTSTK so live OI works.
-  let stockFutures = futures.filter((s) => !ALLOWED_SYMBOLS.has(s) && isTradableStockUnderlying(s));
-  if (optSet.size > 0) {
-    stockFutures = stockFutures.filter((s) => optSet.has(s));
-  }
-  stockFutures.sort((a, b) => a.localeCompare(b));
-  return { indexOptions, stockFutures };
+  return { indexOptions, stockFutures: [] };
 }
 
 /** Live quote for a stock/index future order ticket. */
@@ -2181,25 +2309,35 @@ async function syncClosedTradeStats(wallet) {
 }
 
 async function getStatus() {
-  await ensureEngineRunning();
-  await repairTestingFlags();
+  const deskName = resolveDeskName();
+  await ensureEngineRunning(deskName);
+  const now = Date.now();
+  if (
+    !lastRepairTestingAtByDesk[deskName]
+    || now - lastRepairTestingAtByDesk[deskName] > REPAIR_TESTING_MS
+  ) {
+    await repairTestingFlags();
+    lastRepairTestingAtByDesk[deskName] = now;
+  }
   const clock = getIstClock(new Date());
   let wallet = await ensureWallet();
   // Repair wallet profit/loss from closed book occasionally (not every poll).
-  const now = Date.now();
-  if (!lastClosedStatsSyncAt || now - lastClosedStatsSyncAt > CLOSED_STATS_SYNC_MS) {
+  if (
+    !lastClosedStatsSyncAtByDesk[deskName]
+    || now - lastClosedStatsSyncAtByDesk[deskName] > CLOSED_STATS_SYNC_MS
+  ) {
     wallet = await syncClosedTradeStats(wallet);
-    lastClosedStatsSyncAt = now;
+    lastClosedStatsSyncAtByDesk[deskName] = now;
   }
   wallet = await ensureDepositHistoryBackfill(wallet);
   const openTrades = await LivePaperTrade.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     exitTime: null,
   })
     .sort({ entryTime: -1 })
     .lean();
   const pendingOrders = await ManualPendingOrder.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     status: 'PENDING',
   })
     .sort({ createdAt: -1 })
@@ -2234,7 +2372,11 @@ async function getStatus() {
     }
   }
 
+  const desk = getDeskConfig(deskName);
   return {
+    desk: deskName,
+    strategyKey: desk.strategyKey,
+    walletKey: desk.walletKey,
     engine: getEngineSnapshot(),
     istDateKey: clock.dateKey,
     wallet: serializeWallet(wallet, {
@@ -2253,7 +2395,7 @@ async function getStatus() {
 
 async function listTrades({ page = 1, pageSize = 50, status = 'ALL', book = 'all' } = {}) {
   await repairTestingFlags();
-  const filter = { strategyKey: STRATEGY_KEY };
+  const filter = { strategyKey: getStrategyKey() };
   const statusQ = String(status || 'ALL').toUpperCase();
   const bookQ = String(book || 'all').toLowerCase();
   if (statusQ === 'OPEN') {
@@ -2294,7 +2436,7 @@ async function listTrades({ page = 1, pageSize = 50, status = 'ALL', book = 'all
 }
 
 async function listActions({ page = 1, pageSize = 50 }) {
-  const filter = { strategyKey: STRATEGY_KEY };
+  const filter = { strategyKey: getStrategyKey() };
   const totalRows = await ManualTradeAction.countDocuments(filter);
   const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
   const currentPage = Math.min(Math.max(1, page), totalPages);
@@ -2310,7 +2452,7 @@ async function resetWallet() {
   for (const id of [...liveSubs.keys()]) dropTradeSubscription(id);
   // Refund any pending limit holds before wiping orders.
   const pending = await ManualPendingOrder.find({
-    strategyKey: STRATEGY_KEY,
+    strategyKey: getStrategyKey(),
     status: 'PENDING',
     heldAmount: { $gt: 0 },
   });
@@ -2318,8 +2460,8 @@ async function resetWallet() {
     await releaseHeldFunds(order);
     await order.save();
   }
-  await LivePaperTrade.deleteMany({ strategyKey: STRATEGY_KEY });
-  await ManualPendingOrder.deleteMany({ strategyKey: STRATEGY_KEY });
+  await LivePaperTrade.deleteMany({ strategyKey: getStrategyKey() });
+  await ManualPendingOrder.deleteMany({ strategyKey: getStrategyKey() });
   const wallet = await ensureWallet();
   // Keep topped-up capital; clear P/L and free all cash back to deposits.
   wallet.balance = Number(wallet.startingBalance || 0);
@@ -2337,7 +2479,15 @@ async function resetWallet() {
 }
 
 module.exports = {
-  STRATEGY_KEY,
+  DESKS,
+  DESK_INDEX,
+  DESK_STOCK,
+  getStrategyKey,
+  getWalletKey,
+  getDayCloseEnabled,
+  getStrategyId,
+  selectDesk,
+  runWithDesk,
   TOPUP_AMOUNTS,
   ensureEngineRunning,
   getEngineSnapshot,
