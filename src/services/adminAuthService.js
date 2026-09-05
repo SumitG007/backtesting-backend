@@ -102,21 +102,13 @@ function verifyAccessToken(token) {
   }
 }
 
-function getPublicAuthConfig() {
+/** Auth-gated diagnostics only — never expose via public routes. */
+async function getAuthStatus() {
   const envEmail = readAdminEmailFromEnv();
   const envPasswordSet = Boolean(readAdminPasswordFromEnv());
-  return {
-    adminEmail: envEmail || null,
-    envConfigured: Boolean(envEmail && envPasswordSet),
-    passwordHint: envPasswordSet ? 'Set in server .env (ADMIN_PASSWORD)' : null,
-  };
-}
-
-async function getAuthStatus() {
-  const pub = getPublicAuthConfig();
   const doc = await PlatformAdmin.findOne({ key: SINGLETON_KEY }).lean();
   return {
-    ...pub,
+    envConfigured: Boolean(envEmail && envPasswordSet),
     storedInMongo: Boolean(doc?.email),
     mongoEmail: doc?.email || null,
     lastSyncedFromEnvAt: doc?.lastSyncedFromEnvAt || null,
@@ -148,7 +140,6 @@ module.exports = {
   loginWithCredentials,
   verifyAccessToken,
   verifyPasswordForUser,
-  getPublicAuthConfig,
   getAuthStatus,
   readAdminEmailFromEnv,
 };

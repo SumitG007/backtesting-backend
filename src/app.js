@@ -3,29 +3,16 @@ const cors = require('cors');
 const compression = require('compression');
 const apiRoutes = require('./routes');
 const { requireAuth } = require('./middleware/requireAuth');
+const { resolveCorsOrigin } = require('./utils/corsOrigin');
 
 const app = express();
 
-function normalizeCorsOrigin(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return true;
-  const origins = raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      try {
-        return new URL(item).origin;
-      } catch {
-        return item.replace(/\/+$/, '');
-      }
-    });
-  return origins.length <= 1 ? origins[0] : origins;
-}
+// Needed so login rate-limit sees the real client IP behind ALB / reverse proxy.
+app.set('trust proxy', 1);
 
-app.use(cors({ origin: normalizeCorsOrigin(process.env.CORS_ORIGIN) }));
+app.use(cors({ origin: resolveCorsOrigin() }));
 app.use(compression());
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use('/api', requireAuth, apiRoutes);
 
 module.exports = app;

@@ -4,7 +4,7 @@ const {
   verifyAccessToken,
   verifyPasswordForUser,
 } = require('../services/adminAuthService');
-// login with credentials
+
 async function postLogin(req, res) {
   try {
     const email = req.body?.email ?? req.body?.username ?? req.body?.admin;
@@ -23,7 +23,13 @@ async function postLogin(req, res) {
   }
 }
 
-async function getAuthConfig(_req, res) {
+/** Public — no emails, Mongo details, or env hints. */
+function getAuthConfig(_req, res) {
+  return res.json({ ok: true, loginRequired: true });
+}
+
+/** Authenticated — diagnostic status for the logged-in admin only. */
+async function getAuthStatusHandler(_req, res) {
   try {
     const status = await getAuthStatus();
     return res.json({ ok: true, ...status });
@@ -59,4 +65,11 @@ async function postVerifyPassword(req, res) {
   }
 }
 
-module.exports = { postLogin, getAuthConfig, getMe, postLogout, postVerifyPassword };
+module.exports = {
+  postLogin,
+  getAuthConfig,
+  getAuthStatusHandler,
+  getMe,
+  postLogout,
+  postVerifyPassword,
+};

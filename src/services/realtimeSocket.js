@@ -1,24 +1,8 @@
 const { Server } = require('socket.io');
 const { verifyAccessToken } = require('./adminAuthService');
+const { resolveCorsOrigin } = require('../utils/corsOrigin');
 
 let ioRef = null;
-
-function normalizeCorsOrigin(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return true;
-  const origins = raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item) => {
-      try {
-        return new URL(item).origin;
-      } catch {
-        return item.replace(/\/+$/, '');
-      }
-    });
-  return origins.length <= 1 ? origins[0] : origins;
-}
 
 /**
  * Broadcast to all authenticated sockets. Safe no-op before init / on emit errors.
@@ -64,7 +48,7 @@ function initRealtime(httpServer) {
   const io = new Server(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: normalizeCorsOrigin(process.env.CORS_ORIGIN),
+      origin: resolveCorsOrigin(),
       methods: ['GET', 'POST'],
       credentials: true,
     },
