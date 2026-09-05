@@ -24,6 +24,12 @@ const OI_FLOW_EB_LIVE_KEY = 'oi_flow_eb_live';
 const OI_FLOW_CONTINUATION_LIVE_KEY = 'oi_flow_continuation_live';
 /** OI Pulse Scalp (OPS-3) — closed 5m recipe + Strong + Spot Δ · +3/−6 · time 2 bars · ATM. */
 const OI_PULSE_SCALP_LIVE_KEY = 'oi_pulse_scalp_live';
+/** OI Cover Flip — peanut harvest Cover UP · +6/−4 · ATM CE. */
+const OI_COVER_FLIP_LIVE_KEY = 'oi_cover_flip_live';
+/** OI Cover Chase — both sides · no TP · SL−4 · flip opposite · stop after 1 SL green. */
+const OI_COVER_CHASE_LIVE_KEY = 'oi_cover_chase_live';
+/** OI Trap Expansion — elite T/R/E · no TP · SL−8 · stop after 1 SL green. */
+const OI_TRAP_EXPANSION_LIVE_KEY = 'oi_trap_expansion_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -39,4 +45,7 @@ module.exports = {
   OI_FLOW_EB_LIVE_KEY,
   OI_FLOW_CONTINUATION_LIVE_KEY,
   OI_PULSE_SCALP_LIVE_KEY,
+  OI_COVER_FLIP_LIVE_KEY,
+  OI_COVER_CHASE_LIVE_KEY,
+  OI_TRAP_EXPANSION_LIVE_KEY,
 };

@@ -103,6 +103,30 @@ const {
   postOiPulseScalpClose,
 } = require('../controllers/oiPulseScalpController');
 const {
+  getOiCoverFlipStatus,
+  getOiCoverFlipBook,
+  getOiCoverFlipTrades,
+  postOiCoverFlipEnabled,
+  patchOiCoverFlipSettings,
+  postOiCoverFlipClose,
+} = require('../controllers/oiCoverFlipController');
+const {
+  getOiCoverChaseStatus,
+  getOiCoverChaseBook,
+  getOiCoverChaseTrades,
+  postOiCoverChaseEnabled,
+  patchOiCoverChaseSettings,
+  postOiCoverChaseClose,
+} = require('../controllers/oiCoverChaseController');
+const {
+  getOiTrapExpansionStatus,
+  getOiTrapExpansionBook,
+  getOiTrapExpansionTrades,
+  postOiTrapExpansionEnabled,
+  patchOiTrapExpansionSettings,
+  postOiTrapExpansionClose,
+} = require('../controllers/oiTrapExpansionController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowHeaderSignal,
@@ -219,6 +243,27 @@ router.get('/oi-pulse-scalp/trades', getOiPulseScalpTrades);
 router.post('/oi-pulse-scalp/enabled', postOiPulseScalpEnabled);
 router.patch('/oi-pulse-scalp/settings', patchOiPulseScalpSettings);
 router.post('/oi-pulse-scalp/close', postOiPulseScalpClose);
+
+router.get('/oi-cover-flip/status', getOiCoverFlipStatus);
+router.get('/oi-cover-flip/book', getOiCoverFlipBook);
+router.get('/oi-cover-flip/trades', getOiCoverFlipTrades);
+router.post('/oi-cover-flip/enabled', postOiCoverFlipEnabled);
+router.patch('/oi-cover-flip/settings', patchOiCoverFlipSettings);
+router.post('/oi-cover-flip/close', postOiCoverFlipClose);
+
+router.get('/oi-cover-chase/status', getOiCoverChaseStatus);
+router.get('/oi-cover-chase/book', getOiCoverChaseBook);
+router.get('/oi-cover-chase/trades', getOiCoverChaseTrades);
+router.post('/oi-cover-chase/enabled', postOiCoverChaseEnabled);
+router.patch('/oi-cover-chase/settings', patchOiCoverChaseSettings);
+router.post('/oi-cover-chase/close', postOiCoverChaseClose);
+
+router.get('/oi-trap-expansion/status', getOiTrapExpansionStatus);
+router.get('/oi-trap-expansion/book', getOiTrapExpansionBook);
+router.get('/oi-trap-expansion/trades', getOiTrapExpansionTrades);
+router.post('/oi-trap-expansion/enabled', postOiTrapExpansionEnabled);
+router.patch('/oi-trap-expansion/settings', patchOiTrapExpansionSettings);
+router.post('/oi-trap-expansion/close', postOiTrapExpansionClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);
