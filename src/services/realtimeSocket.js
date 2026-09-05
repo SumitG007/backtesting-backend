@@ -1,6 +1,5 @@
 const { Server } = require('socket.io');
 const { verifyAccessToken } = require('./adminAuthService');
-const { attachSocketServer, listToday } = require('./notificationHub');
 
 let ioRef = null;
 
@@ -91,11 +90,6 @@ function initRealtime(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    socket.emit('notification:day', listToday());
-    socket.on('notification:list', () => {
-      socket.emit('notification:day', listToday());
-    });
-
     // Paper-live MTM / live mark snapshot (EOD OI Walls + Manual Console).
     socket.on('paper-live:subscribe', (msg = {}) => {
       const strategyId = String(msg?.strategyId || '').toLowerCase();
@@ -121,7 +115,6 @@ function initRealtime(httpServer) {
   });
 
   ioRef = io;
-  attachSocketServer(io);
   console.log('[Realtime] Socket.IO ready at /socket.io');
   return io;
 }

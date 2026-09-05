@@ -26,7 +26,6 @@ const {
   getFutureLtp,
 } = require('./dhanLiveService');
 const { STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY } = require('../strategies/keys');
-const { pushNotification, pruneTradeNotifications } = require('./notificationHub');
 const { broadcastPaperLive } = require('./realtimeSocket');
 
 const STRATEGY_KEY = STRATEGY_FOURTEEN_EOD_OI_WALLS_LIVE_KEY;
@@ -35,7 +34,6 @@ const WALLET_KEY = 'paper_live_strategy14';
 const OPTION_SUBSCRIPTION_KEY = 'engine:strategy14:option';
 const LOG_PREFIX = '[EodOiWallsPaperLive]';
 const SCENARIO_LABEL = 'EOD OI Walls';
-const NOTIF_STRATEGY = 'EOD OI Walls';
 
 const POLL_INTERVAL_MS = 2000;
 const POSITION_POLL_MS = 1000;
@@ -90,7 +88,6 @@ const engineState = {
   lastSpot: null,
   lastOptionTick: null,
   liveSignal: null,
-  lastSignalNotifKey: null,
   watchlist: null,
   lastOiSnapshot: null,
   lastOiFetchAt: 0,
@@ -712,27 +709,6 @@ function publishLiveSignal(next) {
     at: new Date().toISOString(),
   };
   publishLiveMarkSnapshot();
-
-  const key = [
-    engineState.liveSignal.status,
-    engineState.liveSignal.risingWall?.strike || '',
-    engineState.liveSignal.risingWall?.optionType || '',
-  ].join(':');
-  if (key === engineState.lastSignalNotifKey) return;
-  const status = String(engineState.liveSignal.status || '');
-  if (status === 'READY' || status === 'ENTERED') {
-    engineState.lastSignalNotifKey = key;
-    pushNotification({
-      type: status === 'ENTERED' ? 'SIGNAL_INFO' : 'SIGNAL_READY',
-      strategy: NOTIF_STRATEGY,
-      title: engineState.liveSignal.message || status,
-      body: engineState.liveSignal.risingWall
-        ? `${engineState.liveSignal.risingWall.optionType} ${engineState.liveSignal.risingWall.strike} · rise ${engineState.liveSignal.risingWall.rise}`
-        : '',
-      meta: { status, risingWall: engineState.liveSignal.risingWall },
-      dedupeKey: `eod-oi-walls-signal:${key}`,
-    });
-  }
 }
 
 async function fetchOiSnapshot(clock, { force = false, futLtp = null } = {}) {
@@ -1181,14 +1157,6 @@ async function placeLongOption(clock, risingWall, spot) {
       targetPremium: Number(targetPremium.toFixed(2)),
       stopLossPremium: stopLossPremium != null ? Number(stopLossPremium.toFixed(2)) : null,
     });
-    pushNotification({
-      type: 'ENTRY',
-      strategy: NOTIF_STRATEGY,
-      title: `Entered ${optionType} ${strike}`,
-      body: `Wall ${strike} · +${targetPoints}pts${hasSl ? ` / −${stopLossPoints}pts` : ''} · ₹${Number(entryPremium.toFixed(2))}`,
-      meta: { tradeId: tradeDoc._id.toString(), optionType, strike, wall },
-      dedupeKey: `eod-oi-walls-entry:${tradeDoc._id.toString()}`,
-    });
     publishLiveSignal({
       ok: true,
       status: 'ENTERED',
@@ -1421,14 +1389,6 @@ async function finalizeTrade(trade, { exitPremium, mark, reason, forceChain = fa
       pnl,
       exitPremium: safeExitPremium,
     });
-    pushNotification({
-      type: 'EXIT',
-      strategy: NOTIF_STRATEGY,
-      title: `Closed ${trade.optionType} ${trade.strike}`,
-      body: `${reason} · P/L ₹${Number(pnl.toFixed(2))} · exit ₹${Number(safeExitPremium.toFixed(2))}`,
-      meta: { tradeId: trade._id.toString(), reason, pnl },
-      dedupeKey: `eod-oi-walls-exit:${trade._id.toString()}`,
-    });
     engineState.lastExitAtMs = Date.now();
     clearOpenTrade();
   } catch (err) {
@@ -1514,16 +1474,6 @@ async function reapplyExitPointsToOpenTrade({ reason = 'SETTINGS' } = {}) {
   return { ok: true, updated: 1 };
 }
 
-async function syncNotificationsWithDb() {
-  try {
-    const rows = await LivePaperTrade.find({ strategyKey: STRATEGY_KEY }).select({ _id: 1 }).lean();
-    const ids = rows.map((r) => String(r._id));
-    pruneTradeNotifications({ strategy: NOTIF_STRATEGY, validTradeIds: ids });
-  } catch (err) {
-    console.warn(`${LOG_PREFIX} notification sync:`, err.message);
-  }
-}
-
 async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   if (engineState.running) {
     if (settings && Object.keys(settings).length > 0) {
@@ -1561,7 +1511,6 @@ async function startEngine({ symbol = 'NIFTY', settings = {} } = {}) {
   engineState.running = true;
   engineState.startedAt = new Date();
   startPoll();
-  await syncNotificationsWithDb();
   return { ok: true, state: getEngineSnapshot() };
 }
 
@@ -1654,7 +1603,6 @@ async function ensureEngineRunning() {
     /* ignore */
   }
   await syncEngineTradeStateFromDb(clock);
-  await syncNotificationsWithDb();
   if (engineState.openTradeId && !engineState.positionPollTimer) {
     const openInDb = await LivePaperTrade.findById(engineState.openTradeId);
     if (openInDb && !openInDb.exitTime) {
@@ -1716,7 +1664,6 @@ async function reconcileOpenTrades() {
   const clock = getIstClock(new Date());
   await dedupeOpenTradesInDb(clock);
   await syncEngineTradeStateFromDb(clock);
-  await syncNotificationsWithDb();
   if (engineState.openTradeId && engineState.running && !engineState.positionPollTimer) {
     const openInDb = await LivePaperTrade.findById(engineState.openTradeId);
     if (openInDb && !openInDb.exitTime) {
