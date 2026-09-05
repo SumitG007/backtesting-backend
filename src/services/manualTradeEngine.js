@@ -2032,6 +2032,13 @@ async function getQuote({ symbol, expiry, strike, optionType }) {
 }
 
 async function getExpiries(symbol) {
+  // Stock desk: future contract months (not option weeklies).
+  if (resolveDeskName() === 'stock') {
+    const sym = await normalizeFutureSymbol(symbol);
+    const list = await listFutureExpiries(sym);
+    const dates = list.map((e) => e.expiry);
+    return { symbol: sym, expiries: dates, nearest: dates[0] || null };
+  }
   const sym = normalizeSymbol(symbol);
   const list = await fetchExpiryList(sym);
   const today = new Date().toISOString().slice(0, 10);

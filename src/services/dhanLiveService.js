@@ -1214,20 +1214,39 @@ async function getIndexLtp({ symbol = 'NIFTY', maxWaitMs = 800, forceFresh = fal
 /**
  * Quote for the futures order ticket: nearest tradable expiry, LTP, lot size and
  * the full expiry list so the UI can let the user roll to the next month.
+ * Always returns expiries even when live LTP is cold (market closed / feed down).
  */
-async function getFutureQuote({ symbol, expiry, maxWaitMs } = {}) {
+async function getFutureQuote({ symbol, expiry, maxWaitMs = 1200 } = {}) {
   const upper = String(symbol || '').toUpperCase();
   const expiries = await listFutureExpiries(upper);
   if (!expiries.length) throw new Error(`No futures contracts found for ${upper}`);
   const wanted = expiry ? String(expiry).slice(0, 10) : null;
   const inst = (wanted && expiries.find((e) => e.expiry === wanted)) || expiries[0];
-  const ltp = await fetchInstrumentLtp(inst, maxWaitMs != null ? { maxWaitMs } : undefined);
-  const lotSize = await getCurrentLotSize(upper);
+  let ltp = null;
+  let ltpError = null;
+  const waitCap = Math.max(0, Number(maxWaitMs) || 0);
+  try {
+    ltp = await Promise.race([
+      fetchInstrumentLtp(inst, { maxWaitMs: waitCap }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Future LTP timeout')), waitCap + 800);
+      }),
+    ]);
+  } catch (err) {
+    ltpError = err?.message || 'Future LTP unavailable';
+  }
+  let lotSize = 1;
+  try {
+    lotSize = await getCurrentLotSize(upper);
+  } catch {
+    lotSize = 1;
+  }
   return {
     symbol: upper,
     expiry: inst.expiry,
     expiries: expiries.map((e) => e.expiry),
     ltp,
+    ltpError,
     lotSize,
     securityId: inst.securityId,
     exchangeSegment: inst.exchangeSegment,
