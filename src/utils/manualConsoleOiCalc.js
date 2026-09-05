@@ -331,12 +331,14 @@ function buildManualConsoleOiBars(allRows, intervalMin, opts = {}) {
       || (inSession && lastSaved && endMin === Number(lastSaved.minutes));
     const offGrid = isLastEntry && !row.afterClose && !matchesInterval(endMin, step);
 
+    const futNow = Number(row.futPrice);
     enriched.push({
       dateKey: row.dateKey,
       minutes: endMin,
       time: row.time,
       srNo: idx + 1,
       spotPrice: Number.isFinite(spotNow) ? spotNow : null,
+      futPrice: Number.isFinite(futNow) ? futNow : null,
       windowStartMin: windowStart,
       windowEndMin: endMin,
       minuteCount: buckets.minuteCount,

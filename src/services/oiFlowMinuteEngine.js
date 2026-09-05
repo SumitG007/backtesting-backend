@@ -209,6 +209,7 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
         strikes,
         prev,
       });
+      const market = await getLiveMarketContext(spotPrice);
 
       const doc = {
         symbol: engineState.symbol,
@@ -216,6 +217,7 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
         minutes,
         time,
         spotPrice,
+        futPrice: market.futPrice ?? null,
         atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
         lookaroundStrikes: LOOKAROUND_STRIKES,
         strikes,
@@ -263,6 +265,7 @@ async function captureMinute({ dateKey, minutes, forceRetry = false } = {}) {
     minutes,
     time,
     spotPrice: null,
+    futPrice: null,
     atm: null,
     lookaroundStrikes: LOOKAROUND_STRIKES,
     strikes: [],
@@ -376,6 +379,7 @@ function buildRowFromSnapshot(snapshot, clock, prev, { livePreview = false, afte
     minutes: clock.minutes,
     time: formatHhmm(clock.minutes),
     spotPrice,
+    futPrice: null,
     atm: Number.isFinite(snapshot?.atm) ? snapshot.atm : null,
     lookaroundStrikes: LOOKAROUND_STRIKES,
     strikes,

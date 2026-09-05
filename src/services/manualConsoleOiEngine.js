@@ -35,6 +35,7 @@ function stripForStore(row = {}) {
     minutes: row.minutes,
     time: row.time,
     spotPrice: row.spotPrice ?? null,
+    futPrice: row.futPrice ?? null,
     atm: row.atm ?? null,
     lookaroundStrikes: row.lookaroundStrikes ?? 3,
     callOiTotal: row.callOiTotal ?? null,
@@ -157,6 +158,7 @@ async function listToday({ intervalMin = 5 } = {}) {
           time: displayRow.time,
           minutes: displayRow.minutes,
           spotPrice: displayRow.spotPrice,
+          futPrice: displayRow.futPrice ?? null,
         }
       : null,
     rows: candleRows,

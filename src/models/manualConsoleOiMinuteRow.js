@@ -12,6 +12,8 @@ const manualConsoleOiMinuteRowSchema = new mongoose.Schema(
     minutes: { type: Number, required: true },
     time: { type: String, required: true },
     spotPrice: { type: Number, default: null },
+    /** Nifty futures LTP at capture (near weekly). */
+    futPrice: { type: Number, default: null },
     atm: { type: Number, default: null },
     lookaroundStrikes: { type: Number, default: 3 },
     callOiTotal: { type: Number, default: null },
