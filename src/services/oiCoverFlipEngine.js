@@ -101,7 +101,7 @@ async function ensureWallet() {
 
 function normalizeSettings(raw = {}) {
   const s = { ...DEFAULT_SETTINGS, ...(raw || {}) };
-  s.enabled = Boolean(s.enabled);
+  s.enabled = true; // always live
   s.symbol = String(s.symbol || 'NIFTY').toUpperCase();
   s.lotCount = Math.max(1, Math.min(50, Math.floor(Number(s.lotCount) || 10)));
   s.stepMin = Math.max(5, Math.min(60, Math.floor(Number(s.stepMin) || 5)));
@@ -780,10 +780,11 @@ async function getStatus() {
   };
 }
 
-async function setEnabled(enabled) {
-  const settings = await saveSettingsToDb({ enabled: Boolean(enabled) });
+async function setEnabled(_enabled) {
+  // Always live — ignore off requests
+  const settings = await saveSettingsToDb({ enabled: true });
   await ensureEngineRunning();
-  return { ok: true, enabled: settings.enabled, settings };
+  return { ok: true, enabled: true, settings };
 }
 
 async function updateSettings(partial = {}) {
