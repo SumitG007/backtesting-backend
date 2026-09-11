@@ -47,13 +47,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const oiFlowEb = require('./services/oiFlowEbEngine');
-    await oiFlowEb.ensureEngineRunning();
-  } catch (err) {
-    console.warn('OI Flow E/B engine boot:', err.message);
-  }
-
-  try {
     const flowScalpEb = require('./services/flowScalpEbEngine');
     await flowScalpEb.ensureEngineRunning();
   } catch (err) {
@@ -65,13 +58,6 @@ async function bootBackgroundServices() {
     await flowScalpPrime.ensureEngineRunning();
   } catch (err) {
     console.warn('Flow Scalp Prime engine boot:', err.message);
-  }
-
-  try {
-    const oiCoverChase = require('./services/oiCoverChaseEngine');
-    await oiCoverChase.ensureEngineRunning();
-  } catch (err) {
-    console.warn('Cover Scalp engine boot:', err.message);
   }
 
   try {

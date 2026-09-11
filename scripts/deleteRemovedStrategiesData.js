@@ -5,6 +5,8 @@
  * - OI Wall Reaction (oi_wall_reaction_live / paper_live_oi_wall_reaction)
  * - Cover Impulse Scalp (cover_impulse_scalp_live / paper_live_cover_impulse_scalp)
  * - Trap Expansion (oi_trap_expansion_live / paper_live_oi_trap_expansion)
+ * - OI Flow E/B (oi_flow_eb_live / paper_live_oi_flow_eb)
+ * - Cover Scalp / OCC (oi_cover_chase_live / paper_live_oi_cover_chase)
  *
  * Usage: node scripts/deleteRemovedStrategiesData.js
  */
@@ -19,6 +21,8 @@ const STRATEGY_KEYS = [
   'oi_wall_reaction_live',
   'cover_impulse_scalp_live',
   'oi_trap_expansion_live',
+  'oi_flow_eb_live',
+  'oi_cover_chase_live',
 ];
 const WALLET_KEYS = [
   'paper_live_oi_pulse_scalp',
@@ -26,6 +30,8 @@ const WALLET_KEYS = [
   'paper_live_oi_wall_reaction',
   'paper_live_cover_impulse_scalp',
   'paper_live_oi_trap_expansion',
+  'paper_live_oi_flow_eb',
+  'paper_live_oi_cover_chase',
 ];
 
 async function main() {
@@ -46,12 +52,14 @@ async function main() {
             'oi-wall-reaction',
             'cover-impulse-scalp',
             'oi-trap-expansion',
+            'oi-flow-eb',
+            'oi-cover-chase',
           ],
         },
       },
       {
         notes:
-          /oi_pulse_scalp|fut_doi_wall|oi_wall_reaction|cover_impulse_scalp|oi_trap_expansion/i,
+          /oi_pulse_scalp|fut_doi_wall|oi_wall_reaction|cover_impulse_scalp|oi_trap_expansion|oi_flow_eb|oi_cover_chase/i,
       },
     ],
   };
@@ -72,6 +80,8 @@ async function main() {
         oiWallReactionEngineSettings: 1,
         coverImpulseScalpEngineSettings: 1,
         oiTrapExpansionEngineSettings: 1,
+        oiFlowEbEngineSettings: 1,
+        oiCoverChaseEngineSettings: 1,
       },
     },
   );

@@ -63,14 +63,6 @@ const {
   postManualOiAutoClose,
 } = require('../controllers/manualOiAutoController');
 const {
-  getOiFlowEbStatus,
-  getOiFlowEbBook,
-  getOiFlowEbTrades,
-  postOiFlowEbEnabled,
-  patchOiFlowEbSettings,
-  postOiFlowEbClose,
-} = require('../controllers/oiFlowEbController');
-const {
   getFlowScalpEbStatus,
   getFlowScalpEbBook,
   getFlowScalpEbTrades,
@@ -86,14 +78,6 @@ const {
   patchFlowScalpPrimeSettings,
   postFlowScalpPrimeClose,
 } = require('../controllers/flowScalpPrimeController');
-const {
-  getOiCoverChaseStatus,
-  getOiCoverChaseBook,
-  getOiCoverChaseTrades,
-  postOiCoverChaseEnabled,
-  patchOiCoverChaseSettings,
-  postOiCoverChaseClose,
-} = require('../controllers/oiCoverChaseController');
 const {
   getOiFlowStatus,
   getOiFlowToday,
@@ -180,13 +164,6 @@ router.post('/manual-oi-auto/enabled', postManualOiAutoEnabled);
 router.patch('/manual-oi-auto/settings', patchManualOiAutoSettings);
 router.post('/manual-oi-auto/close', postManualOiAutoClose);
 
-router.get('/oi-flow-eb/status', getOiFlowEbStatus);
-router.get('/oi-flow-eb/book', getOiFlowEbBook);
-router.get('/oi-flow-eb/trades', getOiFlowEbTrades);
-router.post('/oi-flow-eb/enabled', postOiFlowEbEnabled);
-router.patch('/oi-flow-eb/settings', patchOiFlowEbSettings);
-router.post('/oi-flow-eb/close', postOiFlowEbClose);
-
 router.get('/flow-scalp-eb/status', getFlowScalpEbStatus);
 router.get('/flow-scalp-eb/book', getFlowScalpEbBook);
 router.get('/flow-scalp-eb/trades', getFlowScalpEbTrades);
@@ -200,13 +177,6 @@ router.get('/flow-scalp-prime/trades', getFlowScalpPrimeTrades);
 router.post('/flow-scalp-prime/enabled', postFlowScalpPrimeEnabled);
 router.patch('/flow-scalp-prime/settings', patchFlowScalpPrimeSettings);
 router.post('/flow-scalp-prime/close', postFlowScalpPrimeClose);
-
-router.get('/oi-cover-chase/status', getOiCoverChaseStatus);
-router.get('/oi-cover-chase/book', getOiCoverChaseBook);
-router.get('/oi-cover-chase/trades', getOiCoverChaseTrades);
-router.post('/oi-cover-chase/enabled', postOiCoverChaseEnabled);
-router.patch('/oi-cover-chase/settings', patchOiCoverChaseSettings);
-router.post('/oi-cover-chase/close', postOiCoverChaseClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);

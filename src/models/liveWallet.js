@@ -99,23 +99,6 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 100 },
     },
-    /** OI Flow E/B — closed 15m Strong Bull/Bear + Spot Δ + Match · scalp +5/−5 · day +5/−10. */
-    oiFlowEbEngineSettings: {
-      enabled: { type: Boolean, default: true },
-      symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 10 },
-      tradeFromTime: { type: String, default: '09:45' },
-      tradeToTime: { type: String, default: '14:30' },
-      eodExitTime: { type: String, default: '15:15' },
-      stepMin: { type: Number, default: 15 },
-      callMinSpotDelta: { type: Number, default: 5 },
-      /** Fixed option-premium SL / TP pts from entry LTP. */
-      optionSlPts: { type: Number, default: 5 },
-      optionTpPts: { type: Number, default: 5 },
-      dailyTarget: { type: Number, default: 5 },
-      dailyLoss: { type: Number, default: 10 },
-      perTradeCost: { type: Number, default: 100 },
-    },
     /** Flow Scalp E/B — live Bias + green candle · +2/−3 · day ₹4k@10 · 5m after SL. */
     flowScalpEbEngineSettings: {
       enabled: { type: Boolean, default: true },
@@ -144,25 +127,6 @@ const liveWalletSchema = new mongoose.Schema(
       perTradeCost: { type: Number, default: 100 },
       /** Day ₹ profit lock at 10 lots; 0 = off (default). Scales with lotCount when set. */
       dailyTargetInrAt10Lots: { type: Number, default: 0 },
-    },
-    /** Cover Scalp (OCC) — Cover Match · +5/−5 · no flip · day +5/−10 · 15m after SL. */
-    oiCoverChaseEngineSettings: {
-      enabled: { type: Boolean, default: true },
-      symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 10 },
-      tradeFromTime: { type: String, default: '09:45' },
-      tradeToTime: { type: String, default: '14:30' },
-      eodExitTime: { type: String, default: '15:15' },
-      stepMin: { type: Number, default: 5 },
-      optionTpPts: { type: Number, default: 5 },
-      optionSlPts: { type: Number, default: 5 },
-      minSpotDelta: { type: Number, default: 3 },
-      allowFlip: { type: Boolean, default: false },
-      minFlipScore: { type: Number, default: 90 },
-      minAbsDeltaFlip: { type: Number, default: 10 },
-      dailyTarget: { type: Number, default: 5 },
-      dailyLoss: { type: Number, default: 10 },
-      perTradeCost: { type: Number, default: 100 },
     },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
