@@ -20,8 +20,9 @@ const {
 const SYMBOL = 'NIFTY';
 const INTERVAL = '5';
 const KEEP_TRADING_DAYS = 7;
-const TODAY_REFRESH_MS = 8_000;
-const LOOP_MS = 15_000;
+const TODAY_REFRESH_MS = 60_000;
+/** Full week sync is heavy — keep rare so it does not starve live API requests. */
+const LOOP_MS = 5 * 60_000;
 
 let loopTimer = null;
 let syncBusy = false;
