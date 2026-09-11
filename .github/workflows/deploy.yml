@@ -43,16 +43,24 @@ jobs:
             # npx prisma generate
             # npx prisma migrate deploy
 
-            echo "Restarting PM2..."
-            # Logs used to show a process named BackTest; deploy historically used BackTesting.
-            for proc in BackTest BackTesting; do
-              if pm2 describe "$proc" > /dev/null 2>&1; then
-                echo "Stopping PM2 process $proc..."
-                pm2 delete "$proc"
-              fi
-            done
+            echo "Checking PM2 process..."
 
-            pm2 start ecosystem.config.cjs --no-pmx --no-automation
+            if pm2 describe BackTesting > /dev/null 2>&1; then
+              echo "PM2 process BackTesting found."
+              echo "Restarting existing process..."
+
+              pm2 restart BackTesting --update-env
+
+            else
+              echo "PM2 process BackTesting not found."
+              echo "Creating new PM2 process..."
+
+              pm2 start ecosystem.config.cjs --no-pmx --no-automation
+            fi
+
             pm2 save
+
+            echo "Current PM2 status:"
+            pm2 status
 
             echo "✅ Backend deployment completed."
