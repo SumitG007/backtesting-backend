@@ -1,0 +1,206 @@
+function toIntradayDateTime(value, endOfDay = false) {
+  if (!value) return '';
+  if (value.includes(' ')) return value;
+  return `${value} ${endOfDay ? '15:30:00' : '09:15:00'}`;
+}
+
+function parseDateOnly(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || '').trim());
+  if (!match) return new Date(NaN);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function formatDateOnly(value) {
+  const y = value.getUTCFullYear();
+  const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(value.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+function differenceInDaysInclusive(fromDate, toDate) {
+  const ms = parseDateOnly(toDate).getTime() - parseDateOnly(fromDate).getTime();
+  return Math.floor(ms / (1000 * 60 * 60 * 24)) + 1;
+}
+
+function normalizeTimestamp(value) {
+  if (typeof value === 'number') return new Date(value < 1e12 ? value * 1000 : value);
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const num = Number(value);
+    return new Date(num < 1e12 ? num * 1000 : num);
+  }
+  return new Date(value);
+}
+
+function getIstClock(isoValue) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(isoValue));
+
+  const pick = (type) => parts.find((p) => p.type === type)?.value || '00';
+  const year = pick('year');
+  const month = pick('month');
+  const day = pick('day');
+  const hour = Number(pick('hour'));
+  const minute = Number(pick('minute'));
+  return {
+    dateKey: `${year}-${month}-${day}`,
+    minutes: hour * 60 + minute,
+  };
+}
+
+function getWeekdayFromDateKey(dateKey) {
+  // dateKey format: YYYY-MM-DD (already in IST). Returns 0=Sunday ... 6=Saturday.
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
+  if (!match) return -1;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+/** NSE cash session is closed on Saturday and Sunday (IST calendar date). */
+function isWeekendDateKey(dateKey) {
+  const weekday = getWeekdayFromDateKey(dateKey);
+  return weekday === 0 || weekday === 6;
+}
+
+/** YYYY-MM-DD ± N calendar days (UTC date math; dateKeys are IST calendar dates). */
+function addDaysToDateKey(dateKey, days) {
+  const base = parseDateOnly(dateKey);
+  if (Number.isNaN(base.getTime())) return null;
+  return formatDateOnly(addDays(base, Number(days) || 0));
+}
+
+/**
+ * Most recent Friday on or before dateKey (IST calendar).
+ * Used so Sat/Sun keep Friday OI tape until Monday.
+ */
+function lastFridayDateKey(dateKey) {
+  let key = String(dateKey || '').trim();
+  for (let i = 0; i < 7; i += 1) {
+    if (getWeekdayFromDateKey(key) === 5) return key;
+    key = addDaysToDateKey(key, -1);
+    if (!key) break;
+  }
+  return String(dateKey || '').trim() || null;
+}
+
+/**
+ * Which OI minute dateKey the tape should show / retain.
+ * Sat–Sun → last Friday; Mon–Fri → today.
+ */
+function oiTapeDateKey(todayKey) {
+  const key = String(todayKey || '').trim();
+  if (!key) return key;
+  if (isWeekendDateKey(key)) return lastFridayDateKey(key);
+  return key;
+}
+
+/** dateKeys that must survive purge for the current calendar day. */
+function oiTapeRetainDateKeys(todayKey) {
+  const keep = oiTapeDateKey(todayKey);
+  return keep ? [keep] : [];
+}
+
+function parseClockMinutes(value, fallbackMinutes) {
+  const raw = String(value || '').trim();
+  const match = /^(\d{1,2}):(\d{2})$/.exec(raw);
+  if (!match) return fallbackMinutes;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return fallbackMinutes;
+  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) return fallbackMinutes;
+  return hh * 60 + mm;
+}
+
+/** Align IST minute to cash-session N-minute grid anchored at 09:15 (minute 555). */
+function istCashSessionBucketStart(minutes, intervalMinutes = 5) {
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  if (!Number.isFinite(minutes)) return minutes;
+  if (minutes < 555 || minutes > 930) return minutes;
+  return 555 + Math.floor((minutes - 555) / step) * step;
+}
+
+/** True once IST clock has reached the first minute AFTER this bucket (bucket is fully closed). */
+function istBucketFullyClosed({ bucketStartMinutes, nowMinutes, intervalMinutes = 5 }) {
+  const step = Math.max(1, Number(intervalMinutes) || 5);
+  if (!Number.isFinite(bucketStartMinutes) || !Number.isFinite(nowMinutes)) return false;
+  return nowMinutes >= bucketStartMinutes + step;
+}
+
+/** Align IST minute to cash-session 15m grid anchored at 09:15 (minute 555). Same formula as live candle poll. */
+function istCashSession15mBucketStart(minutes) {
+  return istCashSessionBucketStart(minutes, 15);
+}
+
+/** True once IST clock has reached the first minute AFTER this 15m bucket (bucket is fully closed). */
+function ist15mBucketFullyClosed({ bucketStartMinutes, nowMinutes }) {
+  return istBucketFullyClosed({ bucketStartMinutes, nowMinutes, intervalMinutes: 15 });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Wall-clock IST instant for YYYY-MM-DD + minutes from midnight (e.g. 560 → 09:20). */
+function buildIstWallClockTimestamp(dateKey, minutesFromMidnight) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateKey || '').trim());
+  if (!match) return NaN;
+  const hh = Math.floor(minutesFromMidnight / 60);
+  const mm = minutesFromMidnight % 60;
+  return new Date(
+    `${match[1]}-${match[2]}-${match[3]}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00+05:30`,
+  ).getTime();
+}
+
+/** ISO timestamp at bar close (open minute + interval) in IST. */
+function barCloseIsoFromCandle(candle, barIntervalMinutes = 5) {
+  const clock = getIstClock(candle[0]);
+  const closeMin = clock.minutes + Math.max(1, Number(barIntervalMinutes) || 5);
+  return new Date(buildIstWallClockTimestamp(clock.dateKey, closeMin)).toISOString();
+}
+
+/** ISO timestamp for a session wall-clock minute on a given date key. */
+function wallClockIsoFromMinutes(dateKey, minutesFromMidnight) {
+  return new Date(buildIstWallClockTimestamp(dateKey, minutesFromMidnight)).toISOString();
+}
+
+module.exports = {
+  toIntradayDateTime,
+  parseDateOnly,
+  formatDateOnly,
+  addDays,
+  addDaysToDateKey,
+  differenceInDaysInclusive,
+  normalizeTimestamp,
+  getIstClock,
+  getWeekdayFromDateKey,
+  isWeekendDateKey,
+  lastFridayDateKey,
+  oiTapeDateKey,
+  oiTapeRetainDateKeys,
+  parseClockMinutes,
+  istCashSession15mBucketStart,
+  ist15mBucketFullyClosed,
+  istCashSessionBucketStart,
+  istBucketFullyClosed,
+  buildIstWallClockTimestamp,
+  barCloseIsoFromCandle,
+  wallClockIsoFromMinutes,
+  sleep,
+};
