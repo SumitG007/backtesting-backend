@@ -1,0 +1,304 @@
+const manualEngine = require('../services/manualTradeEngine');
+
+function parsePage(raw, fallback = 1) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
+
+function parsePageSize(raw, fallback = 25, max = 500) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(n)));
+}
+
+/** Keep entire request on Index desk context (separate wallet + trades from Stock Manual). */
+function withIndexDesk(fn) {
+  return manualEngine.runWithDesk('index', fn);
+}
+
+async function getManualConsoleStatus(_req, res) {
+  try {
+    const data = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.getStatus();
+    });
+    return res.json({ ok: true, desk: 'index', ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualExpiries(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.getExpiries(req.query?.symbol || 'NIFTY'),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualQuote(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.getQuote({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+        strike: req.query?.strike,
+        optionType: req.query?.optionType,
+      }),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualChain(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.getChainAroundAtm({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualOiBoard(req, res) {
+  try {
+    const board = await withIndexDesk(() =>
+      manualEngine.getLiveOiBoard({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+        lookaroundStrikes: req.query?.lookaround,
+      }),
+    );
+    return res.json({ ok: true, board });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message, board: null });
+  }
+}
+
+async function getManualOiTotals(req, res) {
+  try {
+    const totals = await withIndexDesk(() =>
+      manualEngine.getOiBoardTotals({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
+    return res.json({ ok: true, ...totals });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualInstruments(_req, res) {
+  try {
+    const data = await withIndexDesk(() => manualEngine.getInstrumentUniverse());
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualFutureQuote(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.getFuture({
+        symbol: req.query?.symbol,
+        expiry: req.query?.expiry,
+      }),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function postManualOrder(req, res) {
+  try {
+    const body = { ...(req.body || {}) };
+    if (String(body.product || '').toUpperCase() === 'FUTURE') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Stock futures belong on Stock Manual — open /manual-stock',
+      });
+    }
+    const result = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.createOrder(body);
+    });
+    return res.json({
+      ok: true,
+      order: result.order,
+      trade: result.trade,
+      filled: result.filled,
+      message: result.filled
+        ? `Filled ${result.trade?.optionType} ${result.trade?.strike} @ ₹${result.trade?.entryPremium}`
+        : 'Limit order placed — fills when LTP reaches your price',
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function deleteManualOrder(req, res) {
+  try {
+    const orderId = String(req.params?.orderId || '').trim();
+    if (!orderId) return res.status(400).json({ ok: false, error: 'orderId required' });
+    const order = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.cancelOrder(orderId);
+    });
+    return res.json({ ok: true, order, message: 'Order cancelled' });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function postManualClosePosition(req, res) {
+  try {
+    const tradeId = String(req.params?.tradeId || '').trim();
+    if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId required' });
+    const trade = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.closePositionById(tradeId, { reason: 'MANUAL_CLOSE' });
+    });
+    return res.json({
+      ok: true,
+      trade,
+      message: trade?.pnl != null ? `Closed. P/L ₹${Number(trade.pnl).toFixed(2)}` : 'Position closed',
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function patchManualPositionRisk(req, res) {
+  try {
+    const tradeId = String(req.params?.tradeId || '').trim();
+    if (!tradeId) return res.status(400).json({ ok: false, error: 'tradeId required' });
+    const body = req.body || {};
+    const has = (k) => Object.prototype.hasOwnProperty.call(body, k);
+    const riskPayload = {};
+    if (has('stopLossValue')) {
+      riskPayload.stopLossValue = body.stopLossValue;
+      riskPayload.stopLossMode = body.stopLossMode;
+    } else if (has('stopLossPoints')) {
+      riskPayload.stopLossPoints = body.stopLossPoints;
+    }
+    if (has('targetValue')) {
+      riskPayload.targetValue = body.targetValue;
+      riskPayload.targetMode = body.targetMode;
+    } else if (has('targetProfitPoints')) {
+      riskPayload.targetProfitPoints = body.targetProfitPoints;
+    }
+    const trade = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.updatePositionRisk(tradeId, riskPayload);
+    });
+    return res.json({
+      ok: true,
+      trade,
+      message: `Updated — SL ${trade.stopLossPremium != null ? `₹${trade.stopLossPremium}` : 'off'}, target ${trade.targetPremium != null ? `₹${trade.targetPremium}` : 'EOD'}`,
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualTrades(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.listTrades({
+        page: parsePage(req.query?.page),
+        pageSize: parsePageSize(req.query?.pageSize, 50),
+        status: req.query?.status,
+        book: req.query?.book,
+      }),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function getManualActions(req, res) {
+  try {
+    const data = await withIndexDesk(() =>
+      manualEngine.listActions({
+        page: parsePage(req.query?.page),
+        pageSize: parsePageSize(req.query?.pageSize, 50, 200),
+      }),
+    );
+    return res.json({ ok: true, ...data });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function postManualWalletReset(req, res) {
+  try {
+    const wallet = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.resetWallet();
+    });
+    return res.json({ ok: true, wallet, message: 'Index Manual history cleared — capital kept' });
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+async function postManualWalletTopup(req, res) {
+  try {
+    const wallet = await withIndexDesk(async () => {
+      await manualEngine.ensureEngineRunning('index');
+      return manualEngine.topUpWallet(req.body?.amount);
+    });
+    return res.json({
+      ok: true,
+      wallet,
+      message: `Added ₹${Number(req.body?.amount).toLocaleString('en-IN')} to paper balance`,
+    });
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+/** Manual Console OI tape — own collection + calc (not /api/oi-flow). */
+async function getManualOiFlowToday(req, res) {
+  try {
+    const manualOi = require('../services/manualConsoleOiEngine');
+    const intervalMin = Number(req.query?.interval ?? req.query?.intervalMin ?? 5);
+    const data = await manualOi.listToday({ intervalMin });
+    return res.json(data);
+  } catch (error) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+}
+
+module.exports = {
+  getManualConsoleStatus,
+  getManualExpiries,
+  getManualQuote,
+  getManualChain,
+  getManualOiBoard,
+  getManualOiTotals,
+  getManualInstruments,
+  getManualFutureQuote,
+  postManualOrder,
+  deleteManualOrder,
+  postManualClosePosition,
+  patchManualPositionRisk,
+  getManualTrades,
+  getManualActions,
+  postManualWalletReset,
+  postManualWalletTopup,
+  getManualOiFlowToday,
+};
