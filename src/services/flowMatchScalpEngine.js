@@ -79,7 +79,14 @@ const engineState = {
 function parseHhmmToMinutes(raw) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(raw || '').trim());
   if (!m) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (hh > 23 || mm > 59) return null;
+  return hh * 60 + mm;
+}
+
+function hhmmOr(raw, fallback) {
+  return parseHhmmToMinutes(raw) != null ? String(raw).trim() : fallback;
 }
 
 function inWindow(clockMinutes, fromStr, toStr) {
@@ -172,9 +179,9 @@ function normalizeSettings(raw = {}) {
     s.dailyTargetInrAt10Lots =
       Number.isFinite(n) && n >= 0 ? n : DEFAULT_SETTINGS.dailyTargetInrAt10Lots;
   }
-  s.tradeFromTime = String(s.tradeFromTime || '09:30');
-  s.tradeToTime = String(s.tradeToTime || '14:30');
-  s.eodExitTime = String(s.eodExitTime || '15:15');
+  s.tradeFromTime = hhmmOr(s.tradeFromTime, DEFAULT_SETTINGS.tradeFromTime);
+  s.tradeToTime = hhmmOr(s.tradeToTime, DEFAULT_SETTINGS.tradeToTime);
+  s.eodExitTime = hhmmOr(s.eodExitTime, DEFAULT_SETTINGS.eodExitTime);
   // Closed 3m Match mode — drop leftover fields
   delete s.stepMin;
   delete s.callMinSpotDelta;
@@ -829,8 +836,8 @@ async function tryEnter(signal, tape) {
       signalStatus: signal.status,
     };
   } catch (err) {
-    engineState.lastError = err.message;
-    engineState.lastEntryDebug = { skip: 'entry_error', error: err.message };
+    engineState.lastError = err.message || String(err);
+    engineState.lastEntryDebug = { skip: 'entry_error', error: err.message || String(err) };
   } finally {
     engineState.enteringTrade = false;
   }
@@ -949,7 +956,7 @@ async function tickOnce() {
     }
     engineState.lastError = null;
   } catch (err) {
-    engineState.lastError = err.message;
+    engineState.lastError = err.message || String(err);
   } finally {
     engineState.tickInFlight = false;
   }
@@ -959,7 +966,7 @@ function startLoop() {
   if (engineState.loopTimer) return;
   engineState.loopTimer = setInterval(() => {
     tickOnce().catch((err) => {
-      engineState.lastError = err.message;
+      engineState.lastError = err.message || String(err);
     });
   }, LOOP_MS);
 }
@@ -1091,6 +1098,7 @@ async function listTrades({ status, page = 1, pageSize = 50 } = {}) {
 }
 
 async function getBookSummary() {
+  await ensureEngineRunning();
   const wallet = await recalcWalletFromTrades();
   const clock = getIstClock(new Date());
   const dayBook = await refreshDayBook(clock.dateKey);
@@ -1157,8 +1165,15 @@ async function closeOpenTradeManual(reason = 'MANUAL_CLOSE') {
     status: 'OPEN',
     exitTime: null,
   }).sort({ entryTime: -1 });
-  if (!open) throw new Error('No open Flow Match Scalp trade');
+  if (!open) {
+    const err = new Error('No open Flow Match Scalp trade');
+    err.status = 404;
+    throw err;
+  }
   const mark = await resolveOptionLtp(open);
+  if (!Number.isFinite(mark?.optionLtp) || mark.optionLtp <= 0) {
+    throw new Error('Cannot close — no live option LTP');
+  }
   return finalizeTrade(open, {
     exitPremium: mark.optionLtp,
     mark,
