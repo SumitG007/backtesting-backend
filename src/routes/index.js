@@ -71,6 +71,14 @@ const {
   postFlowScalpPrimeClose,
 } = require('../controllers/flowScalpPrimeController');
 const {
+  getFlowMatchScalpStatus,
+  getFlowMatchScalpBook,
+  getFlowMatchScalpTrades,
+  postFlowMatchScalpEnabled,
+  patchFlowMatchScalpSettings,
+  postFlowMatchScalpClose,
+} = require('../controllers/flowMatchScalpController');
+const {
   getOiFlowStatus,
   getOiFlowToday,
   getOiFlowArchives,
@@ -162,6 +170,13 @@ router.get('/flow-scalp-prime/trades', getFlowScalpPrimeTrades);
 router.post('/flow-scalp-prime/enabled', postFlowScalpPrimeEnabled);
 router.patch('/flow-scalp-prime/settings', patchFlowScalpPrimeSettings);
 router.post('/flow-scalp-prime/close', postFlowScalpPrimeClose);
+
+router.get('/flow-match-scalp/status', getFlowMatchScalpStatus);
+router.get('/flow-match-scalp/book', getFlowMatchScalpBook);
+router.get('/flow-match-scalp/trades', getFlowMatchScalpTrades);
+router.post('/flow-match-scalp/enabled', postFlowMatchScalpEnabled);
+router.patch('/flow-match-scalp/settings', patchFlowMatchScalpSettings);
+router.post('/flow-match-scalp/close', postFlowMatchScalpClose);
 
 router.get('/oi-flow/status', getOiFlowStatus);
 router.get('/oi-flow/today', getOiFlowToday);

@@ -16,6 +16,8 @@ const MANUAL_OI_AUTO_LIVE_KEY = 'manual_oi_auto_live';
 const OI_FLOW_TRACKER_LIVE_KEY = 'oi_flow_tracker_live';
 /** Flow Scalp Prime — live Bias scalp · +2/−3 · 15m after SL · day ₹ target default off. */
 const FLOW_SCALP_PRIME_LIVE_KEY = 'flow_scalp_prime_live';
+/** Flow Match Scalp — closed 3m Strong+Match · +2/−3 · 15m after SL · day ₹2k @ 10 lots. */
+const FLOW_MATCH_SCALP_LIVE_KEY = 'flow_match_scalp_live';
 
 module.exports = {
   STRATEGY_SIX_KEY,
@@ -27,4 +29,5 @@ module.exports = {
   MANUAL_OI_AUTO_LIVE_KEY,
   OI_FLOW_TRACKER_LIVE_KEY,
   FLOW_SCALP_PRIME_LIVE_KEY,
+  FLOW_MATCH_SCALP_LIVE_KEY,
 };

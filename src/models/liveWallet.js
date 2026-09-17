@@ -113,6 +113,19 @@ const liveWalletSchema = new mongoose.Schema(
       /** Day ₹ profit lock at 10 lots; 0 = off (default). Scales with lotCount when set. */
       dailyTargetInrAt10Lots: { type: Number, default: 0 },
     },
+    /** Flow Match Scalp — closed 3m Strong+Match · +2/−3 · 15m after SL · day ₹2k @ 10 lots. */
+    flowMatchScalpEngineSettings: {
+      enabled: { type: Boolean, default: true },
+      symbol: { type: String, default: 'NIFTY' },
+      lotCount: { type: Number, default: 10 },
+      tradeFromTime: { type: String, default: '09:30' },
+      tradeToTime: { type: String, default: '14:30' },
+      eodExitTime: { type: String, default: '15:15' },
+      optionSlPts: { type: Number, default: 3 },
+      optionTpPts: { type: Number, default: 2 },
+      perTradeCost: { type: Number, default: 100 },
+      dailyTargetInrAt10Lots: { type: Number, default: 2000 },
+    },
     /** Liquidity OI Chase paper (sweep+break + OI fuel). */
     liquidityOiChaseEngineSettings: {
       enabled: { type: Boolean, default: true },

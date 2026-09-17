@@ -54,6 +54,13 @@ async function bootBackgroundServices() {
   }
 
   try {
+    const flowMatchScalp = require('./services/flowMatchScalpEngine');
+    await flowMatchScalp.ensureEngineRunning();
+  } catch (err) {
+    console.warn('Flow Match Scalp engine boot:', err.message);
+  }
+
+  try {
     const oiFlow = require('./services/oiFlowMinuteEngine');
     const boot = oiFlow.ensureEngineRunning();
     if (boot.ok) {
