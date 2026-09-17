@@ -14,9 +14,7 @@ const MANUAL_STOCK_LIVE_KEY = 'manual_stock_live';
 const MANUAL_OI_AUTO_LIVE_KEY = 'manual_oi_auto_live';
 /** OI Flow Tracker signal store key (paper auto-trade removed). */
 const OI_FLOW_TRACKER_LIVE_KEY = 'oi_flow_tracker_live';
-/** Flow Scalp E/B — live Bias + green candle · +2/−3 · day ₹4k@10 · 5m after SL. */
-const FLOW_SCALP_EB_LIVE_KEY = 'flow_scalp_eb_live';
-/** Flow Scalp Prime — same Bias scalp · +2/−3 · 15m after SL · day ₹ target default off. */
+/** Flow Scalp Prime — live Bias scalp · +2/−3 · 15m after SL · day ₹ target default off. */
 const FLOW_SCALP_PRIME_LIVE_KEY = 'flow_scalp_prime_live';
 
 module.exports = {
@@ -28,6 +26,5 @@ module.exports = {
   MANUAL_STOCK_LIVE_KEY,
   MANUAL_OI_AUTO_LIVE_KEY,
   OI_FLOW_TRACKER_LIVE_KEY,
-  FLOW_SCALP_EB_LIVE_KEY,
   FLOW_SCALP_PRIME_LIVE_KEY,
 };

@@ -47,13 +47,6 @@ async function bootBackgroundServices() {
   }
 
   try {
-    const flowScalpEb = require('./services/flowScalpEbEngine');
-    await flowScalpEb.ensureEngineRunning();
-  } catch (err) {
-    console.warn('Flow Scalp E/B engine boot:', err.message);
-  }
-
-  try {
     const flowScalpPrime = require('./services/flowScalpPrimeEngine');
     await flowScalpPrime.ensureEngineRunning();
   } catch (err) {

@@ -99,22 +99,7 @@ const liveWalletSchema = new mongoose.Schema(
       cooldownMinutes: { type: Number, default: 30 },
       perTradeCost: { type: Number, default: 100 },
     },
-    /** Flow Scalp E/B — live Bias + green candle · +2/−3 · day ₹4k@10 · 5m after SL. */
-    flowScalpEbEngineSettings: {
-      enabled: { type: Boolean, default: true },
-      symbol: { type: String, default: 'NIFTY' },
-      lotCount: { type: Number, default: 10 },
-      tradeFromTime: { type: String, default: '09:30' },
-      tradeToTime: { type: String, default: '14:30' },
-      eodExitTime: { type: String, default: '15:15' },
-      /** Fixed option-premium SL / TP pts from entry LTP. */
-      optionSlPts: { type: Number, default: 3 },
-      optionTpPts: { type: Number, default: 2 },
-      perTradeCost: { type: Number, default: 100 },
-      /** Day ₹ profit lock at 10 lots; scales with lotCount. */
-      dailyTargetInrAt10Lots: { type: Number, default: 4000 },
-    },
-    /** Flow Scalp Prime — same Bias scalp · +2/−3 · 15m after SL · day ₹ target default off. */
+    /** Flow Scalp Prime — Bias scalp · +2/−3 · 15m after SL · day ₹ target default off. */
     flowScalpPrimeEngineSettings: {
       enabled: { type: Boolean, default: true },
       symbol: { type: String, default: 'NIFTY' },

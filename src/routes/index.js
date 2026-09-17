@@ -63,14 +63,6 @@ const {
   postManualOiAutoClose,
 } = require('../controllers/manualOiAutoController');
 const {
-  getFlowScalpEbStatus,
-  getFlowScalpEbBook,
-  getFlowScalpEbTrades,
-  postFlowScalpEbEnabled,
-  patchFlowScalpEbSettings,
-  postFlowScalpEbClose,
-} = require('../controllers/flowScalpEbController');
-const {
   getFlowScalpPrimeStatus,
   getFlowScalpPrimeBook,
   getFlowScalpPrimeTrades,
@@ -163,13 +155,6 @@ router.get('/manual-oi-auto/trades', getManualOiAutoTrades);
 router.post('/manual-oi-auto/enabled', postManualOiAutoEnabled);
 router.patch('/manual-oi-auto/settings', patchManualOiAutoSettings);
 router.post('/manual-oi-auto/close', postManualOiAutoClose);
-
-router.get('/flow-scalp-eb/status', getFlowScalpEbStatus);
-router.get('/flow-scalp-eb/book', getFlowScalpEbBook);
-router.get('/flow-scalp-eb/trades', getFlowScalpEbTrades);
-router.post('/flow-scalp-eb/enabled', postFlowScalpEbEnabled);
-router.patch('/flow-scalp-eb/settings', patchFlowScalpEbSettings);
-router.post('/flow-scalp-eb/close', postFlowScalpEbClose);
 
 router.get('/flow-scalp-prime/status', getFlowScalpPrimeStatus);
 router.get('/flow-scalp-prime/book', getFlowScalpPrimeBook);
